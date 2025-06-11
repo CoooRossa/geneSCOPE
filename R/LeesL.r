@@ -37,9 +37,7 @@
 #' @importFrom Matrix sparseMatrix t
 #' @importFrom spdep cell2nb nb2listw listw2mat
 #' @importFrom RhpcBLASctl blas_set_num_threads
-#' @importFrom computeLeeL leeL_cpp
 #' @importFrom parallel makeCluster stopCluster clusterExport clusterEvalQ
-#' @importFrom base stats colMeans sweep rowMeans
 #' @importFrom foreach foreach %dopar%
 #' @export
 .computeLeeL <- function(coordObj,
@@ -165,7 +163,7 @@
   
   if (use_cpp) {
     # ---- 4.1 Call C++ interface for parallel computation ----
-    L_full <- XeLeeL::leeL_cpp(as.matrix(X_full), W)
+    L_full <- FG2CLI:::leeL_cpp(as.matrix(X_full), W)
     dimnames(L_full) <- list(all_genes, all_genes)
   } else {
     # ---- 4.2 R-side iterative computation per gene ----
@@ -273,10 +271,6 @@
 #' @importFrom Matrix Matrix
 #' @importFrom spdep cell2nb nb2listw listw2mat
 #' @importFrom RhpcBLASctl blas_set_num_threads
-#' @importFrom FG2CLI leeL_cpp
-#' @importFrom FG2CLI grad_betas_cpp
-#' @importFrom computeLeeL leeL_perm_ge_cpp
-#' @importFrom base colMeans pnorm sd 
 #' @importFrom foreach foreach %dopar%
 #' @importFrom igraph graph_from_adjacency_matrix components modularity cluster_louvain
 #' @importFrom stats p.adjust
@@ -374,8 +368,8 @@ addLeeStats <- function(coordObj,
     x = (grid_info$xmin + grid_info$xmax) / 2,
     y = (grid_info$ymin + grid_info$ymax) / 2
   )[match(res$cells, grid_info$grid_id), ]
-  if (use_cpp && requireNamespace("computeLeeL", quietly = TRUE)) {
-    betas_full <- XeLeeL::grad_betas_cpp(as.matrix(X_full), centres$x, centres$y)
+  if (use_cpp) {
+    betas_full <- FG2CLI:::grad_betas_cpp(as.matrix(X_full), centres$x, centres$y)
   } else {
     betas_full <- t(apply(X_full, 2, function(v) {
       coefs <- stats::lm(v ~ centres$x + centres$y)$coefficients

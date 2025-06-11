@@ -18,7 +18,6 @@
 #'   • A new column named `"<grid_name>_iDelta_raw"` (or `"<grid_name>_iDelta_nor"` if `normalized = TRUE`) is added to `coordObj@meta.data`, storing each gene’s raw Iδ.  
 #'
 #' @importFrom Matrix sparseMatrix
-#' @importFrom FG2CLI idelta_cpp
 #' @export
 computeIDeltaMetrics <- function(coordObj,
                                  grid_name  = NULL) {
@@ -60,7 +59,7 @@ computeIDeltaMetrics <- function(coordObj,
   
   # —— 2. Call C++ `idelta_cpp` on the “gene × grid” matrix —— 
   # idelta_cpp expects a matrix with rows = genes, columns = cells
-  delta_raw <- FG2CLI::idelta_cpp(mat)
+  delta_raw <- FG2CLI:::idelta_cpp(mat)
   # Ensure the returned vector is named
   names(delta_raw) <- rownames(mat)
 

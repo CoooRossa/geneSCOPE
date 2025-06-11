@@ -187,7 +187,6 @@ plotLeeLDistribution <- function(coordObj,
 #'
 #' @importFrom ggplot2 ggplot aes geom_point labs theme_bw theme element_rect element_line element_text coord_cartesian
 #' @importFrom dplyr group_by summarise filter left_join rename rowwise ungroup
-#' @importFrom tidyr crossing
 #' @importFrom grid unit
 #' @export
 plotLeeLScatter <- function(coordObj,
@@ -345,12 +344,9 @@ plotLeeLScatter <- function(coordObj,
 #' @param lee_stats_layer 
 #' @param title           
 #'
-#' @return 
-#'
 #' @importFrom ggplot2 ggplot aes geom_point labs theme_bw theme element_rect
 #'                     element_line element_text coord_cartesian
 #' @importFrom dplyr group_by summarise left_join rename rowwise ungroup filter
-#' @importFrom tidyr crossing
 #' @importFrom grid unit
 #' @export
 plotLogFDR <- function(coordObj,

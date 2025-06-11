@@ -1,3 +1,4 @@
+#' @title Plot Iδ by Cluster
 #' @param coordObj        A `coordObj` containing either
 #'                        `coordObj@grid[[grid_name]]$iDeltaStats$delta_raw` or `delta_nor`,
 #'                        or a column named `<grid_name>_iDelta_raw` / `<grid_name>_iDelta_nor` in
@@ -23,7 +24,6 @@
 #'
 #' @importFrom ggplot2 ggplot aes geom_point geom_line geom_text facet_grid scale_color_manual scale_x_discrete labs theme_minimal theme element_text element_blank element_rect unit coord_cartesian
 #' @importFrom dplyr filter group_by arrange mutate ungroup tally
-#' @importFrom scales colorRampPalette
 #' @export
 plotIDeltaByCluster <- function(coordObj,
                                 grid_name = NULL,

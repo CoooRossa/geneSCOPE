@@ -18,13 +18,16 @@
 #' @param max_gene_types Maximum number of unique gene types allowed per grid cell (default Inf).
 #' @param min_seg_points Minimum number of segmentation points required per grid cell (default 0).
 #' @param seg_type     Character. One of "cell", "nucleus", or "both" (default "cell").
-#' #' @param flip_y Logical. Mirror‑flip Y axis if TRUE (default FALSE) so grid aligns
+#' @param flip_y Logical. Mirror‑flip Y axis if TRUE (default FALSE) so grid aligns
 #'        with Xenium Explorer (origin top‑left).
 #'
 #' @return An S4 `CoordObj` with one grid sub‑layer per `lenGrid` value, plus `centroids` and
 #'         `segmentation` in `coord`.
 #'
-#' @import arrow data.table sf parallel
+#' @import arrow
+#' @import data.table
+#' @import sf
+#' @import parallel
 #' @export
 
 createCoordObj<- function(xenium_dir,

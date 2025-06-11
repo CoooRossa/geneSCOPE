@@ -18,7 +18,6 @@
 #'
 #' @import data.table
 #' @import Matrix
-#' @importFrom base scale rowMeans
 #' @export
 norMPG <- function(coordObj, grid_name = NULL, keep_zero_grids = FALSE) {
   # 0. Validate that coordObj@grid exists and determine grid_layer_name

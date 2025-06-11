@@ -47,10 +47,10 @@ computeSpatialWeights <- function(coordObj, grid_name = NULL) {
   if (xbins_eff != ybins_eff) {
     warning(sprintf(
       "Grid xbins (%d) and ybins (%d) are not equal; using max(%d, %d) = %d as nbins.",
-      xbins_eff, ybins_eff, nbins
+      xbins_eff, ybins_eff, xbins_eff, ybins_eff, nbins  # ← 5 個
     ))
   }
-  
+    
   # Create a matrix to hold grid IDs
   # Initialize a matrix with NA_character_ to hold grid IDs
   # This matrix will have dimensions nbins x nbins

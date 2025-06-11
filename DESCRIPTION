@@ -1,0 +1,37 @@
+Package: FG2CLI
+Title: What the Package Does (One Line, Title Case)
+Version: 0.0.0.9000
+Authors@R: 
+    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
+Description: What the package does (one paragraph).
+License: MIT + file LICENSE
+Imports: 
+    Matrix,
+    RhpcBLASctl (>= 0.18-12),
+    arrow (>= 18.1.0),
+    data.table,
+    dplyr,
+    foreach,
+    ggforce,
+    ggnewscale,
+    ggplot2,
+    ggraph,
+    grid,
+    igraph,
+    methods,
+    parallel,
+    scales,
+    sf,
+    spdep,
+    stats,
+    tidyr,
+    tools,
+    utils,
+    viridis
+LinkingTo: 
+    Rcpp,
+    RcppArmadillo
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+SystemRequirements: C++17

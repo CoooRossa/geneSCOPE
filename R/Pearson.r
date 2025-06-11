@@ -1,7 +1,7 @@
 #' @title Compute gene × gene correlation and save to CoordObj
 #' Compute gene × gene correlation and (optionally) save to CoordObj
 #'
-#' @inheritParams geneCorrelation_layer
+#' @inheritParams geneCorrelation
 #' @param cor_layer_name Character; name of the new sub-layer to save.
 #'                       Default = paste0(method, "_cor")
 #' @param write_back     Logical; if TRUE, write matrix to
@@ -12,10 +12,8 @@
 #' @importFrom Matrix bandSparse sparseMatrix
 #' @importFrom stats cor
 #' @importFrom stats setNames
-#' @importFrom stats stopifnot
-#' @importFrom stats message
 #' 
-#' export
+#' @export
 geneCorrelation <- function(coordObj,
                                   grid_name       = "grid_lenGrid16",
                                   layer           = "Xz",
@@ -130,7 +128,6 @@ geneCorrelation <- function(coordObj,
 }
 
 
-## ---- computeDeltaLee_perm.R ----------------------------------------------
 #' @title Compute Δ = Lee's L − Pearson *r* with permutation p‑values **and QC**
 #'
 #' @description
@@ -147,34 +144,19 @@ geneCorrelation <- function(coordObj,
 #' 6. Optionally write the result back to
 #'    `coordObj@grid[[grid_name]][["LeeMinusR_stats"]]`.
 #'
-#' @inheritParams addLeeStats
-#' @param coordObj       A `CoordObj` with grid / Xz / W / LeeStats / Cor.
-#' @param grid_name      Target grid layer (e.g. "grid_lenGrid50").
-#' @param lee_stats_layer Sub‑layer holding Lee's L; default "LeeStats_Xz".
-#' @param cor_layer_name  Sub‑layer holding Pearson matrix; default "pearson_Xz".
-#' @param perms          Integer ≥ 0; number of permutations (0 = no test).
-#' @param fdr_method     Passed to `p.adjust()`. Default "BY" (conservative).
-#' @param write_back     If `TRUE`, write result back into `coordObj`.
-#' @param seed           Random seed for reproducibility.
-#'
-#' @return **If** `write_back = TRUE` **then** the modified `CoordObj`.
-#'         Otherwise a list:
-#'         * `Delta`  : gene×gene Δ matrix
-#'         * `P`      : empirical p‑value matrix
-#'         * `FDR`    : FDR‑adjusted matrix
-#'         * `class`  : "Spatial‑driven" / "False‑pair" / "Other"
-#'         * `meta`   : list(perms, fdr_method)
-#'         * `qc`     : list of QC diagnostics:
-#'             - `summary_stats` (Δ, P, FDR five‑number summaries)
-#'             - `class_counts`  (table)
-#'             - `is_symmetric`, `diag_zero`
-#'             - `tail_cnt`      (matrix of exceedance counts; only if perms>0)
-#' @importFrom Matrix as as.matrix 
-#' @importFrom stats p.adjust
-#' @importFrom stats summary
-#' @importFrom FG2CLI leeL_minusR_perm_ge_cpp
+#' @inheritParams computeDeltaLee
+#' @param grid_name        Character; name of the grid layer to use.
+#' @param lee_stats_layer  Character; name of the Lee's L sub‑layer to use.
+#' @param cor_layer_name   Character; name of the Pearson correlation sub‑layer to use.
+#' @param perms            Integer; number of permutations to perform.
+#' @param fdr_method       Character; FDR adjustment method (default "BY").
+#' @param seed             Integer; random seed for reproducibility.
+#' @param write_back       Logical; if TRUE, write the results back to
+#'                        `coordObj@grid[[grid_name]][["LeeMinusR_stats"]]`.
 #' 
-#'
+#' 
+#' @importFrom Matrix as.matrix 
+#' @importFrom stats p.adjust
 #' @export
 computeDeltaLee <- function(coordObj,
                                  grid_name        = "grid_lenGrid50",

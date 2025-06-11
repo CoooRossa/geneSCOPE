@@ -60,16 +60,7 @@
 #'
 #' @return A **`ggplot`** object (class `ggraph_tbl_graph`).
 #'
-#' @examples
-#' \dontrun{
-#' p <- plotNetworkClu(
-#'   coordObj     = P5.coord,
-#'   grid_name    = "grid_lenGrid50",
-#'   cluster_vec  = P5.coord@meta.data$louvain_Xz_top0.1_grid50,
-#'   gene_subset  = head(colnames(P5.coord@grid$grid_lenGrid50$Counts), 300)
-#' )
-#' print(p)
-#' }
+#' @export 
 plotNetworkGene <- function(coordObj,
                            grid_name        = NULL,
                            lee_stats_layer  = "LeeStats",
@@ -411,30 +402,30 @@ plotNetworkGene <- function(coordObj,
 #' This function is a wrapper around `plotNetworkGene()` that uses a cluster
 #' vector to colour nodes. It is intended for use with cluster assignments
 #' such as Louvain clusters.
-#' @param coordObj       A **`CoordObj`** containing spatial‐grid statistics
+#' @param coordObj      A **`CoordObj`** containing spatial‐grid statistics
 #'                      produced by downstream FG²CLI helpers.
-#' @param grid_name      Character. Name of the grid sub-layer (e.g.
-#'                     `"grid_lenGrid50"`). If `NULL`, the single available
-#' #                      grid layer is used.
+#' @param grid_name     Character. Name of the grid sub-layer (e.g.
+#'                      `"grid_lenGrid50"`). If `NULL`, the single available
+#'                      grid layer is used.
 #' @param lee_stats_layer Character. Slot name that stores Lee’s _L_ results
 #'                      inside the chosen grid sub-layer. Default `"LeeStats"`.
 #' @param gene_subset    Optional character vector of gene names to keep.
 #' @param cluster_vec    Either a named vector mapping genes to clusters, or a
-#'                     single string giving the column name inside
-#'                      `
+#'                       single string giving the column name inside.
+#'                    
 #'  
 #' 
 #' @param cluster_palette Character vector of colours (named or unnamed) used
-#'                     to paint clusters. Unnamed palettes are re-cycled
-#' #                     with `colorRampPalette()`.
+#'                        to paint clusters. Unnamed palettes are re-cycled
+#'                        with `colorRampPalette()`.
 #' @param L_min          Minimum |L| retained when `weight_abs = TRUE`.
 #' @param L_min_neg      Separate threshold for negative edges when
-#'                     `weight_abs = FALSE`.  Default uses `L_min`.
+#'                      `weight_abs = FALSE`.  Default uses `L_min`.
 #' @param p_cut          Optional *P*-value cutoff (used if a `P` matrix exists
-#' #                     inside the LeeStats layer).
+#'                       inside the LeeStats layer).
 #' @param drop_isolated  Logical. Drop nodes with zero degree after thresholding.
 #' @param weight_abs     Logical. If `TRUE`, edge sign is ignored when filtering
-#' #                     (`|L| >= L_min`).  If `FALSE`, separate thresholds are
+#'                       (`|L| >= L_min`).  If `FALSE`, separate thresholds are
 #' 
 #' @import igraph
 #' @import ggraph
@@ -448,18 +439,18 @@ plotNetworkGene <- function(coordObj,
 #'                       layout.
 #' @param seed           Random seed for reproducible layouts.
 #' @param max.overlaps   Passed to `geom_node_text(repel = TRUE)` to limit
-#' #                     label collisions.
+#'                       label collisions.
 #' @param L_max          Absolute |L| values larger than this are discarded.
 #' @param show_sign      Logical. If `TRUE`, positive/negative edges are drawn
-#' #                     with different linetypes.
+#'                       with different linetypes.
 #' @param pos_edge_col   Colour for positive edges.
 #' @param neg_edge_col   Colour for negative edges.
 #' @param neg_linetype   Linetype used for negative edges when `show_sign = TRUE`.
 #' @param neg_legend_lab Legend label for negative edges.
 #' @param pos_legend_lab Legend label for positive edges.
 #' @param show_qc_caption Logical. Appends a one-line QC caption if the LeeStats
-#' #                     layer contains a `$qc` list.
-#' @param title          Optional plot title.
+#'                        layer contains a `$qc` list.
+#' @param title           Optional plot title.
 #' @return A **`ggplot`** object (class `ggraph_tbl_graph`).
 #' @export
 plotNetworkClu <- function(coordObj,

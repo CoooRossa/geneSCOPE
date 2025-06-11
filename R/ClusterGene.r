@@ -33,9 +33,8 @@
 #' 
 #' @return The modified `coordObj`
 #' @export
-#' @examples
 
-graphCluster_L_DeltaSplit <- function(
+graphClusterGenes <- function(
   coordObj,
   grid_name       = NULL,
   lee_stats_layer = "LeeStats_Xz",

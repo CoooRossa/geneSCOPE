@@ -19,3 +19,7 @@ if (is.null(methods::selectMethod("initialize", "CoordObj", optional = TRUE))) {
     }
   )
 }
+
+#' @useDynLib FG2CLI, .registration = TRUE
+#' @importFrom Rcpp sourceCpp
+NULL
