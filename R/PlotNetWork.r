@@ -397,6 +397,600 @@ plotNetworkGene <- function(coordObj,
   return(p)
 }
 
+#' @noRd 
+#' @title Plot Gene Co-distribution Network with Cluster Coloring
+#'
+#' @import igraph
+#' @import ggraph
+#' @import ggplot2
+#' @import dplyr
+#'
+#' @return A **`ggplot`** object (class `ggraph_tbl_graph`).
+#'
+#' @export 
+.plotNetworkGene <- function(coordObj,
+                           grid_name        = NULL,
+                           lee_stats_layer  = "LeeStats",
+                           lee_minusR_layer = NULL,
+                           gene_subset      = NULL,
+                           cluster_vec      = NULL,
+                           cluster_palette   = c(
+                             "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00",
+                             "#FFFF33", "#A65628", "#984EA3",
+                             "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3",
+                             "#A6D854", "#FFD92F", "#E5C494"
+                           ),
+                           L_min            = 0.15,
+                           L_min_neg        = NULL,
+                           p_cut            = NULL,
+                           drop_isolated    = TRUE,
+                           weight_abs       = TRUE,
+                           vertex_size      = 8,
+                           base_edge_mult   = 12,
+                           label_cex        = 3,
+                           layout_niter     = 1000,
+                           seed             = 1,
+                           hub_factor       = 3,
+                           max.overlaps     = 20,
+                           L_max            = 1,
+                           hub_border_col   = "#4B4B4B",
+                           hub_border_size  = 0.8,
+                           show_sign        = FALSE,
+                           neg_linetype     = "dashed",
+                           neg_legend_lab   = "Negative",
+                           pos_legend_lab   = "Positive",
+                           show_qc_caption  = TRUE,
+                           title = NULL) {
+
+  ## ——— Dependencies ———————————————————————————————————————————————— ##
+  library(igraph)
+  library(ggraph)
+  library(ggplot2)
+  library(dplyr)
+
+  ## ——— 0. Determine the grid sub-layer ——————————————— ##
+  if (is.null(coordObj@grid) || length(coordObj@grid) == 0L)
+    stop("coordObj@grid is empty; cannot draw network.")
+
+  if (is.null(grid_name)) {
+    sub_layers <- names(coordObj@grid)
+    if (length(sub_layers) == 1L) {
+      grid_layer_name <- sub_layers[[1]]
+    } else {
+      stop("coordObj@grid contains multiple sublayers; please specify `grid_name`.")
+    }
+  } else {
+    grid_layer_name <- as.character(grid_name)
+  }
+  if (!(grid_layer_name %in% names(coordObj@grid)))
+    stop("Specified `grid_name` '", grid_layer_name, "' does not exist.")
+
+  ## ——— 0.5. Normalise L_min_neg ——————————————— ##
+  L_min_neg <- if (is.null(L_min_neg)) L_min else abs(L_min_neg)
+
+  ## ——— 1. Check LeeStats layer ——————————————— ##
+  if (is.null(coordObj@grid[[grid_layer_name]][[lee_stats_layer]]))
+    stop("LeeStats layer ‘", lee_stats_layer, "’ not found. Did you run addLeeStats_fromGrid()?")
+
+  res <- coordObj@grid[[grid_layer_name]][[lee_stats_layer]]
+
+  ## ——— 2. Gene subset ————————————————————————————— ##
+  keep_genes <- colnames(res$L)
+  if (!is.null(gene_subset))
+    keep_genes <- intersect(keep_genes, gene_subset)
+
+  if (length(keep_genes) < 2L)
+    stop("After subsetting, fewer than two genes remain; nothing to plot.")
+
+  ## ——— 3. Threshold the L-matrix ————————————————————— ##
+  A <- res$L[keep_genes, keep_genes, drop = FALSE]
+
+  ## 3.1 P-value cut
+  if (!is.null(p_cut) && !is.null(res$P)) {
+    idx_keep <- match(keep_genes, rownames(res$L))
+    Pmat <- res$P[idx_keep, idx_keep, drop = FALSE]
+    A[Pmat >= p_cut | is.na(Pmat)] <- 0
+  }
+
+  ## 3.2 Remove extreme |L|
+  A[abs(A) > L_max] <- 0
+
+  ## 3.3 Apply L_min / L_min_neg
+  if (weight_abs) {
+    A[abs(A) < L_min] <- 0
+  } else {
+    A[A > 0  &  A <  L_min]      <- 0       # weak positives
+    A[A < 0  &  abs(A) < L_min_neg] <- 0    # weak negatives
+  }
+
+  ## 3.4 Symmetrise
+  A2 <- (A + t(A)) / 2
+  diag(A2) <- 0
+
+  ## ——— 4. Drop isolated nodes ——————————————— ##
+  if (drop_isolated) {
+    keep_nodes <- rowSums(abs(A2) > 0) > 0
+    A2 <- A2[keep_nodes, keep_nodes, drop = FALSE]
+  }
+  if (nrow(A2) < 2L || all(A2 == 0))
+    stop("No edges remain after filtering; relax thresholds.")
+
+  ## ——— 5. Build igraph; mark edge sign ——————————— ##
+  g <- graph_from_adjacency_matrix(abs(A2), mode = "undirected",
+                                   weighted = TRUE, diag = FALSE)
+  e_idx          <- get.edgelist(g, names = FALSE)
+  E(g)$sign      <- ifelse(A2[e_idx] < 0, "neg", "pos")
+  Vnames <- V(g)$name
+
+  ## ——— 5.5. Flag “Inter‑cellular” edges from LeeMinusR$class ————————— ##
+  inter_idx <- rep(FALSE, ecount(g))   # default
+
+  if (!is.null(lee_minusR_layer) &&
+      !is.null(coordObj@grid[[grid_layer_name]][[lee_minusR_layer]]) &&
+      !is.null(coordObj@grid[[grid_layer_name]][[lee_minusR_layer]]$class)) {
+
+    class_mat <- coordObj@grid[[grid_layer_name]][[lee_minusR_layer]]$class
+    # ensure row / col order matches the kept vertex names
+    class_mat <- class_mat[Vnames, Vnames, drop = FALSE]
+
+    inter_idx <- class_mat[e_idx] %in% c("Inter", "Inter-cellular")
+  }
+  E(g)$is_inter <- inter_idx
+
+  ## ——— 6. Flags for positive/negative neighbours ——— ##
+  Vnames  <- V(g)$name
+  has_pos <- has_neg <- setNames(rep(FALSE, length(Vnames)), Vnames)
+  for (v in Vnames) {
+    sigs <- E(g)$sign[incident(g, v)]
+    has_pos[v] <- any(sigs == "pos")
+    has_neg[v] <- any(sigs == "neg")
+  }
+
+  ## ——— 7. Cluster assignment ———————————————— ##
+  clu              <- setNames(rep(NA_character_, length(Vnames)), Vnames)
+  is_factor_input  <- FALSE
+  factor_levels    <- NULL
+
+  get_meta_cluster <- function(col) {
+    if (is.null(coordObj@meta.data) || !(col %in% colnames(coordObj@meta.data)))
+      stop("Cluster column ‘", col, "’ not found in coordObj@meta.data.")
+    tmp <- coordObj@meta.data[[col]]
+    names(tmp) <- rownames(coordObj@meta.data)
+    tmp[Vnames]
+  }
+
+  if (!is.null(cluster_vec)) {
+    if (length(cluster_vec) > 1L) {          # named vector
+      if (is.factor(cluster_vec)) {
+        is_factor_input <- TRUE; factor_levels <- levels(cluster_vec)
+      }
+      tmp <- as.character(cluster_vec[Vnames])
+      clu[!is.na(tmp) & has_pos] <- tmp[!is.na(tmp) & has_pos]
+    } else {                                 # column name
+      meta_clu <- get_meta_cluster(cluster_vec)
+      if (is.factor(coordObj@meta.data[[cluster_vec]])) {
+        is_factor_input <- TRUE; factor_levels <- levels(meta_clu)
+      }
+      clu[!is.na(meta_clu) & has_pos] <- as.character(meta_clu[!is.na(meta_clu) & has_pos])
+    }
+  }
+
+  ## ——— 8. Keep assigned nodes only ————————————— ##
+  keep_nodes <- names(clu)[!is.na(clu)]
+  if (length(keep_nodes) < 2L)
+    stop("Fewer than two nodes are assigned to a cluster; cannot plot.")
+
+  g      <- induced_subgraph(g, keep_nodes)
+  Vnames <- V(g)$name
+  clu    <- clu[Vnames]
+
+  ## ——— 9–11. Degree, palette, edge colours ————————— ##
+  deg_vec <- degree(g)
+
+  uniq_clu <- if (is_factor_input && !is.null(factor_levels))
+                intersect(factor_levels, unique(clu))
+              else sort(unique(clu))
+  n_clu <- length(uniq_clu)
+
+  if (is.null(cluster_palette)) {
+    palette_vals <- setNames(rainbow(n_clu), uniq_clu)
+  } else if (is.null(names(cluster_palette))) {
+    palette_vals <- setNames(colorRampPalette(cluster_palette)(n_clu), uniq_clu)
+  } else {
+    palette_vals <- cluster_palette
+    missing <- setdiff(uniq_clu, names(palette_vals))
+    if (length(missing) > 0L) {
+      extra <- colorRampPalette(cluster_palette)(length(missing))
+      palette_vals <- c(palette_vals, setNames(extra, missing))
+    }
+    palette_vals <- palette_vals[uniq_clu]
+  }
+
+  basecol <- setNames(rep("gray80", length(Vnames)), Vnames)
+  basecol[!is.na(clu)] <- palette_vals[clu[!is.na(clu)]]
+
+  ## attach vertex‑level attributes so that subgraphs keep them
+  V(g)$basecol <- basecol
+  V(g)$cluster <- clu
+  V(g)$deg     <- deg_vec
+  V(g)$hub     <- deg_vec > hub_factor * median(deg_vec)
+
+  ## edge colours (weight-based shading)
+  e_idx       <- get.edgelist(g, names = FALSE)
+  w_norm      <- E(g)$weight / max(E(g)$weight)
+  cluster_ord <- setNames(seq_along(uniq_clu), uniq_clu)
+  edge_cols   <- character(ecount(g))
+
+  for (i in seq_len(ecount(g))) {
+    v1 <- Vnames[e_idx[i, 1]]; v2 <- Vnames[e_idx[i, 2]]
+    if (E(g)$sign[i] == "neg") {
+      edge_cols[i] <- "gray40"
+    } else {
+      # choose reference colour
+      ref_col <- {
+        if (!is.na(clu[v1]) && !is.na(clu[v2]) && clu[v1] == clu[v2]) {
+          basecol[v1]
+        } else {
+          d1 <- deg_vec[v1]; d2 <- deg_vec[v2]
+          if (d1 > d2) basecol[v1]
+          else if (d2 > d1) basecol[v2]
+          else {
+            if (is.na(clu[v1]) && !is.na(clu[v2]))       basecol[v2]
+            else if (is.na(clu[v2]) && !is.na(clu[v1]))  basecol[v1]
+            else if (!is.na(clu[v1]) && !is.na(clu[v2])) {
+              if (cluster_ord[clu[v1]] <= cluster_ord[clu[v2]])
+                basecol[v1] else basecol[v2]
+            } else "gray80"
+          }
+        }
+      }
+      rgb_ref <- col2rgb(ref_col) / 255
+      tval    <- w_norm[i]
+      edge_cols[i] <- rgb(1 - tval + tval * rgb_ref[1],
+                          1 - tval + tval * rgb_ref[2],
+                          1 - tval + tval * rgb_ref[3])
+    }
+  }
+  ## override colour for Inter edges
+  edge_cols[E(g)$is_inter] <- "gray60"
+  E(g)$edge_col <- edge_cols
+  if (show_sign) {
+    lt <- E(g)$sign
+    lt[E(g)$is_inter] <- "inter"
+    E(g)$linetype <- lt
+  } else {
+    E(g)$linetype <- "solid"
+  }
+
+  ## ——— 12. Layout —————————————————————————— ##
+  set.seed(seed)
+  lay <- create_layout(g, layout = "fr", niter = layout_niter)
+  lay$basecol <- basecol
+  lay$cluster <- clu     # keep cluster label for downstream functions
+  lay$deg     <- deg_vec
+  lay$hub     <- deg_vec > hub_factor * median(deg_vec)
+
+  ## ——— 13. QC caption —————————————————————— ##
+  qc_txt <- if (show_qc_caption && !is.null(res$qc))
+              with(res$qc, sprintf(
+                "density = %.3f | comp = %d | Q = %.2f | mean-deg = %.1f ± %.1f | hubs = %.1f%% | sig.edge = %.1f%%",
+                edge_density, components, modularity_Q,
+                mean_degree, sd_degree, hub_ratio * 100, sig_edge_frac * 100))
+            else NULL
+
+  ## ——— 14. Draw ——————————————————————————— ##
+  if (show_sign) {
+    p <- ggraph(lay) +
+      geom_edge_link(
+        aes(width    = weight,
+            colour   = edge_col,
+            linetype = linetype),
+        lineend = "round",
+        show.legend = c(width = TRUE, linetype = TRUE, colour = FALSE)
+      ) +
+      scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult)) +
+      scale_edge_colour_identity() +
+      ## ——— FIX: ensure correct mapping & order ——— ##
+      scale_edge_linetype_manual(
+        name   = "Direction",
+        values = c(pos = "solid", neg = neg_linetype, inter = "solid"),
+        breaks = c("pos", "neg"),
+        labels = c(pos = pos_legend_lab, neg = neg_legend_lab)
+      )
+  } else {
+    p <- ggraph(lay) +
+      geom_edge_link(
+        aes(width = weight, colour = edge_col),
+        lineend = "round",
+        show.legend = c(width = TRUE, colour = FALSE)
+      ) +
+      scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult)) +
+      scale_edge_colour_identity()
+  }
+
+  p <- p +
+    geom_node_point(
+      data = ~ dplyr::filter(.x, !hub),
+      aes(size = deg, fill = basecol),
+      shape = 21, stroke = 0,
+      show.legend = c(fill = TRUE, size = TRUE)
+    ) +
+    geom_node_point(
+      data = ~ dplyr::filter(.x, hub),
+      aes(size = deg, fill = basecol),
+      shape = 21, colour = hub_border_col,
+      stroke = hub_border_size,
+      show.legend = FALSE
+    ) +
+    geom_node_text(
+      aes(label = name), size = label_cex, repel = TRUE,
+      vjust = 1.4, max.overlaps = max.overlaps
+    ) +
+    scale_size_continuous(
+      name  = "Node size",
+      range = c(vertex_size / 2, vertex_size * 1.5)
+    ) +
+    scale_fill_identity(
+      name  = "Cluster",
+      guide = guide_legend(
+        override.aes = list(shape = 21, size = vertex_size * 0.5),
+        nrow = 1, order = 1
+      ),
+      breaks = unname(palette_vals),
+      labels = names(palette_vals)
+    ) +
+    labs(title = title) +
+    guides(
+      fill = guide_legend(
+        title = "Cluster",
+        override.aes = list(shape = 21, size = vertex_size * 0.5),
+        nrow = 1, order = 1
+      ),
+      size = guide_legend(
+        title = "Node size",
+        override.aes = list(shape = 21, fill = "grey80"),
+        nrow = 1, order = 2
+      ),
+      edge_width = guide_legend(
+        title = "|L|", direction = "horizontal", nrow = 1, order = 3
+      ),
+      linetype = if (show_sign)
+        guide_legend(title = "Direction", nrow = 1, order = 4) else FALSE
+    ) +
+    coord_fixed() +
+    theme_void(base_size = 15) +
+    theme(
+      legend.text       = element_text(size = 15),
+      legend.title      = element_text(size = 20),
+      plot.title        = element_text(size = 16, hjust = 0.5),
+      legend.position   = "bottom",
+      legend.box        = "vertical",
+      legend.box.just   = "center",
+      legend.spacing.y  = unit(0.2, "cm"),
+      legend.box.margin = margin(t = 5, b = 5),
+      plot.caption      = element_text(hjust = 0, size = 9,
+                                       margin = margin(t = 6))
+    ) +
+    labs(caption = qc_txt)
+
+  ## expose igraph object for downstream helpers
+  attr(p, "igraph") <- g
+  return(p)
+}
+
+#' @title Plot Gene Co‑distribution Network – Dual Metrics & Cluster Subsetting
+#'
+#' @description
+#' Extends `plotNetworkGene()` by **(i)** restricting the plot to genes whose
+#' cluster assignment (`cluster_vec`) matches one or more user‑supplied values,
+#' and **(ii)** drawing **two axially symmetric edges** between every retained
+#' gene pair:
+#'
+#' * **Upper curve (positive curvature)** — Lee’s *L* (as in
+#'   `plotNetworkGene()`), coloured by cluster.
+#' * **Lower curve (negative curvature)** — a second metric chosen from one of
+#'   the following layers (argument `second_layer`):
+#'   `"LeeMinusR_bycell"`, `"LeeMinusR_bygrid"`,
+#'   `"pearson_cor_cell"`, or `"pearson_cor_grid"`.
+#'   The lower curve is grey; its width is proportional to
+#'   `abs(metric)`, and linetype encodes sign (solid = positive, dashed = negative).
+#'
+#' @inheritParams plotNetworkGene
+#' @param cluster_select Character or numeric vector. Only genes whose
+#'                       cluster label equals (`==`) or is contained in
+#'                       (`%in%`) this vector are shown.
+#' @param second_layer   Character. Name of the layer used for the lower curve.
+#'                       One of `"LeeMinusR_bycell"`, `"LeeMinusR_bygrid"`,
+#'                       `"pearson_cor_cell"`, `"pearson_cor_grid"`.
+#'                       Default = `"LeeMinusR_bycell"`.
+#' @param metric_edge_mult Multiplier controlling the thickest width of the
+#'                       lower (metric) edges.
+#'
+#' @return A **`ggplot`** object.
+#' @export
+#'
+plotNetworkGeneDual <- function(coordObj,
+                                grid_name          = NULL,
+                                lee_stats_layer    = "LeeStats",
+                                lee_minusR_layer   = NULL,
+                                gene_subset        = NULL,
+                                cluster_vec        = NULL,
+                                cluster_select,
+                                second_layer       = "LeeMinusR_bycell",
+                                cluster_palette    = NULL,
+                                L_min              = 0.15,
+                                L_min_neg          = NULL,
+                                drop_isolated      = TRUE,
+                                weight_abs         = TRUE,
+                                vertex_size        = 8,
+                                base_edge_mult     = 12,
+                                metric_edge_mult   = 6,
+                                layout_niter       = 1000,
+                                seed               = 1,
+                                show_sign          = FALSE,
+                                neg_linetype       = "dashed",
+                                title              = NULL) {
+
+  library(igraph)
+  library(ggraph)
+  library(ggplot2)
+
+  ## ——— 0. Run the parent helper to obtain a graph object —————————— ##
+  gplot <- .plotNetworkGene(coordObj,
+                           grid_name       = grid_name,
+                           lee_stats_layer = lee_stats_layer,
+                           lee_minusR_layer = lee_minusR_layer,
+                           gene_subset     = gene_subset,
+                           cluster_vec     = cluster_vec,
+                           cluster_palette = cluster_palette,
+                           L_min           = L_min,
+                           L_min_neg       = L_min_neg,
+                           drop_isolated   = drop_isolated,
+                           weight_abs      = weight_abs,
+                           vertex_size     = vertex_size,
+                           base_edge_mult  = base_edge_mult,
+                           layout_niter    = layout_niter,
+                           seed            = seed,
+                           show_sign       = show_sign,
+                           neg_linetype    = neg_linetype,
+                           title           = NULL)   ## defer title
+
+  lay <- gplot$data
+  ## retrieve igraph from attribute set in plotNetworkGene()
+  g   <- attr(gplot, "igraph")
+  if (is.null(g)) {
+    ## fallback to ggraph's default storage
+    lg <- attr(gplot, "graph")
+    if (inherits(lg, "layout_tbl_graph")) {
+      g <- attr(lg, "graph")
+      if (is.null(g)) g <- lg
+    } else {
+      g <- lg
+    }
+  }
+  if (is.null(g)) stop("Could not retrieve igraph object from plotNetworkGene(). Please update functions.")
+  clu_all  <- lay$cluster
+  names(clu_all) <- lay$name
+
+  ## ——— 1. Subset vertices by cluster_select ——————————————— ##
+  if (missing(cluster_select) || length(cluster_select) == 0L)
+    stop("`cluster_select` must be a non‑empty vector.")
+
+  keep_idx <- names(clu_all)[clu_all %in% cluster_select]
+  if (length(keep_idx) < 2L)
+    stop("After applying `cluster_select`, fewer than two genes remain.")
+
+  g  <- igraph::induced_subgraph(g, keep_idx)
+  Vn <- igraph::V(g)$name
+
+  ## ——— 2. Retrieve the second metric matrix ——————————————— ##
+  second_layer <- match.arg(
+    second_layer,
+    choices = c("LeeMinusR_bycell", "LeeMinusR_bygrid",
+                "pearson_cor_cell", "pearson_cor_grid")
+  )
+  B <- switch(second_layer,
+    "LeeMinusR_bycell" = {
+      coordObj@grid[[ grid_name %||% names(coordObj@grid)[1] ]][["LeeMinusR_bycell_stats"]]$Delta
+    },
+    "LeeMinusR_bygrid" = {
+      coordObj@grid[[ grid_name %||% names(coordObj@grid)[1] ]][["LeeMinusR_bygrid_stats"]]$Delta
+    },
+    "pearson_cor_cell" = as.matrix(coordObj@cells$pearson_cor),
+    "pearson_cor_grid" = as.matrix(coordObj@grid[[ grid_name %||% names(coordObj@grid)[1] ]]$pearson_cor)
+  )
+  if (is.null(B))
+    stop("Layer ‘", second_layer, "’ not found.")
+
+  ## Subset & align
+  B <- B[Vn, Vn, drop = FALSE]
+  diag(B) <- 0
+
+  ## ——— 3. Build edge attributes & duplicate edges for dual‑arc plotting —— ##
+  orig_ecount <- igraph::ecount(g)
+  e_idx       <- igraph::get.edgelist(g, names = FALSE)
+
+  metric_val  <- B[e_idx]
+  metric_w    <- abs(metric_val)
+  metric_w    <- metric_w / max(metric_w, na.rm = TRUE)
+  metric_sign <- ifelse(metric_val < 0, "neg", "pos")
+
+  ## duplicate only edges with **positive** L > L_min so the lower metric arc
+  ## is drawn exclusively for strong positive spatial correlations
+  dup_idx <- which(E(g)$weight > L_min & E(g)$sign == "pos")   # logical index
+
+  g2 <- g  # start from original graph
+  if (length(dup_idx) > 0L) {
+    dup_vec  <- as.vector(t(e_idx[dup_idx, ]))
+    g2 <- igraph::add_edges(g2, dup_vec)
+    new_eids <- (orig_ecount + 1L):igraph::ecount(g2)
+  } else {
+    new_eids <- integer(0)  # no duplicated edges
+  }
+
+  ## mark edge type (renamed to avoid conflict)
+  E(g2)$etype                 <- "L"
+  E(g2)$etype[new_eids]       <- "metric"
+
+  ## transfer aesthetics for metric edges
+  E(g2)$m_width                   <- NA_real_
+  E(g2)$m_width[new_eids]         <- metric_w * base_edge_mult
+  E(g2)$edge_col[new_eids]        <- "grey60"
+  E(g2)$metric_sign               <- NA
+  E(g2)$metric_sign[new_eids]     <- metric_sign
+
+  if (show_sign) {
+    ## propagate sign to new metric edges for consistent mapping
+    E(g2)$linetype[new_eids] <- metric_sign
+  } else {
+    E(g2)$linetype <- "solid"
+  }
+
+  ## --- ensure `etype` attribute is present and valid for ggraph ----------- ##
+  if (!"etype" %in% igraph::edge_attr_names(g2)) {
+    E(g2)$etype <- c(
+      rep("L",       orig_ecount),
+      rep("metric",  length(new_eids))
+    )
+  } else {
+    ## coerce to character to avoid factor mishaps
+    E(g2)$etype <- as.character(E(g2)$etype)
+  }
+
+  ## scale Lee’s L weights to match base_edge_mult so both metrics share identical width domain
+  E(g2)$l_width <- abs(E(g2)$weight) / max(abs(E(g2)$weight), na.rm = TRUE) * base_edge_mult
+
+  ## ——— 4. Draw ——————————————————————————————————————————————— ##
+  set.seed(seed)
+
+  p <- ggraph::ggraph(g2, layout = "fr", niter = layout_niter) +
+    ## draw both Lee’s L and metric edges together so fan splits into symmetric curves
+    ggraph::geom_edge_fan(
+      aes(
+        width    = ifelse(!is.na(m_width), m_width, l_width),  # unified scaling
+        colour   = edge_col,
+        linetype = if (show_sign) linetype else "solid"
+      ),
+      lineend    = "round",
+      show.legend = FALSE
+    ) +
+    ggraph::geom_node_point(
+      aes(fill = basecol),
+      shape = 21, size = vertex_size
+    ) +
+    ggraph::geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+    ggraph::scale_edge_width_identity() +
+    ggraph::scale_edge_linetype_manual(values = c(pos = "solid", neg = neg_linetype)) +
+    ggraph::scale_edge_colour_identity() +
+    ggplot2::scale_fill_identity() +
+    ggplot2::coord_fixed() +
+    ggplot2::theme_void(base_size = 15) +
+    ggplot2::labs(title = title)
+
+  return(p)
+}
+
+
 #' @title Plot Gene Co-distribution Network with Cluster Coloring
 #' @description
 #' This function is a wrapper around `plotNetworkGene()` that uses a cluster

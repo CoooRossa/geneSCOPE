@@ -2,13 +2,13 @@
 % Please edit documentation in R/Pearson.r
 \name{geneCorrelation}
 \alias{geneCorrelation}
-\title{Compute gene × gene correlation and save to CoordObj
-Compute gene × gene correlation and (optionally) save to CoordObj}
+\title{Gene-gene correlation across grid cells or single cells}
 \usage{
 geneCorrelation(
   coordObj,
+  level = c("grid", "cell"),
   grid_name = "grid_lenGrid16",
-  layer = "Xz",
+  layer = "counts",
   genes = NULL,
   method = "pearson",
   blocksize = 2000,
@@ -16,22 +16,47 @@ geneCorrelation(
   thr = 0.3,
   use_parallel = FALSE,
   ncores = 15,
-  cor_layer_name = NULL,
-  write_back = TRUE
+  cor_layer_name = NULL
 )
 }
 \arguments{
-\item{cor_layer_name}{Character; name of the new sub-layer to save.
-Default = paste0(method, "_cor")}
+\item{coordObj}{A \code{CoordObj}.}
 
-\item{write_back}{Logical; if TRUE, write matrix to
-coordObj@grid[\link{grid_name}][\link{cor_layer_name}]}
+\item{level}{"grid" (default) or "cell".}
+
+\item{grid_name}{Grid layer to use when \code{level = "grid"}.}
+
+\item{layer}{\emph{Grid mode}: "Xz" or "counts".
+\emph{Cell mode}: name of existing layer inside
+\code{@cells} (default "counts").}
+
+\item{genes}{Vector of genes to keep; NULL = all.}
+
+\item{method}{"pearson", "spearman", or "kendall".}
+
+\item{blocksize}{Number of genes per block (memory control).}
+
+\item{as_sparse}{Convert small-coef entries (<\code{thr}) to 0?}
+
+\item{thr}{Threshold used when \code{as_sparse = TRUE}.}
+
+\item{use_parallel}{Use \code{parallel::mclapply}?}
+
+\item{ncores}{Cores for parallel.}
+
+\item{cor_layer_name}{Name to save; default paste0(method, "_cor").}
 }
 \value{
-If write_back = TRUE, the modified CoordObj; otherwise the
-correlation matrix (dense or dgCMatrix)
+Modified \code{CoordObj} invisibly.
 }
 \description{
-Compute gene × gene correlation and save to CoordObj
-Compute gene × gene correlation and (optionally) save to CoordObj
+Computes a gene × gene correlation matrix on either
+\strong{grid‐level} data (\code{level = "grid"}) or
+\strong{cell‐level} data (\code{level = "cell"}).
+\itemize{
+\item Grid mode → result stored in
+\code{coordObj@grid[[grid_name]][[cor_layer_name]]}.
+\item Cell mode → result stored in
+\code{coordObj@cells[[cor_layer_name]]}.
+}
 }

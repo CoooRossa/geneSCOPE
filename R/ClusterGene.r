@@ -1,155 +1,217 @@
-#' @title Two-step gene clustering: Lee’s L macro-modules → Δ-L refined sub-modules
+#' @title Gene macro‑module clustering on Lee's *L* with optional Inter/Intra filter
 #'
 #' @description
-#' **Step 1 Macro modules** — keep only positive Lee’s L edges (`L ≥ L_min`) and apply Louvain/Leiden to obtain macro-module IDs *macro*.
+#' Clusters genes into **macro‑modules** using an undirected graph built from
+#' positive Lee's \emph{L} edges.  Three sequential filters are applied to the
+#' \eqn{L} matrix:
 #'
-#' **Step 2 Δ-L refinement** (within each macro module)
-#'   * **Conflict edges** = `Δ ≥ delta_split_min & FDR_Δ ≤ delta_FDR_max` **or** `L < 0`.
-#'   * **Candidate genes** = genes incident to at least one conflict edge.
-#'   * Non-candidate genes are labeled `macro.0`.
-#'   * **Glue edges** = `L > 0 & Δ < 0`; connected components of the glue graph define sub-modules `macro.1`, `macro.2`, …
-#'     If no glue edges exist, each candidate gene forms its own sub-module.
+#' \enumerate{
+#'   \item **Inter/Intra class mask** — If \code{cluster_by_delta_class} is set
+#'         to "Inter" or "Intra", all edges whose corresponding entry in the
+#'         \code{class} matrix (taken from \code{delta_layer}) is *not*
+#'         “Inter‑cellular” or “Intra‑cellular” respectively are zeroed out.
+#'   \item **Hard threshold** — Edges with \eqn{|L| < L_min} are removed; if
+#'         \code{use_FDR = TRUE}, edges with \code{FDR > FDR_max} are also
+#'         removed.
+#'   \item **Quantile filter** — Optionally drop the weakest positive edges by
+#'         calling \code{.filter_matrix_by_quantile()}.
+#' }
 #'
-#' **Output** (stored in `coordObj@meta.data`)
-#'   * `{cluster_name}`       — final module ID (macro module unless a sub-module contains >2 genes, in which case `macro.sub` overwrites)
-#'   * `{cluster_name}_sub`   — full Δ-L sub-module ID (`macro.sub`)
+#' The remaining positive edges define a weighted undirected graph that is
+#' partitioned by Louvain (default) or Leiden community detection.  Resulting
+#' cluster IDs are stored in \code{coordObj@meta.data[[cluster_name]]}.  No
+#' further sub‑clustering is performed.
 #'
-#' @inheritParams graphClusterGenes
-#' @param lee_stats_layer Sub-layer that stores Lee’s L / FDR (default "LeeStats_Xz")
-#' @param delta_layer     Sub-layer that stores Δ / FDR (default "LeeMinusR_stats")
-#' @param L_min           Minimum positive Lee’s L to retain an edge
-#' @param algo            Community detection algorithm: "louvain" or "leiden"
-#' @param resolution      Resolution parameter for Louvain/Leiden
-#' @param delta_split_min Minimum Δ to trigger a conflict edge
-#' @param delta_FDR_max   FDR threshold for Δ
-#' @param split_min_size  Attempt sub-splitting only if a macro module contains at least this many genes
-#' @param cluster_name    Prefix of output column; generated automatically if NULL
-#' @param use_delta_L     Whether to perform the Δ-L second step (default TRUE)
+#' @param coordObj       A **CoordObj** returned by FG²CLI helpers.
+#' @param grid_name      Name of the grid sub‑layer.  If \code{NULL} and only a
+#'                       single grid layer exists, that layer is used
+#'                       automatically.
+#' @param lee_stats_layer List entry storing Lee's \emph{L} results
+#'                       (default "LeeStats_Xz").  Must contain matrices
+#'                       \code{$L} and (optionally) \code{$FDR}.
+#' @param L_min          Minimum absolute Lee's \emph{L} for an edge to be kept
+#'                       (default 0).
+#' @param use_FDR        Apply FDR filter (\code{FDR_max}) on \eqn{L} edges?
+#'                       (default \code{TRUE}).
+#' @param FDR_max        Maximum FDR allowed when \code{use_FDR = TRUE}
+#'                       (default 0.05).
+#' @param pct_min        Quantile filter to drop weakest positive edges before
+#'                       graph construction; pass "q0" to disable.
+#' @param drop_isolated  Drop genes without any retained positive edge
+#'                       (default \code{TRUE}).
+#' @param algo           Community algorithm: "louvain" (default) or "leiden".
+#' @param resolution     Leiden resolution parameter (ignored for Louvain).
+#' @param delta_layer Name of the list entry that stores the \code{class}
+#'                       matrix (default "LeeMinusR_bycell_stats").  Must
+#'                       contain a character matrix \code{$class} with the same
+#'                       dimnames as \code{$L}.
+#' @param cluster_by_delta_class  One of "none" (default), "Inter", or "Intra".
+#'                       When set to "Inter" or "Intra", only edges labelled as
+#'                       “Inter‑cellular” or “Intra‑cellular” in the class
+#'                       matrix are retained before further filtering.
+#' @param cluster_name   Column name for the macro‑module IDs; a sensible
+#'                       default is generated from \code{L_min} and the chosen
+#'                       Inter/Intra filter.
 #'
-#' @importFrom igraph cluster_louvain cluster_leiden graph_from_adjacency_matrix
-#' @importFrom igraph components membership
-#' @importFrom igraph E V
-#' @importFrom stats setNames
-#' 
-#' @return The modified `coordObj`
+#' @return The modified \code{CoordObj} (invisibly).
 #' @export
-
-graphClusterGenes <- function(
+clusterGenes <- function(
   coordObj,
-  grid_name       = NULL,
-  lee_stats_layer = "LeeStats_Xz",
-  delta_layer     = "LeeMinusR_stats",
-  L_min           = 0,
-  algo            = "louvain",
-  resolution      = 1,
-  pct_min         = "q0",
-  pct_max         = "q100",
-  use_delta_L     = FALSE,
-  delta_split_min = 0,
-  delta_FDR_max   = 0.05,
-  split_min_size  = 20,
-  cluster_name    = NULL,
-  drop_isolated   = TRUE
+  grid_name              = NULL,
+  lee_stats_layer        = "LeeStats_Xz",
+  L_min                  = 0,
+  use_FDR               = TRUE,
+  FDR_max                = 0.05,
+  drop_isolated          = TRUE,
+  algo                   = c("louvain", "leiden"),
+  resolution             = 1,
+  pct_min                = "q0",
+  filter_by_delta_class  = TRUE,
+  delta_layer            = "LeeMinusR_bycell_stats",
+  cluster_by_delta_class = c("Other", "Inter", "Intra"),
+  cluster_name           = NULL
 ) {
-  ## ---------- 0. Select grid layer ----------
-  algo <- match.arg(algo)
+  ## ---------- 0. Argument checks ----------
+  algo  <- match.arg(algo)
+  cluster_by_delta_class <- match.arg(cluster_by_delta_class)
+
+  ## ---------- 1. Select grid layer ----------
   if (is.null(grid_name)) {
     subs <- names(coordObj@grid)
-    if (length(subs) == 1L) grid_name <- subs else
-      stop("Multiple grid sub-layers detected; please specify grid_name.")
+    if (length(subs) == 1L) grid_layer_name <- subs else
+      stop("Multiple grid sub‑layers detected; please specify grid_name.")
+  } else {
+    grid_layer_name <- as.character(grid_name)
   }
-  stopifnot(grid_name %in% names(coordObj@grid))
-  lay <- coordObj@grid[[grid_name]]
+  stopifnot(grid_layer_name %in% names(coordObj@grid))
+  layer <- coordObj@grid[[grid_layer_name]]
 
-  ## ---------- 1. Read Lee’s L ----------
-  if (!lee_stats_layer %in% names(lay))
-    stop("Layer '", lee_stats_layer, "' not found under grid '", grid_name, "'.")
-  Lmat <- as.matrix(lay[[lee_stats_layer]]$L)
-  if (is.null(dimnames(Lmat))) stop("Lee’s L matrix must have dimnames.")
-  genes <- rownames(Lmat)
+  ## ---------- 2. Read Lee's L (+FDR) ----------
+  if (!lee_stats_layer %in% names(layer))
+    stop("Layer '", lee_stats_layer, "' not found under grid '", grid_layer_name, "'.")
+  LeeStats <- layer[[lee_stats_layer]]
+  Lmat <- LeeStats$L
+  stopifnot(is.matrix(Lmat))
+  genes_all <- rownames(Lmat)
 
-  ## ---------- 2. Macro-module clustering ----------
-  A <- Lmat; A[A < L_min] <- 0; diag(A) <- 0; A[A < 0] <- 0
-  W <- 1 - A
-  if (exists(".filter_matrix_by_quantile", mode = "function"))
-    W <- .filter_matrix_by_quantile(W, pct_min, pct_max)
-  W[W == 1] <- 0
+  if (use_FDR) {
+    FDRmat <- LeeStats$FDR
+    stopifnot(is.matrix(FDRmat), all(dim(FDRmat) == dim(Lmat)))
+  } else {
+    FDRmat <- NULL
+  }
 
-  keep <- if (drop_isolated) rowSums(W != 0) > 0 else rep(TRUE, length(genes))
-  kept_genes <- genes[keep]
+  ## ---------- 3. Optional Inter/Intra mask ----------
+  if (filter_by_delta_class) {
+    if (!delta_layer %in% names(layer))
+      stop("Layer '", delta_layer, "' not found under grid '", grid_layer_name, "'.")
+    classMat <- layer[[delta_layer]]$class
+    stopifnot(is.matrix(classMat), all(dim(classMat) == dim(Lmat)))
+
+    target <- if (cluster_by_delta_class == "Inter") "Inter-cellular" else "Intra-cellular"
+
+    keep_mask <- classMat == target
+    keep_mask[is.na(keep_mask)] <- FALSE
+
+    # Ensure symmetry by intersecting with its transpose
+    keep_mask <- keep_mask & t(keep_mask)
+
+    Lmat[!keep_mask] <- 0
+    if (use_FDR) {
+      FDRmat[!keep_mask] <- 1
+    } # force drop later
+  }
+
+  ## ---------- 4. Build adjacency ----------
+  A <- Lmat
+  A[abs(A) < L_min] <- 0
+  if (use_FDR) A[FDRmat > FDR_max] <- 0
+  diag(A) <- 0
+  A[A < 0] <- 0
+  W <- .filter_matrix_by_quantile(A, pct_min, "q100")
+
+  keep <- if (drop_isolated) rowSums(W != 0) > 0 else rep(TRUE, length(genes_all))
+  kept_genes <- genes_all[keep]
   if (length(kept_genes) < 2L)
     stop("Fewer than two genes remain after filtering; relax thresholds or set drop_isolated = FALSE.")
 
-  g_macro <- igraph::graph_from_adjacency_matrix(W[kept_genes, kept_genes], "undirected", weighted = TRUE)
-  comm_macro <- if (algo == "leiden")
-    igraph::cluster_leiden(g_macro, weights = igraph::E(g_macro)$weight, resolution_parameter = resolution)
-  else igraph::cluster_louvain(g_macro, weights = igraph::E(g_macro)$weight)
-  macro <- setNames(rep(NA_integer_, length(genes)), genes)
-  macro[names(igraph::membership(comm_macro))] <- igraph::membership(comm_macro)
+  g_macro <- igraph::graph_from_adjacency_matrix(W[kept_genes, kept_genes],
+                                                 mode = "undirected",
+                                                 weighted = TRUE,
+                                                 diag = FALSE)
+  comm <- if (algo == "leiden") {
+    igraph::cluster_leiden(g_macro,
+      weights = igraph::E(g_macro)$weight,
+      resolution_parameter = resolution
+    )
+  } else
+    igraph::cluster_louvain(g_macro,
+      weights = igraph::E(g_macro)$weight,
+      resolution = resolution
+    )
 
-  ## ---------- 3. Δ-L sub-modules ----------
-  submod <- setNames(paste0(macro, ".0"), genes)  # default .0
+  macro <- setNames(rep(NA_integer_, length(genes_all)), genes_all)
+  macro[names(igraph::membership(comm))] <- igraph::membership(comm)
 
-  if (use_delta_L) {
-    if (!delta_layer %in% names(lay))
-      stop("Layer '", delta_layer, "' not found under grid '", grid_name, "'.")
-    Dmat <- as.matrix(lay[[delta_layer]]$Delta)
-    Fmat <- as.matrix(lay[[delta_layer]]$FDR)
-    dimnames(Dmat) <- dimnames(Fmat) <- list(genes, genes)
-
-    for (m in na.omit(unique(macro[kept_genes]))) {
-      ## genes in this macro
-      g_mod <- names(macro)[macro == m & !is.na(macro)]
-      g_mod <- intersect(g_mod, rownames(Dmat))
-      if (length(g_mod) < split_min_size) next
-
-      ## conflict edges
-      conflict <- (Dmat[g_mod, g_mod] >= delta_split_min & Fmat[g_mod, g_mod] <= delta_FDR_max) |
-                  (Lmat[g_mod, g_mod] < 0)
-      g_conf <- unique(c(rownames(conflict)[rowSums(conflict) > 0],
-                         colnames(conflict)[colSums(conflict) > 0]))
-      if (length(g_conf) == 0) next
-
-      ## retain genes that still have positive L to others
-      posL <- Lmat[g_conf, g_conf] > 0; diag(posL) <- FALSE
-      g_pos <- rownames(posL)[rowSums(posL) > 0]
-      if (length(g_pos) == 0) {
-        submod[g_conf] <- paste0(m, ".", seq_along(g_conf))
-        next
-      }
-
-      ## glue graph: positive L & Δ < delta_split_min
-      glue_mask <- (posL[g_pos, g_pos]) & (Dmat[g_pos, g_pos] < delta_split_min)
-      diag(glue_mask) <- FALSE
-
-      if (!any(glue_mask)) {
-        submod[g_pos] <- paste0(m, ".", seq_along(g_pos))
-      } else {
-        g_glue <- igraph::graph_from_adjacency_matrix(glue_mask, "undirected")
-        cc <- igraph::components(g_glue)$membership
-        submod[g_pos] <- paste0(m, ".", cc)
-      }
-    }
+  ## ---------- 5. Write back to meta.data ----------
+  if (is.null(cluster_name)) {
+    suffix <- switch(cluster_by_delta_class, none = "", Inter = "_Inter", Intra = "_Intra")
+    cluster_name <- paste0("modL", gsub("\\.", "", format(L_min, trim = TRUE)), suffix)
   }
 
-  ## ---------- 4. Compose final cluster column ----------
-  sub_sizes <- table(submod)
-  large_sub <- names(sub_sizes)[sub_sizes > 2]
-  cluster_final <- as.character(macro); names(cluster_final) <- genes
-  cluster_final[submod %in% large_sub] <- submod[submod %in% large_sub]
-  cluster_final[grepl("NA", cluster_final)] <- NA  # keep NAs explicit
-
-  ## ---------- 5. Write to meta.data ----------
   if (is.null(coordObj@meta.data) || nrow(coordObj@meta.data) == 0)
-    coordObj@meta.data <- data.frame(row.names = genes)
-  miss <- setdiff(genes, rownames(coordObj@meta.data))
+    coordObj@meta.data <- data.frame(row.names = genes_all)
+  miss <- setdiff(genes_all, rownames(coordObj@meta.data))
   if (length(miss)) coordObj@meta.data[miss, ] <- NA
 
-  if (is.null(cluster_name))
-    cluster_name <- paste0("modL", gsub("\\.", "", format(L_min, trim = TRUE)))
-
-  coordObj@meta.data[genes, cluster_name]            <- cluster_final
-  coordObj@meta.data[genes, paste0(cluster_name, "_sub")] <- submod
+  coordObj@meta.data[genes_all, cluster_name] <- macro
 
   invisible(coordObj)
 }
+
+
+
+#' @noRd
+.parse_q <- function(qstr) {
+  if (!is.character(qstr) || length(qstr) != 1 || !grepl("^[qQ][0-9]+\\.?[0-9]*$", qstr)) {
+    stop("parse_q(): qstr must be a single character string in the format 'q0', 'q50', 'q100', etc.")
+  }
+  pct_num <- as.numeric(sub("^[qQ]", "", qstr)) / 100
+  if (is.na(pct_num) || pct_num < 0 || pct_num > 1) {
+    stop("parse_q(): Parsed percentage must be between 0 and 1.")
+  }
+  return(pct_num)
+}
+
+#' @noRd
+.filter_matrix_by_quantile <- function(mat, pct_min = "q0", pct_max = "q100") {
+  ## Chekk input matrix -----------------------------------------------
+  if (!is.matrix(mat) || !is.numeric(mat)) {
+    stop("Input 'mat' must be a numeric matrix.")
+  }
+  if (is.null(rownames(mat)) || is.null(colnames(mat))) {
+    stop("Input matrix must have rownames and colnames.")
+  }
+
+  ## Argument checks for quantiles -----------------------------------
+  pmin <- .parse_q(pct_min)
+  pmax <- .parse_q(pct_max)
+  if (pmin > pmax)
+    stop("'pct_min' cannot be greater than 'pct_max'.")
+
+  vec <- as.vector(mat)
+  lower_cut <- as.numeric(stats::quantile(vec, pmin, type = 7, na.rm = TRUE))
+  upper_cut <- as.numeric(stats::quantile(vec, pmax, type = 7, na.rm = TRUE))
+
+  ## Filter indices based on quantiles -----------------------------
+  sel_idx <- which(vec >= lower_cut & vec <= upper_cut)
+
+  ## Create new matrix with filtered values ----------------------
+  new_mat <- matrix(0, nrow(mat), ncol(mat),
+                    dimnames = dimnames(mat)) 
+  new_mat[sel_idx] <- mat[sel_idx]
+
+  new_mat
+}
+
+

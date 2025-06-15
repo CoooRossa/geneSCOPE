@@ -30,7 +30,7 @@
 #' @import parallel
 #' @export
 
-createCoordObj<- function(xenium_dir,
+createCoordObj <- function(xenium_dir,
                                           lenGrid,
                                           seg_type          = c("cell", "nucleus", "both"),
                                           filtergenes       = NULL,
@@ -207,21 +207,21 @@ safeSetMethod <- function(generic, signature, definition, ...) {
   y0 <- floor(bounds_global$ymin / lg) * lg
 
   if (!is.null(user_poly)) {
-    # ---- user-defined polygon分支 ----------------------------------------
+    # ---- user-defined polygon branch -----------------------------
     mol_dt <- copy(mol_small) |>
-              mutate(gx  = (x - x0) %/% lg,
-                     gy  = ((if (flip_y) (y_max - y) else y) - y0) %/% lg,
+              mutate(gx  = (x - x0) %/% lg + 1L,
+                     gy  = ((if (flip_y) (y_max - y) else y) - y0) %/% lg + 1L,
                      grid_id = paste0("g", gx, "_", gy))
 
     cnt <- mol_dt |>
-      as.data.table() |>                     # 转 data.table
-      (\(dt) dt[, .(count = .N), by = .(grid_id, feature_name)])()   # 匿名函数里用 [...]
+      as.data.table() |>                
+      (\(dt) dt[, .(count = .N), by = .(grid_id, feature_name)])()  
     setnames(cnt, "feature_name", "gene")
   } else {
-    # ---- 无 polygon，直接 Arrow C++ 聚合 ---------------------------------
+    # ---- W/O user polygon branch -----------------------------------
     cnt <- ds |>
-      mutate(gx  = (x_location - x0) %/% lg,
-             gy  = ((if (flip_y) (y_max - y_location) else y_location) - y0) %/% lg,
+      mutate(gx  = (x_location - x0) %/% lg + 1L,
+             gy  = ((if (flip_y) (y_max - y_location) else y_location) - y0) %/% lg + 1L,
              grid_id = paste0("g", gx, "_", gy)) |>
       group_by(grid_id, feature_name) |>
       summarise(count = n(), .groups = "drop") |>
@@ -240,8 +240,8 @@ safeSetMethod <- function(generic, signature, definition, ...) {
                                          !grepl("_polys_", names(coord_obj@coord))]
     seg_dt_all <- rbindlist(coord_obj@coord[seg_layers], use.names = TRUE, fill = TRUE)
     head(seg_dt_all)  # for debugging
-    seg_dt_all[, `:=`(gx = (x - x0) %/% lg,
-                      gy = ((if (flip_y) (y_max - y) else y) - y0) %/% lg)]
+    seg_dt_all[, `:=`(gx = (x - x0) %/% lg + 1L,
+                      gy = ((if (flip_y) (y_max - y) else y) - y0) %/% lg + 1L)]
     seg_dt_all[, grid_id := paste0("g", gx, "_", gy)]
     seg_cnt <- seg_dt_all[, .N, by = grid_id]
     valid_seg <- seg_cnt[N >= min_seg_points, grid_id]
@@ -249,7 +249,7 @@ safeSetMethod <- function(generic, signature, definition, ...) {
     cnt <- cnt[grid_id %in% keep_grid]
   }
 
-  # ---- 计算全局 bounds ----------------------------------------------------
+  # ---- calculate global grid bounds -------------------------------
   # bounds_global already computed above
 
     x_breaks <- seq(x0, bounds_global$xmax, by = lg)
@@ -258,18 +258,23 @@ safeSetMethod <- function(generic, signature, definition, ...) {
     if (tail(y_breaks, 1) < bounds_global$ymax) y_breaks <- c(y_breaks, bounds_global$ymax)
     xbins_eff <- length(x_breaks) - 1L; ybins_eff <- length(y_breaks) - 1L
 
-    # ---- build grid_dt --------------------------------------------------
-    grid_dt <- CJ(gx = 0:(xbins_eff - 1L), gy = 0:(ybins_eff - 1L))
+  
 
-    ## ① 先写入边界列——这些列彼此独立
+    # ---- build grid_dt --------------------------------------------------
+    grid_dt <- CJ(gx = seq_len(xbins_eff), gy = seq_len(ybins_eff))
+
+    grid_dt[, grid_id := paste0("g", gx, "_", gy)]
+
+
+    ## 1. Assign grid bounds
     grid_dt[, `:=`(
-      xmin = x_breaks[gx + 1L],
-      xmax = x_breaks[gx + 2L],
-      ymin = y_breaks[gy + 1L],
-      ymax = y_breaks[gy + 2L]
+      xmin = x_breaks[gx],
+      xmax = x_breaks[gx + 1L],
+      ymin = y_breaks[gy],
+      ymax = y_breaks[gy + 1L]
     )]
 
-    ## ② 再用已存在的列计算派生量
+    ## 2. Calculate center and size
     grid_dt[, `:=`(
       center_x = (xmin + xmax) / 2,
       center_y = (ymin + ymax) / 2,
@@ -308,3 +313,123 @@ safeSetMethod <- function(generic, signature, definition, ...) {
 }
 
   # Ensure only one build_grid definition remains (remove any below this point)
+
+#' @title addCells
+#' @description
+#'   Read the Xenium **cell-feature sparse matrix** (either HDF5 or
+#'   Matrix-Market format), keep only the cells that appear in
+#'   \code{coordObj@coord$centroids$cell}, preserve that order, and store the
+#'   result in the new \code{@cells} slot.
+#'
+#'   The function relies only on \strong{Matrix}, \strong{data.table}, and
+#'   \strong{rhdf5} (or \strong{hdf5r})—no Seurat, tidyverse, or other heavy
+#'   dependencies.
+#'
+#' @param coordObj   A \code{CoordObj} that already contains centroids.
+#' @param xenium_dir Path to the Xenium \code{outs/} directory.
+#'
+#' @return The same object (modified in place) now carrying a
+#'         \code{dgCMatrix} in \code{@cells}.
+#' @export
+addCells <- function(coordObj, xenium_dir)
+{
+  stopifnot(inherits(coordObj, "CoordObj"), dir.exists(xenium_dir))
+
+  suppressPackageStartupMessages({
+    library(Matrix)
+    library(data.table)
+  })
+
+  ## -----------------------------------------------------------------------
+  ## 1. Retrieve the list of cells that survived ROI / QC filtering
+  ## -----------------------------------------------------------------------
+  keep_cells <- coordObj@coord$centroids$cell
+  if (!length(keep_cells))
+    stop("The centroids slot is empty; no cells to keep.")
+
+  ## -----------------------------------------------------------------------
+  ## 2. Detect which matrix format is present and load it
+  ## -----------------------------------------------------------------------
+  h5_file   <- file.path(xenium_dir, "cell_feature_matrix.h5")
+
+    ## ---- HDF5 format -----------------------------------------------------
+    library(rhdf5)          # replace with hdf5r if preferred
+    message("· Reading HDF5 cell-feature matrix …")
+
+    ## ---------- raw read ----------------------------------------------------
+    barcodes <- h5read(h5_file, "matrix/barcodes")               
+    genes_id <- h5read(h5_file, "matrix/features/id")            # Ensembl
+    genes_nm <- h5read(h5_file, "matrix/features/name")          # Symbol
+    data     <- h5read(h5_file, "matrix/data")
+    indices  <- h5read(h5_file, "matrix/indices")                # 0-based
+    indptr   <- h5read(h5_file, "matrix/indptr")
+    shape    <- as.integer(h5read(h5_file, "matrix/shape"))      # c(a,b)
+
+    ## ---------- determine orientation ---------------------------------------
+    if (shape[1] == length(barcodes) && shape[2] == length(genes_id)) {
+      n_cells <- shape[1]; n_genes <- shape[2]       
+    } else if (shape[1] == length(genes_id) && shape[2] == length(barcodes)) {
+      n_genes <- shape[1]; n_cells <- shape[2]        
+    } else {
+      stop("shape vector does not match barcode / gene lengths.")
+    }
+
+    ## ---------- convert types -----------------------------------------------
+    x       <- as.numeric(data)
+    i       <- as.integer(indices)                    
+    p       <- as.integer(indptr)
+    genes   <- make.unique(as.character(genes_nm))    
+    cells   <- as.character(barcodes)
+
+    ## ---------- sanity checks -----------------------------------------------
+    if (length(i) != length(x))
+      stop("length(indices) != length(data)")
+    if (length(p) != n_cells + 1)
+      stop("length(indptr) != n_cells + 1")
+    if (max(i) >= n_genes)
+      stop("indices contain row numbers ≥ n_genes")
+
+    ## ---------- build sparse matrix -----------------------------------------
+    counts <- new("dgCMatrix",
+      Dim       = c(n_genes, n_cells),               # rows = genes
+      x         = x,
+      i         = i,
+      p         = p,
+      Dimnames  = list(genes, cells)
+    )
+
+    ## convert gnames to symbols
+    attr(counts, "gene_map") <- data.frame(
+      ensembl = genes_id,
+      symbol  = genes_nm,
+      stringsAsFactors = FALSE
+    )
+
+
+  ## -----------------------------------------------------------------------
+  ## 3. Subset to ROI cells and reorder columns to match centroids
+  ## -----------------------------------------------------------------------
+  keep_cells <- intersect(keep_cells, colnames(counts))
+  if (!length(keep_cells))
+    stop("No overlapping cell IDs between centroids and count matrix.")
+
+  counts <- counts[ , keep_cells, drop = FALSE]
+
+  # Re-order columns so their order equals that of centroids$cell
+  ord <- match(keep_cells, coordObj@coord$centroids$cell)
+  counts <- counts[ , ord]
+
+  ## ---- 3. build list slot ---------------------------------------------
+  lst <- list(counts = counts)
+
+  ## migrate dgCMatrix attributes (e.g., logCPM previously in attr())
+  extras <- attributes(counts)
+  extras <- extras[setdiff(names(extras),
+                           c("dim", "dimnames", "i", "p", "x", "factors"))]
+  extras <- extras[vapply(extras, inherits, logical(1), "dgCMatrix")]
+  lst    <- c(lst, extras)
+
+  ## ---- 4. write back & return -----------------------------------------
+  coordObj@cells <- lst
+  coordObj
+}

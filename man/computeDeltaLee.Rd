@@ -2,49 +2,41 @@
 % Please edit documentation in R/Pearson.r
 \name{computeDeltaLee}
 \alias{computeDeltaLee}
-\title{Compute Δ = Lee's L − Pearson \emph{r} with permutation p‑values \strong{and QC}}
+\title{Compute Δ = Lee’s L − Pearson r with permutation p-values (+QC)}
 \usage{
 computeDeltaLee(
   coordObj,
+  level = c("grid", "cell"),
   grid_name = "grid_lenGrid50",
   lee_stats_layer = "LeeStats_Xz",
   cor_layer_name = "pearson_Xz",
-  perms = 1000,
-  fdr_method = "BY",
-  seed = 1
+  user_delta = TRUE,
+  r_threshold = 0.1
 )
 }
 \arguments{
-\item{grid_name}{Character; name of the grid layer to use.}
+\item{level}{"grid" (default) or "cell".}
 
-\item{lee_stats_layer}{Character; name of the Lee's L sub‑layer to use.}
+\item{grid_name}{Grid layer name (grid mode only).}
 
-\item{cor_layer_name}{Character; name of the Pearson correlation sub‑layer to use.}
+\item{lee_stats_layer}{Name of the Lee’s L sub-layer / attribute.}
 
-\item{perms}{Integer; number of permutations to perform.}
+\item{cor_layer_name}{Name of the Pearson correlation sub-layer / attribute.}
 
-\item{fdr_method}{Character; FDR adjustment method (default "BY").}
+\item{perms}{Number of permutations.}
 
-\item{seed}{Integer; random seed for reproducibility.}
+\item{fdr_method}{FDR adjustment method.}
 
-\item{write_back}{Logical; if TRUE, write the results back to
-\code{coordObj@grid[[grid_name]][["LeeMinusR_stats"]]}.}
+\item{seed}{RNG seed.}
+}
+\value{
+If successful, the modified \code{CoordObj}.
 }
 \description{
-For a given grid layer:
-\enumerate{
-\item Load Lee's L (\code{lee_stats_layer}) and Pearson correlation (\code{cor_layer_name}).
-\item Compute the difference Δ = \strong{L − r}.
-\item Perform \code{perms} row‑randomisation permutations via an OpenMP C++ backend
-(\code{leeL_minusR_perm_ge_cpp()}), return two‑tailed empirical p‑values and
-adjust FDR.
-\item Classify gene pairs:
-\itemize{
-\item \emph{L > 0 & Δ > 0 & FDR < 0.05} → "Spatial‑driven"
-\item \emph{L < 0 & Δ < 0}              → "False‑pair"
-}
-\item \strong{QC metrics} are included in the output (see \emph{Return}).
-\item Optionally write the result back to
-\code{coordObj@grid[[grid_name]][["LeeMinusR_stats"]]}.
-}
+Calculates the difference Δ = L − r either on a grid layer
+(\strong{level = "grid"}) or on the full single-cell matrix
+(\strong{level = "cell"}), performs permutation testing via the
+C++ backend \code{leeL_minusR_perm_ge_cpp()}, adds empirical
+p-values, FDR, classification, and QC metrics, and writes the
+result back into the \code{CoordObj}.
 }
