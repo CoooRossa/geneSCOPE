@@ -754,11 +754,13 @@ createCoordObj <- function(xenium_dir,
 #'        found in this slot define the subset and order of columns kept.
 #' @param xenium_dir Character scalar. Path to the Xenium \file{outs/}
 #'        directory that holds \file{cell_feature_matrix.h5}; must exist.
+#' @param filtergenes Character vector or NULL. Gene names to include (default NULL keeps all).
+#' @param exclude_prefix Character vector. Prefixes to exclude when filtering genes (default c("Unassigned", "NegControl", "Background", "DeprecatedCodeword")).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @return The same object (modified in place) now carrying a
 #'         \code{dgCMatrix} in \code{@cells}.
 #' @details
-#' The function performs four main steps:
+#' The function performs five main steps:
 #' \enumerate{
 #'   \item Reads the \strong{cell‑feature} matrix in HDF5 format produced by
 #'         10x Xenium, using \pkg{rhdf5} to avoid loading the full file into
@@ -766,6 +768,10 @@ createCoordObj <- function(xenium_dir,
 #'   \item Reconstructs the sparse count matrix as a \code{dgCMatrix} from
 #'         the \emph{x/i/p} components and automatically handles either
 #'         {genes × cells} or {cells × genes} orientations.
+#'   \item Filters genes by excluding those with specified prefixes 
+#'         (\code{exclude_prefix}) and optionally keeping only genes in 
+#'         \code{filtergenes}, similar to the filtering applied in 
+#'         \code{\link{createCoordObj}}.
 #'   \item Filters and reorders columns so that their order matches the
 #'         centroid table (\code{coordObj@coord$centroids$cell}), guaranteeing
 #'         one‑to‑one correspondence for downstream spatial analyses.
@@ -786,9 +792,17 @@ createCoordObj <- function(xenium_dir,
 #' ## Add the cell‑level count matrix to an existing CoordObj
 #' coord <- createCoordObj("mouse_brain/xenium_output")
 #' coord <- addCells(coord, "mouse_brain/xenium_output")
+#' 
+#' ## With custom gene filtering
+#' coord <- addCells(coord, "mouse_brain/xenium_output",
+#'                   filtergenes = c("Gene1", "Gene2", "Gene3"),
+#'                   exclude_prefix = c("Unassigned", "NegControl"))
 #' }
 #' @export
-addCells <- function(coordObj, xenium_dir, verbose = TRUE) {
+addCells <- function(coordObj, xenium_dir, 
+                     filtergenes = NULL,
+                     exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
+                     verbose = TRUE) {
   stopifnot(inherits(coordObj, "CoordObj"), dir.exists(xenium_dir))
 
   if (verbose) message("[geneSCOPE] Loading HDF5 libraries...")
@@ -903,6 +917,48 @@ addCells <- function(coordObj, xenium_dir, verbose = TRUE) {
     symbol = genes_nm,
     stringsAsFactors = FALSE
   )
+
+  ## -------------------------- 2c Filter genes by exclude_prefix and filtergenes ------------------
+  if (verbose) message("[geneSCOPE] Applying gene filters...")
+  
+  # Get gene names (rownames)
+  all_genes <- rownames(counts_raw)
+  keep_genes <- all_genes
+  
+  # Filter by exclude_prefix
+  if (length(exclude_prefix) > 0) {
+    exclude_pattern <- paste0("^(?:", paste(exclude_prefix, collapse = "|"), ")")
+    exclude_mask <- grepl(exclude_pattern, keep_genes, perl = TRUE)
+    keep_genes <- keep_genes[!exclude_mask]
+    
+    if (verbose) {
+      excluded_count <- sum(exclude_mask)
+      if (excluded_count > 0) {
+        message("[geneSCOPE] Excluded ", excluded_count, " genes with prefixes: ", 
+                paste(exclude_prefix, collapse = ", "))
+      }
+    }
+  }
+  
+  # Filter by filtergenes (if specified)
+  if (!is.null(filtergenes)) {
+    keep_genes <- intersect(keep_genes, filtergenes)
+    if (verbose) {
+      message("[geneSCOPE] Keeping ", length(keep_genes), " genes from filtergenes list")
+    }
+  }
+  
+  if (length(keep_genes) == 0) {
+    stop("No genes remain after filtering. Please check exclude_prefix and filtergenes parameters.")
+  }
+  
+  # Apply gene filtering to the matrix
+  counts_raw <- counts_raw[keep_genes, , drop = FALSE]
+  
+  if (verbose) {
+    message("[geneSCOPE] Final gene count: ", nrow(counts_raw), " genes (from original ", 
+            length(all_genes), ")")
+  }
 
   ## ------------------------------------------------------------------ 3
   if (verbose) message("[geneSCOPE] Filtering and reordering cells...")
