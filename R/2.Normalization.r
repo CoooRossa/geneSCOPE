@@ -46,7 +46,7 @@ norMPG <- function(coordObj,
                    mem_dense_limit = 2e11,
                    verbose = TRUE) {
   ## ---- 0. Layer check -------------------------------------------------
-  if (verbose) message("[geneSCOPE] Starting normalization process...")
+  if (verbose) message("[geneSCOPE::norMPG] Starting normalization process...")
 
   stopifnot(!is.null(coordObj@grid))
   grid_layer_name <- if (is.null(grid_name)) {
@@ -60,13 +60,13 @@ norMPG <- function(coordObj,
     as.character(grid_name)
   }
 
-  if (verbose) message("[geneSCOPE] Processing grid layer: ", grid_layer_name)
+  if (verbose) message("[geneSCOPE::norMPG] Processing grid layer: ", grid_layer_name)
 
   g <- coordObj@grid[[grid_layer_name]]
   stopifnot(all(c("counts", "grid_info") %in% names(g)))
 
   ## ---- 1. Sparse counts → dgCMatrix ----------------------------------
-  if (verbose) message("[geneSCOPE] Building sparse count matrix...")
+  if (verbose) message("[geneSCOPE::norMPG] Building sparse count matrix...")
   dt <- data.table::as.data.table(g$counts)
 
   grids <- if (keep_zero_grids) {
@@ -76,7 +76,7 @@ norMPG <- function(coordObj,
   }
   genes <- sort(unique(dt$gene))
 
-  if (verbose) message("[geneSCOPE] Matrix dimensions: ", length(grids), " grids × ", length(genes), " genes")
+  if (verbose) message("[geneSCOPE::norMPG] Matrix dimensions: ", length(grids), " grids × ", length(genes), " genes")
 
   X <- Matrix::sparseMatrix(
     i = match(dt$grid_id, grids),
@@ -88,7 +88,7 @@ norMPG <- function(coordObj,
 
   ## ---- 2. Row normalization ------------------------------------------
   if (row_norm) {
-    if (verbose) message("[geneSCOPE] Applying row normalization...")
+    if (verbose) message("[geneSCOPE::norMPG] Applying row normalization...")
     lib <- Matrix::rowSums(X)
     lib[lib == 0] <- 1
     X@x <- X@x / lib[X@i + 1L]
@@ -96,7 +96,7 @@ norMPG <- function(coordObj,
 
   ## ---- 3. Dense center + sample SD -----------------------------------
   elems <- prod(dim(X))
-  if (verbose) message("[geneSCOPE] Converting to dense matrix for standardization...")
+  if (verbose) message("[geneSCOPE::norMPG] Converting to dense matrix for standardization...")
   if (elems > mem_dense_limit) {
     warning(
       "Matrix size ", format(elems, scientific = FALSE),
@@ -105,14 +105,14 @@ norMPG <- function(coordObj,
   }
 
   Xd <- as.matrix(X) # Dense copy
-  if (verbose) message("[geneSCOPE] Applying column-wise standardization...")
+  if (verbose) message("[geneSCOPE::norMPG] Applying column-wise standardization...")
   Xd <- scale(Xd, center = TRUE, scale = TRUE) # base::scale → sample SD
 
   Xd[is.na(Xd)] <- 0 # Constant columns NA → 0
 
   ## ---- 4. Zero near-variance columns as requested --------------------
   if (zero_var_to_zero) {
-    if (verbose) message("[geneSCOPE] Processing zero-variance columns...")
+    if (verbose) message("[geneSCOPE::norMPG] Processing zero-variance columns...")
     csd <- attr(Xd, "scaled:scale")
     if (is.null(csd)) { # R 4.4 scale() no longer attaches attributes, can re-compute
       csd <- apply(Xd, 2, sd)
@@ -124,7 +124,7 @@ norMPG <- function(coordObj,
   g$Xz <- Xd
   coordObj@grid[[grid_layer_name]] <- g
 
-  if (verbose) message("[geneSCOPE] Normalization completed, Xz layer stored")
+  if (verbose) message("[geneSCOPE::norMPG] Normalization completed, Xz layer stored")
 
   invisible(coordObj)
 }
@@ -169,7 +169,7 @@ normalizeCellsCPMlog <- function(coordObj,
                                  output_layer = "logCPM",
                                  scale_factor = 1e4,
                                  verbose = TRUE) {
-  if (verbose) message("[geneSCOPE] Starting log-CPM normalization...")
+  if (verbose) message("[geneSCOPE::normalizeCellsCPMlog] Starting log-CPM normalization...")
 
   stopifnot(
     inherits(coordObj, "CoordObj"),
@@ -182,12 +182,12 @@ normalizeCellsCPMlog <- function(coordObj,
     stop("Layer '", input_layer, "' is not a dgCMatrix.")
   }
 
-  if (verbose) message("[geneSCOPE] Computing library sizes...")
+  if (verbose) message("[geneSCOPE::normalizeCellsCPMlog] Computing library sizes...")
   lib <- Matrix::colSums(mat) # Library size per column
   zerocell <- lib == 0
   lib[zerocell] <- 1 # Avoid division by zero
 
-  if (verbose) message("[geneSCOPE] Applying CPM transformation and log1p...")
+  if (verbose) message("[geneSCOPE::normalizeCellsCPMlog] Applying CPM transformation and log1p...")
   ## Vectorized: match corresponding column factors for each non-zero element
   col_rep <- rep(seq_len(ncol(mat)), diff(mat@p))
   sf_vec <- (scale_factor / lib)[col_rep]
@@ -200,7 +200,7 @@ normalizeCellsCPMlog <- function(coordObj,
 
   coordObj@cells[[output_layer]] <- out
 
-  if (verbose) message("[geneSCOPE] Log-CPM normalization completed, stored in @cells$", output_layer)
+  if (verbose) message("[geneSCOPE::normalizeCellsCPMlog] Log-CPM normalization completed, stored in @cells$", output_layer)
 
   invisible(coordObj)
 }

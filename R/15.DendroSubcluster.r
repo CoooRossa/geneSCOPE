@@ -93,7 +93,7 @@ plotDendroNetworkWithBranches <- function(
     community_method <- match.arg(community_method, several.ok = TRUE)
 
     # 0. Call base network function
-    if (verbose) message("[geneSCOPE] [Base] Constructing basic tree network...")
+    if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] Constructing basic tree network")
     base_args <- list(
         coordObj = coordObj,
         grid_name = grid_name,
@@ -135,7 +135,7 @@ plotDendroNetworkWithBranches <- function(
     vnames <- igraph::V(g)$name
 
     # 1. Parse cluster labels (align with base function logic)
-    if (verbose) message("[geneSCOPE] [Subbranch] Preparing cluster labels...")
+    if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] Preparing cluster labels")
     Vnames <- vnames
 
     if (!is.null(cluster_vec)) {
@@ -154,14 +154,14 @@ plotDendroNetworkWithBranches <- function(
         }
     } else {
         clu <- rep("C1", length(Vnames))
-        if (verbose) message("[geneSCOPE] [Subbranch] No cluster_vec provided, using single cluster C1")
+        if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] No cluster_vec provided, using single cluster C1")
     }
     names(clu) <- Vnames
     cluster_df <- data.frame(gene = Vnames, cluster = clu, stringsAsFactors = FALSE)
 
     # 2. If subclustering is disabled, return directly
     if (!enable_subbranch) {
-        if (verbose) message("[geneSCOPE] [Subbranch] enable_subbranch=FALSE, returning base network")
+        if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] enable_subbranch=FALSE, returning base network")
         return(list(
             plot = base_network$plot,
             graph = g,
@@ -194,7 +194,7 @@ plotDendroNetworkWithBranches <- function(
                 sg <- tryCatch(
                     igraph::induced_subgraph(g, vids = genes_target),
                     error = function(e) {
-                        warning("[geneSCOPE] Subgraph construction failed for cluster ", cid, ": ", e$message)
+                        warning("[geneSCOPE::buildMultiClusterDendrogramRW] Subgraph construction failed for cluster ", cid, ": ", e$message)
                         return(NULL)
                     }
                 )
@@ -204,7 +204,7 @@ plotDendroNetworkWithBranches <- function(
 
                 if (verbose) {
                     message(
-                        "[geneSCOPE] Cluster ", cid, " subgraph: nodes=",
+                        "[geneSCOPE::buildMultiClusterDendrogramRW] Cluster ", cid, " subgraph: nodes=",
                         igraph::vcount(sg), " edges=", igraph::ecount(sg)
                     )
                 }
@@ -274,7 +274,7 @@ plotDendroNetworkWithBranches <- function(
                         },
                         error = function(e) {
                             if (verbose) {
-                                message("[geneSCOPE] Articulation method failed for cluster ", cid, ": ", e$message)
+                                message("[geneSCOPE::buildMultiClusterDendrogramRW] Articulation method failed for cluster ", cid, ": ", e$message)
                             }
                         }
                     )
@@ -316,7 +316,7 @@ plotDendroNetworkWithBranches <- function(
                 list(method = method_used, subclusters = subclusters)
             },
             error = function(e) {
-                warning("[geneSCOPE] Error processing cluster ", cid, ": ", e$message)
+                warning("[geneSCOPE::buildMultiClusterDendrogramRW] Error processing cluster ", cid, ": ", e$message)
                 list(method = "none", subclusters = list())
             }
         )
@@ -330,7 +330,7 @@ plotDendroNetworkWithBranches <- function(
     }
 
     if (!length(target_clusters)) {
-        if (verbose) message("[geneSCOPE] [Subbranch] No available target clusters, skipping subdivision")
+        if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] No available target clusters, skipping subdivision")
         enable_subbranch <- FALSE
     }
 
@@ -339,20 +339,20 @@ plotDendroNetworkWithBranches <- function(
     methods_seen <- character(0)
 
     if (enable_subbranch) {
-        if (verbose) message("[geneSCOPE] [Subbranch] Processing ", length(target_clusters), " clusters")
+        if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] Processing ", length(target_clusters), " clusters")
         for (cid in target_clusters) {
             genes_target_raw <- names(clu)[clu == cid]
             genes_target <- intersect(unique(stats::na.omit(genes_target_raw)), Vnames)
 
             if (length(genes_target_raw) != length(genes_target) && verbose) {
                 message(
-                    "[geneSCOPE] Cluster ", cid, ": Filtered genes ",
+                    "[geneSCOPE::buildMultiClusterDendrogramRW] Cluster ", cid, ": Filtered genes ",
                     length(genes_target_raw), " -> ", length(genes_target)
                 )
             }
 
             if (length(genes_target) < 3) {
-                if (verbose) message("[geneSCOPE] Cluster ", cid, ": Too few nodes, skipping")
+                if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] Cluster ", cid, ": Too few nodes, skipping")
                 next
             }
 
@@ -370,7 +370,7 @@ plotDendroNetworkWithBranches <- function(
 
             if (verbose) {
                 message(
-                    "[geneSCOPE] Cluster ", cid, ": method=", res_c$method,
+                    "[geneSCOPE::buildMultiClusterDendrogramRW] Cluster ", cid, ": method=", res_c$method,
                     " subclusters=", length(res_c$subclusters)
                 )
             }
@@ -449,7 +449,7 @@ plotDendroNetworkWithBranches <- function(
     subcluster_df$color <- node_cols
 
     # 7. Generate final plot
-    if (verbose) message("[geneSCOPE] [Subbranch] Generating final plot...")
+    if (verbose) message("[geneSCOPE::buildMultiClusterDendrogramRW] Generating final plot")
     branch_network <- NULL
 
     if (method_final %in% c("none", "disabled")) {

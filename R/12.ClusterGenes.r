@@ -285,7 +285,7 @@ clusterGenes <- function(
     if (verbose) {
         nz <- sum(!is.na(coordObj@meta.data[genes_all, cluster_name]))
         message(
-            "[geneSCOPE] Written clustering column '", cluster_name, "': ",
+            "[geneSCOPE::clusterGenes] Written clustering column '", cluster_name, "': ",
             nz, "/", length(genes_all), " genes (",
             sprintf("%.1f%%", 100 * nz / length(genes_all)), ")"
         )

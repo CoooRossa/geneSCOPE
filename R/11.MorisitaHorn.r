@@ -118,7 +118,7 @@ morisitaHornOnNetwork <- function(coordObj,
                 Gsp <- Gsp %*% Matrix::Diagonal(x = 1 / area_vec)
             }
         } else {
-            if (verbose) message("[geneSCOPE] !!! Warning: grid_info lacks width/height; skipping area_norm !!!")
+            if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] !!! Warning: grid_info lacks width/height; skipping area_norm !!!")
         }
     }
 

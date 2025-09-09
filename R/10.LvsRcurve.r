@@ -42,7 +42,7 @@ addLRcurve <- function(coordObj,
   ci_adjust <- match.arg(ci_adjust)
   level <- match.arg(level)
   if (min_rel_width < 0) stop("min_rel_width cannot be negative")
-  if (B < 20) message("[geneSCOPE] !!! Warning: B < 20 may be unstable !!!")
+  if (B < 20) message("[geneSCOPE::addLRcurve] !!! Warning: B < 20 may be unstable !!!")
 
   # 1. Extract matrices
   g_layer <- .selectGridLayer(coordObj, grid_name)
@@ -523,7 +523,7 @@ getTopDeltaL <- function(coordObj,
     max(1, phys - 2)
   )
   if (ncores > safe_cores) {
-    message("[geneSCOPE] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
+    message("[geneSCOPE::addLRcurve] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
     ncores <- safe_cores
   }
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
@@ -545,7 +545,7 @@ getTopDeltaL <- function(coordObj,
   # ---- Delta ----
   internal_clamp_mode <- clamp_mode
   if (clamp_mode == "both") {
-    message("[geneSCOPE] clamp_mode='both' currently equivalent to ref_only (reference truncation only)")
+    message("[geneSCOPE::addLRcurve] clamp_mode='both' currently equivalent to ref_only (reference truncation only)")
     internal_clamp_mode <- "ref_only"
   }
   Pear_for_delta <- if (internal_clamp_mode == "ref_only") pmax(Pear_vec, 0) else Pear_vec
@@ -721,7 +721,7 @@ getTopDeltaL <- function(coordObj,
     target_batch <- max(1L, floor(target_batch / 2))
   }
   message(
-    "[geneSCOPE] Planned batch_size=", target_batch,
+    "[geneSCOPE::addLRcurve] Planned batch_size=", target_batch,
     " (estimated idx_mat ", sprintf("%.2f", est_bytes(target_batch) / 1024^2),
     " MB / limit ", sprintf("%.2f", max_idx_bytes / 1024^2), " MB)"
   )
@@ -736,7 +736,7 @@ getTopDeltaL <- function(coordObj,
     success <- FALSE
     while (!success && perm_threads >= 1) {
       message(sprintf(
-        "[geneSCOPE] Permutation attempt #%d threads=%d batch=%d remain=%d clamp_mode=%s",
+        "[geneSCOPE::addLRcurve] Permutation attempt #%d threads=%d batch=%d remain=%d clamp_mode=%s",
         attempt, perm_threads, bsz, remaining, clamp_mode
       ))
       attempt <- attempt + 1
@@ -764,7 +764,7 @@ getTopDeltaL <- function(coordObj,
         error = function(e) e
       )
       if (inherits(res, "error")) {
-        message("[geneSCOPE]   Batch failed: ", conditionMessage(res))
+        message("[geneSCOPE::addLRcurve]  Batch failed: ", conditionMessage(res))
         if (perm_threads > 1) {
           perm_threads <- max(1, floor(perm_threads / 2))
           next
@@ -813,7 +813,7 @@ getTopDeltaL <- function(coordObj,
   sel$pval_mode <- pval_mode
   if (p_adj_mode == "bonferroni") {
     sel <- sel[sel$FDR < 0.05, , drop = FALSE]
-    if (!nrow(sel)) message("[geneSCOPE] No Bonferroni-significant pairs (FDR < 0.05).")
+    if (!nrow(sel)) message("[geneSCOPE::addLRcurve] No Bonferroni-significant pairs (FDR < 0.05).")
   }
 
   sel

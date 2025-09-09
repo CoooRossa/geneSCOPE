@@ -48,7 +48,7 @@ computeIDeltaMetrics <- function(coordObj,
     level <- match.arg(level)
 
     if (level == "grid") {
-        if (verbose) message("[geneSCOPE] Selecting grid layer and building sparse gene-by-grid matrix...")
+        if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Selecting grid layer and building sparse gene-by-grid matrix")
         ## ---- 1. Select grid layer ---------------------------------------------------
         g_layer <- .selectGridLayer(coordObj, grid_name)
         # Parse actual grid_name (selectGridLayer might auto-select)
@@ -72,7 +72,7 @@ computeIDeltaMetrics <- function(coordObj,
         storage_key <- grid_name
         col_suffix <- paste0(grid_name, "_iDelta_raw")
     } else { # level == "cell"
-        if (verbose) message("[geneSCOPE] Using existing gene-by-cell sparse count matrix...")
+        if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Using existing gene-by-cell sparse count matrix")
         ## ---- 1. Check for cell count matrix ----------------------------------------
         if (is.null(coordObj@cells) || is.null(coordObj@cells$counts)) {
             stop("No cell count matrix found. Please run addCells() first.")
@@ -91,7 +91,7 @@ computeIDeltaMetrics <- function(coordObj,
     }
 
     ## ---- 3. Call C++ kernel to compute Iδ -----------------------------------------
-    if (verbose) message("[geneSCOPE] Computing Iδ for ", length(genes), " genes using ", ncore, " thread(s)...")
+    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Computing Iδ for ", length(genes), " genes using ", ncore, " thread(s)")
     delta_raw <- idelta_sparse_cpp(Gsp, n_threads = ncore)
     names(delta_raw) <- genes
 
@@ -100,7 +100,7 @@ computeIDeltaMetrics <- function(coordObj,
     names(delta_raw) <- genes
 
     ## ---- 5. Write to coordObj -----------------------------------------------------
-    if (verbose) message("[geneSCOPE] Writing Iδ results into coordObj...")
+    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Writing Iδ results into coordObj")
     # 5a. @stats new location
     if (is.null(coordObj@stats)) coordObj@stats <- list()
     if (is.null(coordObj@stats[[storage_key]])) {
@@ -127,7 +127,7 @@ computeIDeltaMetrics <- function(coordObj,
     # Assign scalar values (not matrix) to each gene
     coordObj@meta.data[genes, col_suffix] <- delta_raw[genes]
 
-    if (verbose) message("[geneSCOPE] Iδ computation completed")
+    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Iδ computation completed")
     invisible(coordObj)
 }
 

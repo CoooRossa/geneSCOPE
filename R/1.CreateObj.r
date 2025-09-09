@@ -139,18 +139,17 @@ createCoordObj <- function(xenium_dir,
         break
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE] Testing ", test_nc, " cores failed, trying fewer...")
+        if (verbose) message("[geneSCOPE::createCoordObj] Testing ", test_nc, " cores failed, trying fewer")
       }
     )
   }
 
-  if (verbose && ncores_safe < ncores) {
-    message(
-      "[geneSCOPE] Using ", ncores_safe, " cores (requested: ", ncores,
-      ", memory: ", round(sys_mem_gb, 1), "GB, platform: ", os_type, ")"
-    )
-  } else if (verbose) {
-    message("[geneSCOPE] Using ", ncores_safe, " cores")
+  if (verbose) {
+    if (ncores_safe < ncores) {
+      message("[geneSCOPE::createCoordObj] Core configuration: using ", ncores_safe, "/", ncores, " cores (", round(sys_mem_gb, 1), "GB RAM, ", os_type, ")")
+    } else {
+      message("[geneSCOPE::createCoordObj] Core configuration: using ", ncores_safe, " cores")
+    }
   }
 
   ## ---- 2. Environment variable management ------------------------------------
@@ -191,13 +190,13 @@ createCoordObj <- function(xenium_dir,
         data.table::setDTthreads(1)
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE] Warning: Could not set data.table threads")
+        if (verbose) message("[geneSCOPE::createCoordObj] Warning: Could not set data.table threads")
       }
     )
   }
 
   ## ---- 3. Package loading and configuration --------------------------------------------
-  if (verbose) message("[geneSCOPE] Loading required packages...")
+  if (verbose) message("[geneSCOPE::createCoordObj] Initializing data processing environment")
 
   suppressPackageStartupMessages({
     library(arrow)
@@ -220,7 +219,7 @@ createCoordObj <- function(xenium_dir,
         }
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE] Warning: Could not configure Arrow threading")
+        if (verbose) message("[geneSCOPE::createCoordObj]  Warning: Could not configure Arrow threading")
       }
     )
   }
@@ -249,7 +248,7 @@ createCoordObj <- function(xenium_dir,
   }
 
   ## ---- 5. Read centroid data with I/O optimization
-  if (verbose) message("[geneSCOPE] Reading cell centroids...")
+  if (verbose) message("[geneSCOPE::createCoordObj] Loading cell centroids and transcripts")
 
   centroids_dt <- tryCatch(
     {
@@ -273,11 +272,9 @@ createCoordObj <- function(xenium_dir,
     stop("No centroids found in cells.parquet")
   }
 
-  if (verbose) message("[geneSCOPE] Found ", nrow(centroids_dt), " cells")
+  if (verbose) message("[geneSCOPE::createCoordObj]  Found ", nrow(centroids_dt), " cells")
 
   ## ---- 6. Dataset preparation --------------------------------
-  if (verbose) message("[geneSCOPE] Preparing transcript dataset...")
-
   ds <- tryCatch(
     {
       arrow::open_dataset(tf_parq)
@@ -289,29 +286,27 @@ createCoordObj <- function(xenium_dir,
 
   # Apply filters
   if (!is.null(filtergenes)) {
-    if (verbose) message("[geneSCOPE] Filtering genes: ", length(filtergenes), " genes")
+    if (verbose) message("[geneSCOPE::createCoordObj]  Filtering genes: ", length(filtergenes), " genes")
     ds <- ds |> filter(feature_name %in% filtergenes)
   }
 
   if (!is.null(max_dist_mol_nuc)) {
-    if (verbose) message("[geneSCOPE] Filtering by nucleus distance: max ", max_dist_mol_nuc)
+    if (verbose) message("[geneSCOPE::createCoordObj]  Filtering by nucleus distance: max ", max_dist_mol_nuc)
     ds <- ds |> filter(nucleus_distance <= max_dist_mol_nuc)
   }
 
   if (filtermolecule) {
-    if (verbose) message("[geneSCOPE] Filtering molecules by prefix exclusion")
+    if (verbose) message("[geneSCOPE::createCoordObj]  Filtering molecules by prefix exclusion")
     pat <- paste0("^(?:", paste(exclude_prefix, collapse = "|"), ")")
     ds <- ds |> filter(!grepl(pat, feature_name))
   }
 
   if (!is.null(filterqv)) {
-    if (verbose) message("[geneSCOPE] Filtering by QV score: min ", filterqv)
+    if (verbose) message("[geneSCOPE::createCoordObj]  Filtering by QV score: min ", filterqv)
     ds <- ds |> filter(qv >= filterqv)
   }
 
   # Compute bounds
-  if (verbose) message("[geneSCOPE] Computing global bounds...")
-
   bounds_global <- tryCatch(
     {
       ds |>
@@ -330,7 +325,7 @@ createCoordObj <- function(xenium_dir,
 
   if (verbose) {
     message(
-      "[geneSCOPE] Global bounds: x=[", round(bounds_global$xmin), ",",
+      "[geneSCOPE::createCoordObj] Data bounds: x=[", round(bounds_global$xmin), ",",
       round(bounds_global$xmax), "], y=[", round(bounds_global$ymin),
       ",", round(bounds_global$ymax), "]"
     )
@@ -338,13 +333,13 @@ createCoordObj <- function(xenium_dir,
 
   if (flip_y) {
     centroids_dt <- .flipCoordinates(centroids_dt, y_max)
-    if (verbose) message("[geneSCOPE] Applied Y-axis flip")
+    if (verbose) message("[geneSCOPE::createCoordObj]  Applied Y-axis flip")
   }
 
   ## ---- 7. ROI polygon processing -------------------------
   user_poly <- NULL
   if (!is.null(coord_file)) {
-    if (verbose) message("[geneSCOPE] Processing ROI polygon from: ", coord_file)
+    if (verbose) message("[geneSCOPE::createCoordObj] Processing ROI polygon from file")
 
     if (!file.exists(coord_file)) {
       stop("Coordinate file not found: ", coord_file)
@@ -380,7 +375,7 @@ createCoordObj <- function(xenium_dir,
       stop("ROI polygon must have at least 3 points")
     }
 
-    if (verbose) message("[geneSCOPE] ROI polygon has ", nrow(poly_tb), " vertices")
+    if (verbose) message("[geneSCOPE::createCoordObj]  Polygon has ", nrow(poly_tb), " vertices")
 
     poly_geom <- tryCatch(
       {
@@ -411,18 +406,18 @@ createCoordObj <- function(xenium_dir,
     user_poly <- sf::st_sfc(poly_geom)
   } else {
     # Auto-create ROI from data boundaries when no coord_file is specified
-    if (verbose) message("[geneSCOPE] Creating automatic ROI from data boundaries...")
-    
+    if (verbose) message("[geneSCOPE::createCoordObj] Creating automatic ROI from data boundaries")
+
     # Create rectangle polygon from global bounds
     poly_coords <- data.frame(
       x = c(bounds_global$xmin, bounds_global$xmax, bounds_global$xmax, bounds_global$xmin, bounds_global$xmin),
       y = c(bounds_global$ymin, bounds_global$ymin, bounds_global$ymax, bounds_global$ymax, bounds_global$ymin)
     )
-    
+
     if (flip_y) {
       poly_coords <- .flipCoordinates(poly_coords, y_max)
     }
-    
+
     poly_geom <- tryCatch(
       {
         geom <- sf::st_polygon(list(as.matrix(poly_coords[, c("x", "y")])))
@@ -432,23 +427,25 @@ createCoordObj <- function(xenium_dir,
         stop("Error creating automatic ROI polygon: ", e$message)
       }
     )
-    
+
     if (length(poly_geom) == 0) {
       stop("Automatic ROI polygon became EMPTY after validation")
     }
-    
+
     user_poly <- sf::st_sfc(poly_geom)
-    
+
     if (verbose) {
-      message("[geneSCOPE] Automatic ROI created: x=[", round(min(poly_coords$x)), ",", 
-              round(max(poly_coords$x)), "], y=[", round(min(poly_coords$y)), ",", 
-              round(max(poly_coords$y)), "]")
+      message(
+        "[geneSCOPE::createCoordObj] Automatic ROI created: x=[", round(min(poly_coords$x)), ",",
+        round(max(poly_coords$x)), "], y=[", round(min(poly_coords$y)), ",",
+        round(max(poly_coords$y)), "]"
+      )
     }
   }
 
   ## ---- 8. Centroid clipping -----------------------------
   if (!is.null(user_poly) && nrow(centroids_dt)) {
-    if (verbose) message("[geneSCOPE] Clipping centroids to ROI...")
+    if (verbose) message("[geneSCOPE::createCoordObj] Clipping centroids to ROI...")
 
     centroids_dt <- tryCatch(
       {
@@ -462,7 +459,7 @@ createCoordObj <- function(xenium_dir,
       }
     )
 
-    if (verbose) message("[geneSCOPE] Retained ", nrow(centroids_dt), " cells within ROI")
+    if (verbose) message("[geneSCOPE::createCoordObj] Retained ", nrow(centroids_dt), " cells within ROI")
   }
 
   keep_cells <- if (nrow(centroids_dt)) unique(centroids_dt$cell) else NULL
@@ -475,10 +472,10 @@ createCoordObj <- function(xenium_dir,
   )
 
   ## ---- 10. Process segmentation data -------------------------------
-  if (verbose) message("[geneSCOPE] Processing segmentation data...")
+  if (verbose) message("[geneSCOPE::createCoordObj] Processing segmentation data...")
 
   for (tag in names(seg_files)) {
-    if (verbose) message("[geneSCOPE]  Processing ", tag, " segmentation...")
+    if (verbose) message("[geneSCOPE::createCoordObj] Processing ", tag, " segmentation...")
 
     seg_res <- tryCatch(
       {
@@ -504,7 +501,7 @@ createCoordObj <- function(xenium_dir,
   ## ---- 11. Pre-fetch molecules (ROI case) ----------------------------
   mol_small <- NULL
   if (!is.null(user_poly)) {
-    if (verbose) message("[geneSCOPE] Pre-fetching molecules for ROI...")
+    if (verbose) message("[geneSCOPE::createCoordObj] Pre-fetching molecules for ROI...")
 
     mol_small <- tryCatch(
       {
@@ -530,7 +527,7 @@ createCoordObj <- function(xenium_dir,
       )
     }
 
-    if (verbose) message("[geneSCOPE] Retained ", nrow(mol_small), " molecules within ROI")
+    if (verbose) message("[geneSCOPE::createCoordObj] Retained ", nrow(mol_small), " molecules within ROI")
   }
 
   ## ---- 12. Batch scan counting (panoramic case, using original iterator approach) ----------------------
@@ -540,7 +537,7 @@ createCoordObj <- function(xenium_dir,
   }
 
   if (is.null(user_poly)) {
-    if (verbose) message("[geneSCOPE] Starting multi-resolution scan...")
+    if (verbose) message("[geneSCOPE::createCoordObj] Starting multi-resolution scan...")
 
     # Using the original iterator approach
     n_total <- tryCatch(
@@ -585,7 +582,7 @@ createCoordObj <- function(xenium_dir,
           }
         },
         error = function(e) {
-          if (verbose) message("[geneSCOPE] Scanner finished or error: ", e$message)
+          if (verbose) message("[geneSCOPE::createCoordObj] Scanner finished or error: ", e$message)
           NULL
         }
       )
@@ -630,7 +627,7 @@ createCoordObj <- function(xenium_dir,
 
   ## ---- 13. build_grid() function ----------------------------------------
   build_grid <- function(lg) {
-    if (verbose) message(sprintf("[geneSCOPE]  ↳ grid %.1f µm …", lg))
+    if (verbose) message(sprintf("[geneSCOPE::createCoordObj] Grid %.1f µm …", lg))
     x0 <- floor(bounds_global$xmin / lg) * lg
     y0 <- if (flip_y) 0 else floor(bounds_global$ymin / lg) * lg
 
@@ -725,9 +722,9 @@ createCoordObj <- function(xenium_dir,
     )
   }
 
-  if (verbose) message("[geneSCOPE] Building grid layers …")
+  if (verbose) message("[geneSCOPE::createCoordObj] Building grid layers …")
   invisible(lapply(sort(unique(lenGrid)), build_grid))
-  if (verbose) message("[geneSCOPE] Grid construction finished.")
+  if (verbose) message("[geneSCOPE::createCoordObj] Grid construction finished.")
 
   ## ---- 14. Integrity check ----------------------------------------------
   if (length(coord_obj@grid) == 0 ||
@@ -768,9 +765,9 @@ createCoordObj <- function(xenium_dir,
 #'   \item Reconstructs the sparse count matrix as a \code{dgCMatrix} from
 #'         the \emph{x/i/p} components and automatically handles either
 #'         {genes × cells} or {cells × genes} orientations.
-#'   \item Filters genes by excluding those with specified prefixes 
-#'         (\code{exclude_prefix}) and optionally keeping only genes in 
-#'         \code{filtergenes}, similar to the filtering applied in 
+#'   \item Filters genes by excluding those with specified prefixes
+#'         (\code{exclude_prefix}) and optionally keeping only genes in
+#'         \code{filtergenes}, similar to the filtering applied in
 #'         \code{\link{createCoordObj}}.
 #'   \item Filters and reorders columns so that their order matches the
 #'         centroid table (\code{coordObj@coord$centroids$cell}), guaranteeing
@@ -792,20 +789,22 @@ createCoordObj <- function(xenium_dir,
 #' ## Add the cell‑level count matrix to an existing CoordObj
 #' coord <- createCoordObj("mouse_brain/xenium_output")
 #' coord <- addCells(coord, "mouse_brain/xenium_output")
-#' 
+#'
 #' ## With custom gene filtering
 #' coord <- addCells(coord, "mouse_brain/xenium_output",
-#'                   filtergenes = c("Gene1", "Gene2", "Gene3"),
-#'                   exclude_prefix = c("Unassigned", "NegControl"))
+#'   filtergenes = c("Gene1", "Gene2", "Gene3"),
+#'   exclude_prefix = c("Unassigned", "NegControl")
+#' )
 #' }
 #' @export
-addCells <- function(coordObj, xenium_dir, 
+addCells <- function(coordObj, xenium_dir,
                      filtergenes = NULL,
                      exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
                      verbose = TRUE) {
   stopifnot(inherits(coordObj, "CoordObj"), dir.exists(xenium_dir))
 
-  if (verbose) message("[geneSCOPE] Loading HDF5 libraries...")
+  if (verbose) message("[geneSCOPE::addCells] Loading cell-feature matrix from HDF5")
+
   suppressPackageStartupMessages({
     library(Matrix)
     library(data.table)
@@ -831,15 +830,13 @@ addCells <- function(coordObj, xenium_dir,
     stop("coordObj@coord$centroids is empty, cannot determine cells to keep.")
   }
 
-  if (verbose) message("[geneSCOPE] Target cells to retain: ", length(keep_cells_target))
+  if (verbose) message("[geneSCOPE::addCells]  Target cells: ", length(keep_cells_target))
 
   ## ------------------------------------------------------------------ 2
   h5_file <- file.path(xenium_dir, "cell_feature_matrix.h5")
   if (!file.exists(h5_file)) {
     stop("HDF5 file not found: ", h5_file)
   }
-
-  if (verbose) message("[geneSCOPE] Reading HDF5 cell-feature matrix from: ", basename(h5_file))
 
   # Cross-platform HDF5 reading
   if (requireNamespace("rhdf5", quietly = TRUE)) {
@@ -879,13 +876,12 @@ addCells <- function(coordObj, xenium_dir,
 
   if (verbose) {
     message(
-      "[geneSCOPE] Matrix dimensions: ", nrow_h5, " × ", ncol_h5,
+      "[geneSCOPE::addCells]  Matrix: ", nrow_h5, "×", ncol_h5,
       " (", length(genes_nm), " genes, ", length(barcodes), " cells)"
     )
   }
 
   ## -------------------------- 2b Build sparse matrix ------------------
-  if (verbose) message("[geneSCOPE] Building sparse count matrix...")
   x <- as.numeric(data)
   i <- as.integer(indices)
   p <- as.integer(indptr)
@@ -901,7 +897,7 @@ addCells <- function(coordObj, xenium_dir,
     )
   } else {
     ## →  columns = genes, rows = cells   (rare case: need transpose)
-    if (verbose) message("[geneSCOPE] Transposing matrix (cells × genes → genes × cells)...")
+    if (verbose) message("[geneSCOPE::addCells]  Transposing matrix layout")
     tmp <- new("dgCMatrix",
       Dim      = c(length(barcodes), length(genes_nm)),
       x        = x,
@@ -919,62 +915,63 @@ addCells <- function(coordObj, xenium_dir,
   )
 
   ## -------------------------- 2c Filter genes by exclude_prefix and filtergenes ------------------
-  if (verbose) message("[geneSCOPE] Applying gene filters...")
-  
+  if (verbose) message("[geneSCOPE::addCells] Applying gene filters")
+
   # Get gene names (rownames)
   all_genes <- rownames(counts_raw)
   keep_genes <- all_genes
-  
+
   # Filter by exclude_prefix
   if (length(exclude_prefix) > 0) {
     exclude_pattern <- paste0("^(?:", paste(exclude_prefix, collapse = "|"), ")")
     exclude_mask <- grepl(exclude_pattern, keep_genes, perl = TRUE)
     keep_genes <- keep_genes[!exclude_mask]
-    
+
     if (verbose) {
       excluded_count <- sum(exclude_mask)
       if (excluded_count > 0) {
-        message("[geneSCOPE] Excluded ", excluded_count, " genes with prefixes: ", 
-                paste(exclude_prefix, collapse = ", "))
+        message(
+          "[geneSCOPE::addCells]  Excluded ", excluded_count, " genes with prefixes: ",
+          paste(exclude_prefix, collapse = ", ")
+        )
       }
     }
   }
-  
+
   # Filter by filtergenes (if specified)
   if (!is.null(filtergenes)) {
     keep_genes <- intersect(keep_genes, filtergenes)
     if (verbose) {
-      message("[geneSCOPE] Keeping ", length(keep_genes), " genes from filtergenes list")
+      message("[geneSCOPE::addCells]  Filtered to ", length(keep_genes), " genes from target list")
     }
   }
-  
+
   if (length(keep_genes) == 0) {
     stop("No genes remain after filtering. Please check exclude_prefix and filtergenes parameters.")
   }
-  
+
   # Apply gene filtering to the matrix
   counts_raw <- counts_raw[keep_genes, , drop = FALSE]
-  
+
   if (verbose) {
-    message("[geneSCOPE] Final gene count: ", nrow(counts_raw), " genes (from original ", 
-            length(all_genes), ")")
+    message(
+      "[geneSCOPE::addCells]  Final count: ", nrow(counts_raw), "/", length(all_genes), " genes"
+    )
   }
 
   ## ------------------------------------------------------------------ 3
-  if (verbose) message("[geneSCOPE] Filtering and reordering cells...")
   keep_cells <- keep_cells_target[keep_cells_target %in% colnames(counts_raw)]
   if (!length(keep_cells)) {
     stop("Centroid cell IDs do not overlap with H5 data.")
   }
 
-  if (verbose) message("[geneSCOPE] Overlapping cells: ", length(keep_cells), "/", length(keep_cells_target))
+  if (verbose) message("[geneSCOPE::addCells]  Cell overlap: ", length(keep_cells), "/", length(keep_cells_target))
 
   counts <- counts_raw[, keep_cells, drop = FALSE]
 
   ## ------------------------------------------------------------------ 4
-  if (verbose) message("[geneSCOPE] Storing count matrix in @cells slot...")
   coordObj@cells <- list(counts = counts)
 
-  if (verbose) message("[geneSCOPE] Cell count matrix added successfully")
+  if (verbose) message("[geneSCOPE::addCells] Cell matrix integration completed")
   invisible(coordObj)
 }

@@ -186,7 +186,7 @@ loess_residual_bootstrap_compat <- function(x, y, strat, grid,
     loess_residual_bootstrap(x, y, strat, grid,
         B = B, span = span,
         deg = degree,
-        n_threads = nthreads, ...
+        n_threads = nthreads, 
     )
 }
 

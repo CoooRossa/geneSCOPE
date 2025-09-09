@@ -337,7 +337,7 @@ configureThreadsFor <- function(task_type = "mixed",
         RhpcBLASctl::blas_set_num_threads(optimal$blas_threads)
       },
       error = function(e) {
-        message("[geneSCOPE] !!! Warning: Could not set BLAS threads: ", e$message, " !!!")
+        message("[geneSCOPE::configureThreadsFor] Warning: Could not set BLAS threads: ", e$message, " !!!")
       }
     )
   }

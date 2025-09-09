@@ -47,11 +47,10 @@ computeDensity <- function(coordObj,
                            verbose = TRUE) {
     normalize_method <- match.arg(normalize_method)
 
-    if (verbose) message("[geneSCOPE] Computing density for layer: ", density_name)
+    if (verbose) message("[geneSCOPE::computeDensity] Computing density for layer '", density_name, "'")
 
-    ## --------------------------------------------------------------------- 1
+    ## --------------------------------------------------------------------- 2
     ## pick grid layer & sanity check
-    if (verbose) message("[geneSCOPE] Selecting and validating grid layer...")
     g_layer <- .selectGridLayer(coordObj, grid_name)
     grid_layer_name <- names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
 
@@ -69,21 +68,20 @@ computeDensity <- function(coordObj,
 
     counts_dt <- as.data.table(counts_dt)
 
-    ## --------------------------------------------------------------------- 2
+    ## --------------------------------------------------------------------- 3
     ## decide gene set
-    if (verbose) message("[geneSCOPE] Determining gene subset...")
     sel_genes <- .getGeneSubset(coordObj,
         genes        = genes,
         cluster_col  = cluster_col,
         cluster_num  = cluster_num
     )
 
-    if (verbose) message("[geneSCOPE] Selected ", length(sel_genes), " genes for density computation")
+    if (verbose) message("[geneSCOPE::computeDensity] Processing ", length(sel_genes), " genes")
 
-    ## --------------------------------------------------------------------- 3
+    ## --------------------------------------------------------------------- 4
     ## optional normalisation
     if (verbose && normalize_method != "none") {
-        message("[geneSCOPE] Applying normalization method: ", normalize_method)
+        message("[geneSCOPE::computeDensity] Applying ", normalize_method, " normalization")
     }
 
     counts_proc <- copy(counts_dt)
@@ -99,17 +97,15 @@ computeDensity <- function(coordObj,
     }
     ## else "none": keep raw counts
 
-    ## --------------------------------------------------------------------- 4
+    ## --------------------------------------------------------------------- 5
     ## sum across selected genes → per‑grid counts
-    if (verbose) message("[geneSCOPE] Aggregating counts across selected genes...")
     sel_counts <- counts_proc[gene %in% sel_genes,
         .(count = sum(count)),
         by = grid_id
     ]
 
-    ## --------------------------------------------------------------------- 5
+    ## --------------------------------------------------------------------- 6
     ## attach cell area & compute density
-    if (verbose) message("[geneSCOPE] Computing density values...")
     grid_dt <- as.data.table(grid_info)[
         ,
         .(grid_id, xmin, xmax, ymin, ymax,
@@ -121,9 +117,8 @@ computeDensity <- function(coordObj,
     dens_dt[is.na(count), count := 0]
     dens_dt[, density := count / area]
 
-    ## --------------------------------------------------------------------- 6
+    ## --------------------------------------------------------------------- 7
     ## create / update @density entry for this grid layer
-    if (verbose) message("[geneSCOPE] Storing density results...")
     all_ids <- grid_dt$grid_id
     dens_df <- if (!is.null(coordObj@density[[grid_layer_name]])) {
         coordObj@density[[grid_layer_name]]
@@ -143,7 +138,7 @@ computeDensity <- function(coordObj,
 
     coordObj@density[[grid_layer_name]] <- dens_df
 
-    if (verbose) message("[geneSCOPE] Density computation completed for column: ", density_name)
+    if (verbose) message("[geneSCOPE::computeDensity] Density computation completed")
 
     invisible(coordObj)
 }

@@ -74,24 +74,17 @@ addLeeStats <- function(coordObj,
     cores_to_use <- min(ncores, safe_cores)
 
     # Only warn if user setting significantly exceeds safe range
-    if (cores_to_use < ncores * 0.75) {
-        if (verbose) {
-            message(
-                "[geneSCOPE] !!! Warning: Requested ncores = ", ncores,
-                " exceeds safe limit for ", os_type, "; using ncores = ", cores_to_use, " !!!"
-            )
+    if (verbose) {
+        if (cores_to_use < ncores * 0.75) {
+            message("[geneSCOPE::addLeeStats] Core configuration: using ", cores_to_use, "/", ncores, " cores (", os_type, " system limit)")
+        } else if (cores_to_use < ncores) {
+            message("[geneSCOPE::addLeeStats] Core configuration: using ", cores_to_use, "/", ncores, " cores (optimized)")
+        } else {
+            message("[geneSCOPE::addLeeStats] Core configuration: using ", ncores, " cores")
         }
-    } else if (cores_to_use < ncores) {
-        if (verbose) message("[geneSCOPE] Adjusted ncores from ", ncores, " to ", cores_to_use, " for optimal performance")
     }
 
     ncores <- cores_to_use
-    if (verbose) {
-        message(
-            "[geneSCOPE] System info: ", os_type, ", physical cores: ", total_cores,
-            ", logical cores: ", logical_cores, ", will use: ", ncores, " cores"
-        )
-    }
 
     # Use thread configuration for mixed OpenMP/BLAS operations
     thread_config <- configureThreadsFor("mixed", ncores, restore_after = TRUE)
@@ -113,7 +106,7 @@ addLeeStats <- function(coordObj,
 
     # Check if spatial weight matrix exists
     if (is.null(g_layer$W) || sum(g_layer$W) == 0) {
-        message("[geneSCOPE] Spatial weight matrix not found or empty. Computing spatial weights...")
+        message("[geneSCOPE::addLeeStats] Computing spatial weights matrix")
         coordObj <- computeSpatialWeights(coordObj,
             grid_name = grid_name,
             style = "B",
@@ -152,10 +145,10 @@ addLeeStats <- function(coordObj,
     # More reasonable bigmemory configuration
     if (matrix_size_gb > mem_limit_GB) {
         if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
-            if (verbose) message("[geneSCOPE] !!! Warning: bigmemory not available on Windows; using regular matrices !!!")
+            if (verbose) message("[geneSCOPE::addLeeStats] !!! Warning: bigmemory not available on Windows; using regular matrices !!!")
             use_bigmemory <- FALSE
         } else {
-            if (verbose) message("[geneSCOPE] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
+            if (verbose) message("[geneSCOPE::addLeeStats] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
             use_bigmemory <- TRUE
             # Less conservative chunk size
             chunk_size <- min(chunk_size, switch(os_type,
@@ -183,6 +176,8 @@ addLeeStats <- function(coordObj,
     }
 
     ## --- 2. Lee's L computation with error recovery ---
+    if (verbose) message("[geneSCOPE::addLeeStats] Computing Lee's L statistics")
+    
     # Multi-retry mechanism with reduced thread count
     current_cores <- ncores
     min_cores <- 1
@@ -190,7 +185,7 @@ addLeeStats <- function(coordObj,
     attempt <- 1
 
     while (!success && current_cores >= min_cores) {
-        message("[geneSCOPE]   Attempt #", attempt, " using ", current_cores, " cores for Lee's L computation...")
+        if (verbose && attempt > 1) message("[geneSCOPE::addLeeStats]  Retry #", attempt, " with ", current_cores, " cores")
 
         result <- tryCatch(
             {
@@ -208,12 +203,16 @@ addLeeStats <- function(coordObj,
                     backing_path = backing_path
                 )
                 t_end <- Sys.time()
-                message("[geneSCOPE]   Lee's L computation successful! Time elapsed: ", format(t_end - t_start))
+                
+                if (verbose) {
+                    time_msg <- if (attempt == 1) "completed" else "retry successful"
+                    message("[geneSCOPE::addLeeStats]  Lee's L ", time_msg, " (", format(t_end - t_start), ")")
+                }
 
                 list(success = TRUE, object = res)
             },
             error = function(e) {
-                message("[geneSCOPE]   Lee's L computation failed: ", conditionMessage(e))
+                if (verbose && attempt > 1) message("[geneSCOPE::addLeeStats]  Attempt failed: ", conditionMessage(e))
                 list(success = FALSE, error = e)
             }
         )
@@ -227,7 +226,7 @@ addLeeStats <- function(coordObj,
             attempt <- attempt + 1
             # Reduce thread count
             current_cores <- max(floor(current_cores / 2), min_cores)
-            message("[geneSCOPE]   Reducing core count to ", current_cores, " and retrying")
+            if (verbose) message("[geneSCOPE::addLeeStats]  Reducing cores to ", current_cores, " and retrying")
             # Give system some time to recover
             Sys.sleep(3)
             # Force garbage collection
@@ -254,7 +253,7 @@ addLeeStats <- function(coordObj,
 
         # Handle large matrices more carefully
         if (inherits(L, "big.matrix")) {
-            if (verbose) message("[geneSCOPE] Computing Z-scores for large matrix in chunks...")
+            if (verbose) message("[geneSCOPE::addLeeStats]  Computing Z-scores in chunks")
             Z_mat <- L # Use the same backing store
             # Process in chunks to avoid memory issues
             n_genes <- ncol(L)
@@ -289,19 +288,20 @@ addLeeStats <- function(coordObj,
         }
 
         if (inherits(L, "big.matrix")) {
-            if (verbose) message("[geneSCOPE] Converting big.matrix to regular matrix for permutation tests...")
+            if (verbose) message("[geneSCOPE::addLeeStats]  Converting to regular matrix for permutation tests")
             L_reg <- as.matrix(L)
         } else {
             L_reg <- L
         }
 
         # Permutation test with error recovery
+        if (verbose) message("[geneSCOPE::addLeeStats] Running permutation tests")
         perm_success <- FALSE
         perm_cores <- current_cores
         perm_attempt <- 1
 
         while (!perm_success && perm_cores >= 1) {
-            message("[geneSCOPE]   Attempting permutation test #", perm_attempt, " using ", perm_cores, " cores...")
+            if (verbose && perm_attempt > 1) message("[geneSCOPE::addLeeStats]  Retry #", perm_attempt, " with ", perm_cores, " cores")
 
             perm_result <- tryCatch(
                 {
@@ -313,11 +313,14 @@ addLeeStats <- function(coordObj,
                         n_threads  = perm_cores
                     )
                     t_end <- Sys.time()
-                    message("[geneSCOPE]   Permutation test successful! Time elapsed: ", format(t_end - t_start))
+                    if (verbose) {
+                        time_msg <- if (perm_attempt == 1) "completed" else "retry successful"
+                        message("[geneSCOPE::addLeeStats]  Permutation test ", time_msg, " (", format(t_end - t_start), ")")
+                    }
                     list(success = TRUE, object = p_result)
                 },
                 error = function(e) {
-                    message("[geneSCOPE]   Permutation test failed: ", conditionMessage(e))
+                    if (verbose && perm_attempt > 1) message("[geneSCOPE::addLeeStats]  Test failed: ", conditionMessage(e))
                     list(success = FALSE, error = e)
                 }
             )
@@ -328,14 +331,14 @@ addLeeStats <- function(coordObj,
             } else {
                 perm_attempt <- perm_attempt + 1
                 perm_cores <- max(floor(perm_cores / 2), 1)
-                message("[geneSCOPE]   Reducing permutation test core count to ", perm_cores, " and retrying")
+                if (verbose) message("[geneSCOPE::addLeeStats]  Reducing cores to ", perm_cores, " and retrying")
                 Sys.sleep(2)
                 gc(verbose = FALSE)
             }
         }
 
         if (!perm_success) {
-            if (verbose) message("[geneSCOPE] !!! Warning: Permutation test failed; setting P = NULL !!!")
+            if (verbose) message("[geneSCOPE::addLeeStats] !!! Warning: Permutation test failed; setting P = NULL !!!")
             NULL
         } else {
             P
@@ -352,7 +355,7 @@ addLeeStats <- function(coordObj,
     #   p_uniform = (k+U)/(perms+1)        (random jitter, expected equal to discrete grid, breaks staircase)
     #   Main output FDR = BH(p_beta)
     if (inherits(Z_mat, "big.matrix")) {
-        if (verbose) message("[geneSCOPE] Computing FDR (big.matrix, chunk-wise approximate BH) ...")
+        if (verbose) message("[geneSCOPE::addLeeStats] Computing FDR corrections")
         n_genes <- ncol(Z_mat)
         idx_chunks <- seq(1, n_genes, by = chunk_size)
 
@@ -637,7 +640,7 @@ addLeeStats <- function(coordObj,
         ## ======================================================
     } else {
         message(sprintf(
-            "[geneSCOPE] Estimated matrix %.1f GB > limit %.1f GB; switching to chunked, streamed write …",
+            "[geneSCOPE::addLeeStats] Estimated matrix %.1f GB > limit %.1f GB; switching to chunked, streamed write",
             bytes_L, mem_limit_GB
         ))
 

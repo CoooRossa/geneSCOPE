@@ -3,7 +3,7 @@
 
 #' @noRd
 .selectGridLayer <- function(coordObj, grid_name = NULL, verbose = FALSE) {
-    if (verbose) message("[geneSCOPE] Selecting grid layer...")
+    # Removed verbose message to avoid redundancy with main functions
 
     if (is.null(coordObj@grid) || length(coordObj@grid) == 0) {
         stop("No grid layers found in coordObj")
@@ -11,7 +11,7 @@
 
     if (is.null(grid_name)) {
         if (length(coordObj@grid) == 1) {
-            if (verbose) message("[geneSCOPE] Using single available grid layer")
+            # Removed verbose message to avoid redundancy
             return(coordObj@grid[[1]])
         } else {
             stop("Multiple grid layers found. Please specify grid_name.")
@@ -22,13 +22,13 @@
         stop("Grid layer '", grid_name, "' not found.")
     }
 
-    if (verbose) message("[geneSCOPE] Selected grid layer: ", grid_name)
+    # Removed verbose message to avoid redundancy with main functions
     return(coordObj@grid[[grid_name]])
 }
 
 #' @noRd
 .checkGridContent <- function(coordObj, grid_name, verbose = FALSE) {
-    if (verbose) message("[geneSCOPE] Validating grid content...")
+    # Removed verbose message to avoid redundancy with main functions
 
     g_layer <- .selectGridLayer(coordObj, grid_name)
 
@@ -41,16 +41,15 @@
         )
     }
 
-    if (verbose) message("[geneSCOPE] Grid content validation passed")
+    # Removed verbose message to avoid redundancy with main functions
     invisible(TRUE)
 }
 
 #' @noRd
 .getGeneSubset <- function(coordObj, genes = NULL, cluster_col = NULL, cluster_num = NULL, verbose = FALSE) {
-    if (verbose) message("[geneSCOPE] Determining gene subset...")
+    # Removed verbose message to avoid redundancy with main functions
 
     if (!is.null(genes)) {
-        if (verbose) message("[geneSCOPE] Using provided gene list: ", length(genes), " genes")
         return(genes)
     }
 
@@ -67,14 +66,12 @@
             stop("No genes found for cluster ", cluster_num, " in column ", cluster_col)
         }
 
-        if (verbose) message("[geneSCOPE] Selected ", length(selected_genes), " genes from cluster ", cluster_num)
         return(selected_genes)
     }
 
     # If no subset specified, return all genes
     if (!is.null(coordObj@meta.data)) {
         all_genes <- rownames(coordObj@meta.data)
-        if (verbose) message("[geneSCOPE] Using all genes from meta.data: ", length(all_genes), " genes")
         return(all_genes)
     }
 
@@ -83,7 +80,6 @@
 
 #' @noRd
 .getLeeMatrix <- function(coordObj, grid_name = NULL, lee_layer = NULL, verbose = FALSE) {
-    if (verbose) message("[geneSCOPE] Retrieving Lee's L matrix...")
 
     ## ---- 0. Select grid sub-layer ------------------------------------------------
     g_layer <- .selectGridLayer(coordObj, grid_name, verbose = verbose)
@@ -95,7 +91,6 @@
 
     ## ---- 1. Auto-detect LeeStats layer name ----------------------------------------
     if (is.null(lee_layer)) {
-        if (verbose) message("[geneSCOPE] Auto-detecting Lee's L layer...")
         cand <- character(0)
         if (!is.null(coordObj@stats[[grid_name]])) {
             cand <- names(coordObj@stats[[grid_name]])
@@ -121,7 +116,6 @@
             )
         }
 
-        if (verbose) message("[geneSCOPE] Using Lee's L layer: ", lee_layer)
     }
 
     ## ---- 2. Search @stats → @grid in order ------------------------------------
@@ -129,12 +123,10 @@
     if (!is.null(coordObj@stats[[grid_name]]) &&
         !is.null(coordObj@stats[[grid_name]][[lee_layer]])) {
         leeStat <- coordObj@stats[[grid_name]][[lee_layer]]
-        if (verbose) message("[geneSCOPE] Found Lee's L matrix in @stats")
     }
 
     if (is.null(leeStat) && !is.null(g_layer[[lee_layer]])) {
         leeStat <- g_layer[[lee_layer]]
-        if (verbose) message("[geneSCOPE] Found Lee's L matrix in @grid")
     }
 
     if (is.null(leeStat) || is.null(leeStat$L)) {
@@ -148,12 +140,10 @@
 
     ## ---- 3. If Pearson correlation matrix exists, take intersection ---------------------------------
     if (!is.null(g_layer$pearson_cor)) {
-        if (verbose) message("[geneSCOPE] Aligning with Pearson correlation matrix...")
         common <- intersect(rownames(Lmat), rownames(g_layer$pearson_cor))
         Lmat <- Lmat[common, common, drop = FALSE]
     }
 
-    if (verbose) message("[geneSCOPE] Lee's L matrix retrieved: ", nrow(Lmat), "×", ncol(Lmat))
     Lmat
 }
 

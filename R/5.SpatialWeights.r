@@ -54,7 +54,7 @@ computeSpatialWeights <- function(coordObj,
                                   zero_policy = TRUE,
                                   store_listw = TRUE,
                                   verbose = TRUE) {
-  if (verbose) message("[geneSCOPE] Computing spatial weights for grid layer...")
+  if (verbose) message("[geneSCOPE::computeSpatialWeights] Computing spatial weights for grid layer")
 
   # Use OpenMP-only configuration for C++ spatial operations
   thread_config <- configureThreadsFor("openmp_only",
@@ -72,7 +72,6 @@ computeSpatialWeights <- function(coordObj,
   }
 
   ## ---------- 0. Select grid layer (helper) -------------------------------
-  if (verbose) message("[geneSCOPE] Selecting grid layer...")
   g_layer <- .selectGridLayer(coordObj, grid_name)
 
   ## If grid_name not provided, fill back actual name for writing back
@@ -104,17 +103,15 @@ computeSpatialWeights <- function(coordObj,
 
   if (verbose) {
     message(
-      "[geneSCOPE] Grid dimensions: ", length(grid_id), " grids, ",
+      "[geneSCOPE::computeSpatialWeights] Grid dimensions: ", length(grid_id), " grids, ",
       hbins, "×", hbins, " lattice"
     )
   }
 
   ## ---------- 1. Full grid Queen neighborhood ---------------------------------
-  if (verbose) message("[geneSCOPE] Building Queen neighborhood structure...")
   full_nb <- grid_nb_omp(hbins, hbins, queen = TRUE)
 
   ## ---------- 2. Subset and relabel ------------------------------------
-  if (verbose) message("[geneSCOPE] Subsetting and relabeling neighborhoods...")
   cell_id <- (gy - 1L) * hbins + gx # Row-major order
   sub_nb <- full_nb[cell_id]
   relabel_nb <- lapply(sub_nb, function(v) {
@@ -138,7 +135,6 @@ computeSpatialWeights <- function(coordObj,
 
   ## ---------- 3. listw / matrix --------------------------------------
   if (store_listw || store_mat) {
-    if (verbose) message("[geneSCOPE] Converting to spatial weights objects...")
     listw_obj <- spdep::nb2listw(relabel_nb,
       style = style,
       zero.policy = zero_policy
@@ -146,7 +142,6 @@ computeSpatialWeights <- function(coordObj,
   }
 
   if (store_mat) {
-    if (verbose) message("[geneSCOPE] Creating binary adjacency matrix...")
     W <- listw_B_omp(relabel_nb)
     diag(W) <- 0
     W@x[] <- 1
@@ -157,7 +152,7 @@ computeSpatialWeights <- function(coordObj,
     coordObj@grid[[grid_name]]$listw <- listw_obj
   }
 
-  if (verbose) message("[geneSCOPE] Spatial weights computation completed")
+  if (verbose) message("[geneSCOPE::computeSpatialWeights] Spatial weights computation completed")
 
   invisible(coordObj)
 }

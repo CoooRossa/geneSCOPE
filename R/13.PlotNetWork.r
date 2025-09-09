@@ -162,7 +162,7 @@ plotNetworkGenes <- function(
 
     if (use_consensus && isTRUE(use_FDR)) {
         # 共识图模式通常已预先过滤，这里不给二次 FDR 筛选
-        message("[geneSCOPE] use_consensus_graph=TRUE ignoring FDR re-filtering (assuming graph already filtered).")
+        message("[geneSCOPE::plotNetworkGenes] use_consensus_graph=TRUE ignoring FDR re-filtering (assuming graph already filtered).")
     }
 
     if (use_consensus) {
@@ -247,7 +247,7 @@ plotNetworkGenes <- function(
             }
             if (inherits(FDR_sel, "big.matrix")) {
                 message(
-                    "[geneSCOPE] Using FDR source '", FDR_used_name,
+                    "[geneSCOPE::plotNetworkGenes] Using FDR source '", FDR_used_name,
                     "' (big.matrix) → converting to regular matrix for subset filtering"
                 )
                 FDR_sel <- bigmemory::as.matrix(FDR_sel)
@@ -259,7 +259,7 @@ plotNetworkGenes <- function(
             }
             FDRmat <- FDR_sel[idx, idx, drop = FALSE]
             A[FDRmat > FDR_max | is.na(FDRmat)] <- 0
-            message(sprintf("[geneSCOPE] Using FDR source '%s' (FDR_max=%.3g)", FDR_used_name, FDR_max))
+            message(sprintf("[geneSCOPE::plotNetworkGenes] Using FDR source '%s' (FDR_max=%.3g)", FDR_used_name, FDR_max))
         }
 
         ## (vi) 对称化并去对角
@@ -1457,11 +1457,11 @@ unifyClusteringTypes <- function(coordObj, grid_sizes = c(10, 30, 55), verbose =
         matching_cols <- grep(grid_pattern, all_cols, value = TRUE)
 
         if (length(matching_cols) == 0) {
-            if (verbose) message("[geneSCOPE] No clustering results found for grid size ", i)
+            if (verbose) message("[geneSCOPE::plotNetworkGenes] No clustering results found for grid size ", i)
             next
         }
 
-        if (verbose) message("[geneSCOPE] Processing grid size ", i, ", found ", length(matching_cols), " clustering results")
+        if (verbose) message("[geneSCOPE::plotNetworkGenes] Processing grid size ", i, ", found ", length(matching_cols), " clustering results")
 
         # 处理每列
         for (col in matching_cols) {
@@ -1488,8 +1488,8 @@ unifyClusteringTypes <- function(coordObj, grid_sizes = c(10, 30, 55), verbose =
     }
 
     if (verbose) {
-        message("[geneSCOPE] Converted ", converted_count, " columns to factor type")
-        message("[geneSCOPE] Already had ", already_factor, " columns as factor type")
+        message("[geneSCOPE::plotNetworkGenes] Converted ", converted_count, " columns to factor type")
+        message("[geneSCOPE::plotNetworkGenes] Already had ", already_factor, " columns as factor type")
     }
 
     return(coordObj)
@@ -1552,7 +1552,7 @@ getValidClusterColumns <- function(coordObj,
 
     # All columns should have the same number of non-NA values, otherwise there might be issues
     if (length(unique(non_na_counts)) > 1) {
-        message("[geneSCOPE] !!! Warning: Different clustering results contain different numbers of genes, may cause comparison issues !!!")
+        message("[geneSCOPE::plotNetworkGenes] !!! Warning: Different clustering results contain different numbers of genes, may cause comparison issues !!!")
     }
 
     return(valid_columns)
@@ -1585,13 +1585,13 @@ robustClusterCompare <- function(coordObj,
         stop("找不到有效的聚类列，请检查网格尺寸和meta.data")
     }
 
-    message("[geneSCOPE] Using ", length(valid_columns), " valid clustering columns for comparison")
+    message("[geneSCOPE::plotNetworkGenes] Using ", length(valid_columns), " valid clustering columns for comparison")
 
     # 执行聚类比较
     result <- plotClusterComparison(
         coordObj = coordObj,
         method_cols = valid_columns,
-        ...
+        
     )
 
     return(result)
@@ -1680,16 +1680,16 @@ batchPlotGeneNetworks <- function(coordObj,
         gsize <- sub("^.*_grid([0-9]+).*", "\\1", col)
         grid_name <- paste0("grid_lenGrid", gsize)
         if (!(grid_name %in% names(coordObj@grid))) {
-            message("[geneSCOPE] Skipping ", col, " (missing grid layer ", grid_name, ")")
+            message("[geneSCOPE::plotNetworkGenes] Skipping ", col, " (missing grid layer ", grid_name, ")")
             next
         }
         # At least two non-NA values
         non_na <- sum(!is.na(coordObj@meta.data[[col]]))
         if (non_na < 2) {
-            message("[geneSCOPE] Skipping ", col, " (non-NA genes < 2)")
+            message("[geneSCOPE::plotNetworkGenes] Skipping ", col, " (non-NA genes < 2)")
             next
         }
-        message("[geneSCOPE] Plotting: ", col, " / grid=", grid_name, " (non-NA=", non_na, ")")
+        message("[geneSCOPE::plotNetworkGenes] Plotting: ", col, " / grid=", grid_name, " (non-NA=", non_na, ")")
         title_net <- paste0("Network - ", col, " (grid ", gsize, ")")
         p_net <- tryCatch(
             plotNetworkGenes(
@@ -1699,10 +1699,10 @@ batchPlotGeneNetworks <- function(coordObj,
                 use_consensus_graph = TRUE, # 使用共识图
                 graph_slot_name = "g_consensus",
                 title = title_net,
-                ...
+                
             ),
             error = function(e) {
-                message("[geneSCOPE] !!! Warning: plotNetworkGenes failed: ", col, " : ", e$message, " !!!")
+                message("[geneSCOPE::plotNetworkGenes] !!! Warning: plotNetworkGenes failed: ", col, " : ", e$message, " !!!")
                 NULL
             }
         )
@@ -1719,7 +1719,7 @@ batchPlotGeneNetworks <- function(coordObj,
                 show_sign = TRUE
             ),
             error = function(e) {
-                message("[geneSCOPE] !!! Warning: plotDendroNetwork failed: ", col, " : ", e$message, " !!!")
+                message("[geneSCOPE::plotNetworkGenes] !!! Warning: plotDendroNetwork failed: ", col, " : ", e$message, " !!!")
                 NULL
             }
         )
