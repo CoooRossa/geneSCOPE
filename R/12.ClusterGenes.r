@@ -123,15 +123,42 @@ clusterGenes <- function(
 
     ## 8. Multiple communities / consensus
     algo_fun <- if (algo == "leiden") igraph::cluster_leiden else igraph::cluster_louvain
+
+    # Increase future.globals.maxSize temporarily to handle large objects
+    old_max_size <- getOption("future.globals.maxSize")
+    options(future.globals.maxSize = 2 * 1024^3) # 2GB
+    on.exit(options(future.globals.maxSize = old_max_size), add = TRUE)
+
+    # Extract necessary components to minimize data transfer
+    edge_weights <- igraph::E(g0)$weight
+    vertex_names <- igraph::V(g0)$name
+    edge_list <- igraph::as_data_frame(g0, what = "edges")[, c("from", "to")]
+
     memb_mat <- future.apply::future_sapply(
         seq_len(n_restart),
         function(ii) {
-            algo_fun(
-                g0,
-                weights = igraph::E(g0)$weight,
-                resolution_parameter = resolution,
-                objective_function = objective
-            )$membership
+            # Reconstruct minimal graph in worker
+            g_local <- igraph::graph_from_data_frame(
+                cbind(edge_list, weight = edge_weights),
+                directed = FALSE,
+                vertices = vertex_names
+            )
+
+            if (algo == "leiden") {
+                igraph::cluster_leiden(
+                    g_local,
+                    weights = igraph::E(g_local)$weight,
+                    resolution_parameter = resolution,
+                    objective_function = objective
+                )$membership
+            } else {
+                igraph::cluster_louvain(
+                    g_local,
+                    weights = igraph::E(g_local)$weight,
+                    resolution_parameter = resolution,
+                    objective_function = objective
+                )$membership
+            }
         },
         future.seed = TRUE
     )

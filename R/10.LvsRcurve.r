@@ -490,7 +490,7 @@ plotLvsR <- function(coordObj,
 #' Output column mc_se≈sqrt(p*(1-p)/N), and Clopper–Pearson interval
 #' can be used to assess whether more perms are needed.
 #' @export
-getTopDeltaL2 <- function(coordObj,
+getTopDeltaL <- function(coordObj,
                           grid_name,
                           pear_level = c("cell", "grid"),
                           pear_range = c(-1, 1),
