@@ -10,22 +10,22 @@ R
 
 ```r
 # Step 1: Install dependencies (HPC-optimized)
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_dependencies.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_hpc_dependencies.R")
 
 # Step 2: Install geneSCOPE
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genescope_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_genescope_hpc.R")
 ```
 
 ### Method 2: Emergency Installation (If Method 1 Fails)
 ```r
 # For severe dependency conflicts (e.g., httpgd issues)
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_install.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/emergency_hpc_install.R")
 ```
 
 ### Method 3: Diagnostic First (If Unsure)
 ```r
 # Run diagnostics to identify specific issues
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/diagnose_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/diagnose_hpc.R")
 # Review output, then choose appropriate installation method
 ```
 
@@ -158,7 +158,7 @@ memory.limit(size = 16000)  # Windows
 
 1. **Check Package Status**: `library(geneSCOPE); packageVersion("geneSCOPE")`
 2. **View Documentation**: `help(package = "geneSCOPE")`
-3. **Report Issues**: [GitHub Issues](https://github.com/haenolab/geneSCOPE/issues)
+3. **Report Issues**: [GitHub Issues](https://github.com/CoooRossa/geneSCOPE/issues)
 
 ## Success Indicators
 

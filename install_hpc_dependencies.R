@@ -191,7 +191,7 @@ main <- function() {
     } else {
         cat("[geneSCOPE] ✓ All essential dependencies installed successfully!\n")
         cat("[geneSCOPE] You can now install geneSCOPE with:\n")
-        cat("[geneSCOPE] devtools::install_github('haenolab/geneSCOPE', dependencies = FALSE)\n")
+        cat("[geneSCOPE] devtools::install_github('CoooRossa/geneSCOPE', dependencies = FALSE)\n")
         return(TRUE)
     }
 }

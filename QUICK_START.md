@@ -5,13 +5,13 @@
 ### Standard Installation
 ```r
 # Install from GitHub (when repository is public)
-devtools::install_github("haenolab/geneSCOPE")
+devtools::install_github("CoooRossa/geneSCOPE")
 ```
 
 ### HPC Installation (Recommended for Clusters)
 ```r
 # For HPC environments with dependency issues
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_install.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/emergency_hpc_install.R")
 ```
 
 ## 📚 Basic Usage
@@ -77,7 +77,7 @@ plotNetworkGenes(clusters)
 ### Installation Issues
 ```r
 # If standard installation fails, try:
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/diagnose_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/diagnose_hpc.R")
 # This will identify specific issues in your environment
 ```
 

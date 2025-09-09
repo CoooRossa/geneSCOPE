@@ -51,7 +51,7 @@ module load R
 R
 
 # 2. Run emergency installer (specifically addresses httpgd)
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_install.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/emergency_hpc_install.R")
 ```
 
 ### Expected Result:

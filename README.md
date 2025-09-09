@@ -2,7 +2,7 @@
 
 > **Gene Spatial Correlation Of Pairwise Expression**
 
-[![R build status](https://github.com/haenolab/geneSCOPE/workflows/R-CMD-check/badge.svg)](https://github.com/haenolab/geneSCOPE/actions)
+[![R build status](https://github.com/CoooRossa/geneSCOPE/workflows/R-CMD-check/badge.svg)](https://github.com/CoooRossa/geneSCOPE/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Tools to compute and visualize spatial correlation of pairwise gene expression, including Lee's L statistics, permutation-based inference, spatial weights, and network-based visualizations over grid-aggregated spatial transcriptomics data.
@@ -14,7 +14,7 @@ Tools to compute and visualize spatial correlation of pairwise gene expression, 
 ```r
 # Install from GitHub
 if (!require("devtools")) install.packages("devtools")
-devtools::install_github("haenolab/geneSCOPE")
+devtools::install_github("CoooRossa/geneSCOPE")
 ```
 
 ### Prerequisites
@@ -49,10 +49,10 @@ For HPC environments where dependencies may fail, use our specialized installers
 
 ```r
 # Step 1: Install dependencies (HPC-optimized)
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_dependencies.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_hpc_dependencies.R")
 
 # Step 2: Install geneSCOPE
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genescope_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_genescope_hpc.R")
 ```
 
 See [HPC_INSTALL.md](HPC_INSTALL.md) for detailed troubleshooting.
@@ -63,10 +63,10 @@ If you encounter dependency issues on regular systems:
 
 ```r
 # Download and run dependency installer
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_dependencies.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_dependencies.R")
 
 # Then install the package
-devtools::install_github("haenolab/geneSCOPE")
+devtools::install_github("CoooRossa/geneSCOPE")
 ```
 
 ## Quick Start
@@ -128,6 +128,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/haenolab/geneSCOPE/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/haenolab/geneSCOPE/discussions)
+- **Issues**: [GitHub Issues](https://github.com/CoooRossa/geneSCOPE/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/CoooRossa/geneSCOPE/discussions)
 - **Email**: your.email@domain.com

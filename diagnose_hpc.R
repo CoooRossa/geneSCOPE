@@ -177,7 +177,7 @@ check_repositories <- function() {
     cat("[geneSCOPE] Testing GitHub access...\n")
     tryCatch(
         {
-            url <- "https://api.github.com/repos/haenolab/geneSCOPE"
+            url <- "https://api.github.com/repos/CoooRossa/geneSCOPE"
             response <- readLines(url, warn = FALSE)
             cat("[geneSCOPE] ✓ GitHub accessible\n")
         },

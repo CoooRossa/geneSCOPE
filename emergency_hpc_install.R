@@ -144,7 +144,7 @@ emergency_install <- function() {
             cat("[geneSCOPE] Attempting geneSCOPE installation...\n")
             tryCatch(
                 {
-                    devtools::install_github("haenolab/geneSCOPE",
+                    devtools::install_github("CoooRossa/geneSCOPE",
                         dependencies = FALSE,
                         upgrade = "never"
                     )

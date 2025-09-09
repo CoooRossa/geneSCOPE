@@ -21,7 +21,7 @@ Created **4 specialized HPC installation scripts** to handle different scenarios
 
 **Usage**:
 ```r
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_dependencies.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_hpc_dependencies.R")
 ```
 
 ### 2. `install_genescope_hpc.R` - Package Installer  
@@ -32,7 +32,7 @@ source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_de
 
 **Usage**:
 ```r
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genescope_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_genescope_hpc.R")
 ```
 
 ### 3. `emergency_hpc_install.R` - Problem Solver
@@ -43,7 +43,7 @@ source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genesc
 
 **Usage**:
 ```r
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_install.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/emergency_hpc_install.R")
 ```
 
 ### 4. `diagnose_hpc.R` - Environment Analyzer
@@ -55,7 +55,7 @@ source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_
 
 **Usage**:
 ```r
-source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/diagnose_hpc.R")
+source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/diagnose_hpc.R")
 ```
 
 ## 📋 Step-by-Step Resolution
@@ -68,18 +68,18 @@ source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/diagnose_hpc.R
    R
    ```
    ```r
-   source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/diagnose_hpc.R")
+   source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/diagnose_hpc.R")
    ```
 
 2. **If httpgd is the main problem** (likely):
    ```r
-   source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/emergency_hpc_install.R")
+   source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/emergency_hpc_install.R")
    ```
 
 3. **If basic dependency issues**:
    ```r
-   source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_dependencies.R")
-   source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genescope_hpc.R")
+   source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_hpc_dependencies.R")
+   source("https://raw.githubusercontent.com/CoooRossa/geneSCOPE/main/install_genescope_hpc.R")
    ```
 
 ## 🎯 Key Optimizations for HPC
