@@ -104,7 +104,7 @@ computeSpatialWeights <- function(coordObj,
 
   if (verbose) {
     message(
-      "[geneSCOPE] Grid dimensions: ", length(grids), " grids, ",
+      "[geneSCOPE] Grid dimensions: ", length(grid_id), " grids, ",
       hbins, "×", hbins, " lattice"
     )
   }
