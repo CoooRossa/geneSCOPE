@@ -22,6 +22,7 @@
 #' @param chunk_size Integer. Number of columns processed per chunk (default 128).
 #' @param use_bigmemory Logical. Use file-backed matrices for large computations (default TRUE).
 #' @param backing_path Character. Directory for temporary files (default tempdir()).
+#' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @param ncore Deprecated. Use \code{ncores} instead.
 #' @return The modified \code{CoordObj}.
 #' @importFrom RhpcBLASctl blas_set_num_threads
@@ -44,6 +45,7 @@ addLeeStats <- function(coordObj,
                         chunk_size = 32L,
                         use_bigmemory = TRUE,
                         backing_path = tempdir(),
+                        verbose = TRUE,
                         ncore = NULL) {
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
 
