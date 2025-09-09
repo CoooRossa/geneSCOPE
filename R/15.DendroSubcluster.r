@@ -1,24 +1,25 @@
-#' @title 基于树形网络的分支子聚类可视化
+#' @title Dendrogram-based Branch Subclustering Visualization
 #' @description
-#' 调用已有 \code{plotDendroNetwork()} 构建树状/骨架网络后，对指定簇(或全部簇)执行
-#' “关节点分支”子聚类细分；若无候选且设置 \code{fallback_community=TRUE}，
-#' 回退 Louvain/Leiden 社区拆分。输出带子聚类着色的新网络图。
+#' Calls existing \code{plotDendroNetwork()} to build tree/skeleton network, then performs
+#' "articulation point branching" subclustering refinement on specified clusters (or all clusters);
+#' if no candidates and \code{fallback_community=TRUE} is set,
+#' falls back to Louvain/Leiden community splitting. Outputs new network plot with subcluster coloring.
 #' @inheritParams plotDendroNetwork
-#' @param enable_subbranch 是否启用分支子聚类细分 (默认 TRUE)
-#' @param cluster_id 可选字符向量：只对子聚类拆分的簇；NULL=全部
-#' @param include_root 关节点法是否把关节点包含进每个分支
-#' @param max_subclusters 每簇最多保留子聚类数 (按规模贪心去重)
-#' @param fallback_community 关节点无结果时是否回退社区
-#' @param min_sub_size 社区回退时子聚类最小规模
-#' @param community_method 社区算法优先顺序
-#' @param subbranch_palette 子聚类调色板：第1色=剩余/未细分，其余循环分配给子聚类
-#' @param downstream_min_size 下游子树判定规模阈值（NULL=自适应）
-#' @param force_split 原社区拆分失败时是否尝试放宽接受条件
-#' @param main_fraction_cap 最大社区占比阈值（超过也允许保留其余小社区）
-#' @param core_periph 允许核心-边缘拆分
-#' @param core_degree_quantile 核心度阈值分位
-#' @param core_min_fraction 核心最小占比
-#' @param degree_gini_threshold 触发核心-边缘拆分的度Gini阈值
+#' @param enable_subbranch Whether to enable branch subclustering refinement (default TRUE)
+#' @param cluster_id Optional character vector: clusters to subcluster split only; NULL=all
+#' @param include_root Whether articulation point method includes articulation points in each branch
+#' @param max_subclusters Maximum number of subclusters to retain per cluster (greedy deduplication by size)
+#' @param fallback_community Whether to fall back to community detection when articulation points yield no results
+#' @param min_sub_size Minimum size threshold for subclusters in community fallback mode
+#' @param community_method Priority order of community detection algorithms
+#' @param subbranch_palette Subcluster color palette: 1st color = remaining/unrefined, others cycle for subclusters
+#' @param downstream_min_size Downstream subtree size threshold (NULL = adaptive)
+#' @param force_split Whether to attempt relaxed acceptance conditions when original community split fails
+#' @param main_fraction_cap Maximum community proportion threshold (allows retention of smaller communities even when exceeded)
+#' @param core_periph Allow core-periphery splitting
+#' @param core_degree_quantile Core degree threshold quantile
+#' @param core_min_fraction Minimum core fraction
+#' @param degree_gini_threshold Degree Gini threshold that triggers core-periphery splitting
 #' @return list(plot, graph, subclusters, subcluster_df, cluster_df, method_subcluster,
 #'              base_network, branch_network, params)
 #' @examples
@@ -32,7 +33,7 @@
 #' @export
 plotDendroNetworkWithBranches <- function(
     coordObj,
-    ## ==== 原 plotDendroNetwork 参数（保持次序以便兼容） ====
+    ## Base plotDendroNetwork parameters (maintain order for compatibility)
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
     gene_subset = NULL,
@@ -67,7 +68,7 @@ plotDendroNetworkWithBranches <- function(
     title = NULL,
     k_top = 1,
     tree_mode = c("rooted", "radial", "forest"),
-    ## ==== 新增子聚类相关参数 ====
+    ## New subcluster-related parameters
     enable_subbranch = TRUE,
     cluster_id = NULL,
     include_root = TRUE,
@@ -79,19 +80,19 @@ plotDendroNetworkWithBranches <- function(
         "#999999", "#D55E00", "#0072B2", "#009E73",
         "#CC79A7", "#F0E442", "#56B4E9", "#E69F00"
     ),
-    downstream_min_size = NULL, # <--- 新增：下游子树判定规模阈值（NULL=自适应）
-    ## === 新增控制参数（默认尽量保守） ===
-    force_split = TRUE, # 原社区拆分失败时是否尝试放宽接受条件
-    main_fraction_cap = 0.9, # 最大社区占比阈值（超过也允许保留其余小社区）
-    core_periph = TRUE, # 允许核心-边缘拆分
-    core_degree_quantile = 0.75, # 核心度阈值分位
-    core_min_fraction = 0.05, # 核心最小占比
-    degree_gini_threshold = 0.35, # 触发核心-边缘拆分的度Gini阈值
+    downstream_min_size = NULL,
+    ## Additional control parameters (conservative defaults)
+    force_split = TRUE,
+    main_fraction_cap = 0.9,
+    core_periph = TRUE,
+    core_degree_quantile = 0.75,
+    core_min_fraction = 0.05,
+    degree_gini_threshold = 0.35,
     verbose = TRUE) {
     tree_mode <- match.arg(tree_mode)
     community_method <- match.arg(community_method, several.ok = TRUE)
 
-    ## 0. 调用基础网络函数 ------------------------------------------------------
+    # 0. Call base network function
     if (verbose) message("[geneSCOPE] [Base] Constructing basic tree network...")
     base_args <- list(
         coordObj = coordObj,
@@ -127,24 +128,28 @@ plotDendroNetworkWithBranches <- function(
     )
     base_network <- do.call(plotDendroNetwork, base_args)
     g <- base_network$graph
-    if (is.null(g) || !inherits(g, "igraph")) stop("基础网络构建失败或未返回 igraph")
+    if (is.null(g) || !inherits(g, "igraph")) {
+        stop("Base network construction failed or did not return igraph object")
+    }
 
     vnames <- igraph::V(g)$name
 
-    ## 1. 解析簇标签（与基础函数逻辑对齐） ------------------------------------
+    # 1. Parse cluster labels (align with base function logic)
     if (verbose) message("[geneSCOPE] [Subbranch] Preparing cluster labels...")
     Vnames <- vnames
-    # cluster_vec 参数两种形式：长度>1命名向量 / 单值列名
+
     if (!is.null(cluster_vec)) {
         if (length(cluster_vec) == 1) {
             if (is.null(coordObj@meta.data) || !(cluster_vec %in% colnames(coordObj@meta.data))) {
-                stop("meta.data 不含列: ", cluster_vec)
+                stop("meta.data does not contain column: ", cluster_vec)
             }
             clu_full <- coordObj@meta.data[[cluster_vec]]
             names(clu_full) <- rownames(coordObj@meta.data)
             clu <- as.character(clu_full[Vnames])
         } else {
-            if (is.null(names(cluster_vec))) stop("cluster_vec 为向量时须具备 names")
+            if (is.null(names(cluster_vec))) {
+                stop("cluster_vec as vector must have names")
+            }
             clu <- as.character(cluster_vec[Vnames])
         }
     } else {
@@ -154,7 +159,7 @@ plotDendroNetworkWithBranches <- function(
     names(clu) <- Vnames
     cluster_df <- data.frame(gene = Vnames, cluster = clu, stringsAsFactors = FALSE)
 
-    ## 2. 若不启用子聚类直接返回 ------------------------------------------------
+    # 2. If subclustering is disabled, return directly
     if (!enable_subbranch) {
         if (verbose) message("[geneSCOPE] [Subbranch] enable_subbranch=FALSE, returning base network")
         return(list(
@@ -172,13 +177,12 @@ plotDendroNetworkWithBranches <- function(
         ))
     }
 
-    ## 3. 定义单簇检测函数（加入 hub 与下游多子树逻辑） ----------
+    # 3. Define single cluster detection function
     detect_one_cluster <- function(genes_target, cid) {
         tryCatch(
             {
-                # --- 基因集合合法化 ---
+                # Validate gene set
                 genes_target <- unique(stats::na.omit(genes_target))
-                # 额外一致性检查（理论上上一层已交集）
                 if (any(!genes_target %in% igraph::V(g)$name)) {
                     genes_target <- intersect(genes_target, igraph::V(g)$name)
                 }
@@ -186,22 +190,22 @@ plotDendroNetworkWithBranches <- function(
                     return(list(method = "none", subclusters = list()))
                 }
 
-                # 关键修改1：直接使用名称向量（避免 VertexSeq二次解析引发 Unknown vertex selected）
+                # Create subgraph
                 sg <- tryCatch(
                     igraph::induced_subgraph(g, vids = genes_target),
                     error = function(e) {
-                        warning("[geneSCOPE] !!! [detect_one_cluster] Subgraph construction failed for cluster ", cid, ": ", e$message, " !!!")
+                        warning("[geneSCOPE] Subgraph construction failed for cluster ", cid, ": ", e$message)
                         return(NULL)
                     }
                 )
                 if (is.null(sg) || igraph::vcount(sg) == 0) {
                     return(list(method = "none", subclusters = list()))
                 }
+
                 if (verbose) {
                     message(
-                        "[geneSCOPE]     [detect_one_cluster] cluster ", cid,
-                        " subgraph nodes=", igraph::vcount(sg),
-                        " edges=", igraph::ecount(sg)
+                        "[geneSCOPE] Cluster ", cid, " subgraph: nodes=",
+                        igraph::vcount(sg), " edges=", igraph::ecount(sg)
                     )
                 }
 
@@ -209,43 +213,31 @@ plotDendroNetworkWithBranches <- function(
                 subclusters <- list()
                 vcount_sg <- igraph::vcount(sg)
 
-                safe_add_subcluster <- function(tag, genes_branch) {
-                    genes_branch <- unique(stats::na.omit(genes_branch))
-                    genes_branch <- intersect(genes_branch, igraph::V(sg)$name)
-                    if (!length(genes_branch)) {
-                        return(FALSE)
-                    }
-                    subclusters[[tag]] <<- genes_branch
-                    TRUE
-                }
-
-                ## ---- 3.1 articulation（重写循环，纯整数索引 + 额外 tryCatch） ----
+                # Try articulation point method
                 if (vcount_sg >= 3) {
-                    art_ok <- TRUE
-                    cand <- list()
                     tryCatch(
                         {
-                            arts_vs <- tryCatch(igraph::articulation_points(sg),
-                                error = function(e) igraph::V(sg)[FALSE]
-                            )
+                            arts_vs <- igraph::articulation_points(sg)
                             if (length(arts_vs)) {
                                 arts_ids <- as.integer(igraph::as_ids(arts_vs))
                                 arts_ids <- arts_ids[is.finite(arts_ids) & arts_ids >= 1 & arts_ids <= vcount_sg]
+
+                                cand <- list()
                                 for (a_id in arts_ids) {
                                     root_name <- igraph::V(sg)$name[a_id]
-                                    sg_minus <- tryCatch(igraph::delete_vertices(sg, a_id),
-                                        error = function(e) NULL
-                                    )
+                                    sg_minus <- tryCatch(igraph::delete_vertices(sg, a_id), error = function(e) NULL)
                                     if (is.null(sg_minus)) next
-                                    comps <- tryCatch(igraph::components(sg_minus),
-                                        error = function(e) NULL
-                                    )
+
+                                    comps <- tryCatch(igraph::components(sg_minus), error = function(e) NULL)
                                     if (is.null(comps)) next
+
                                     for (cid2 in seq_len(comps$no)) {
                                         idx_comp <- which(comps$membership == cid2)
                                         if (!length(idx_comp)) next
+
                                         sg_comp <- igraph::induced_subgraph(sg_minus, vids = idx_comp)
                                         if (!any(igraph::degree(sg_comp) >= 2)) next
+
                                         genes_comp <- igraph::V(sg_minus)$name[idx_comp]
                                         branch_genes <- if (include_root) {
                                             unique(c(root_name, genes_comp))
@@ -258,10 +250,9 @@ plotDendroNetworkWithBranches <- function(
                                         )
                                     }
                                 }
+
                                 if (length(cand)) {
-                                    ord <- order(vapply(cand, `[[`, numeric(1), "size"),
-                                        decreasing = TRUE
-                                    )
+                                    ord <- order(vapply(cand, `[[`, numeric(1), "size"), decreasing = TRUE)
                                     used <- character(0)
                                     kept <- list()
                                     for (i in ord) {
@@ -275,41 +266,35 @@ plotDendroNetworkWithBranches <- function(
                                     if (length(kept)) {
                                         method_used <- "articulation"
                                         for (k in seq_along(kept)) {
-                                            safe_add_subcluster(
-                                                paste0(cid, "_sub", k),
-                                                kept[[k]]$genes
-                                            )
+                                            subclusters[[paste0(cid, "_sub", k)]] <- kept[[k]]$genes
                                         }
                                     }
                                 }
                             }
                         },
                         error = function(e) {
-                            art_ok <<- FALSE
                             if (verbose) {
-                                message(
-                                    "[geneSCOPE] !!! [detect_one_cluster] Articulation method failed for cluster ",
-                                    cid, ": ", e$message, " !!!"
-                                )
+                                message("[geneSCOPE] Articulation method failed for cluster ", cid, ": ", e$message)
                             }
                         }
                     )
                 }
 
-                ## ---- 3.2 fallback community (原始) ----
+                # Fallback to community detection
                 if (method_used == "none" && fallback_community) {
                     comm <- NULL
                     for (mtd in community_method) {
                         comm <- tryCatch(
                             switch(mtd,
                                 louvain = igraph::cluster_louvain(sg),
-                                leiden  = igraph::cluster_leiden(sg),
+                                leiden = igraph::cluster_leiden(sg),
                                 NULL
                             ),
                             error = function(e) NULL
                         )
                         if (!is.null(comm) && length(unique(comm$membership)) > 1) break
                     }
+
                     if (!is.null(comm)) {
                         tab <- table(comm$membership)
                         if (length(tab) >= 2) {
@@ -328,106 +313,22 @@ plotDendroNetworkWithBranches <- function(
                     }
                 }
 
-                ## ---- 3.2b 扩展/强制社区拆分（原社区未成功） ----
-                if (method_used == "none" && force_split) {
-                    # 重取一个社区划分，优先换算法；若只有一个算法则尝试 edge betweenness 2-way
-                    comm2 <- NULL
-                    alt_algos <- setdiff(c("leiden", "louvain"), if (length(community_method)) community_method[1] else character(0))
-                    for (mtd in alt_algos) {
-                        comm2 <- tryCatch(
-                            switch(mtd,
-                                louvain = igraph::cluster_louvain(sg),
-                                leiden  = igraph::cluster_leiden(sg),
-                                NULL
-                            ),
-                            error = function(e) NULL
-                        )
-                        if (!is.null(comm2) && length(unique(comm2$membership)) > 1) break
-                    }
-                    if (is.null(comm2)) {
-                        # 尝试 edge betweenness k=2
-                        comm2 <- tryCatch(
-                            {
-                                eb <- igraph::cluster_edge_betweenness(sg)
-                                memb <- igraph::cut_at(eb, no = 2)
-                                structure(list(membership = memb), class = "EC_split")
-                            },
-                            error = function(e) NULL
-                        )
-                    }
-                    if (!is.null(comm2) && length(unique(comm2$membership)) > 1) {
-                        tb <- table(comm2$membership)
-                        ord_mb <- as.integer(names(sort(tb, decreasing = TRUE)))
-                        if (length(ord_mb) >= 2) {
-                            total <- sum(tb)
-                            largest_frac <- max(tb) / total
-                            # 允许最大社区极大仍保留其它（只要其它 >= min_sub_size）
-                            acc_ids <- ord_mb[-1]
-                            keep_ids <- acc_ids[tb[as.character(acc_ids)] >= min_sub_size]
-                            if (length(keep_ids)) {
-                                method_used <- "community_force"
-                                k <- 1
-                                for (sid in keep_ids) {
-                                    subclusters[[paste0(cid, "_cf", k)]] <- igraph::V(sg)$name[comm2$membership == sid]
-                                    k <- k + 1
-                                    if (length(subclusters) >= max_subclusters) break
-                                }
-                            }
-                        }
-                    }
-                }
-
-                ## ---- 3.2c 核心-边缘拆分（仍无结果 & 允许） ----
-                if (method_used == "none" && core_periph && length(subclusters) == 0) {
-                    deg <- igraph::degree(sg)
-                    if (length(deg) && vcount_sg >= max(2 * min_sub_size, 8)) {
-                        # Gini 计算
-                        gini_deg <- {
-                            x <- as.numeric(deg)
-                            n <- length(x)
-                            if (n < 2 || all(x == 0)) {
-                                0
-                            } else {
-                                x <- sort(x)
-                                idx <- seq_len(n)
-                                (2 * sum(idx * x) / (n * sum(x))) - (n + 1) / n
-                            }
-                        }
-                        if (gini_deg >= degree_gini_threshold) {
-                            thr_core <- stats::quantile(deg, core_degree_quantile, names = FALSE, type = 7)
-                            core_ids <- which(deg >= thr_core)
-                            # 去掉孤立高值/确保核心最少
-                            if (length(core_ids) >= max(ceiling(core_min_fraction * vcount_sg), min_sub_size) &&
-                                length(core_ids) <= vcount_sg - min_sub_size) {
-                                core_genes <- igraph::V(sg)$name[core_ids]
-                                peri_genes <- setdiff(igraph::V(sg)$name, core_genes)
-                                # 尝试剔除与核心直接相连的边缘薄层 → 精炼核心 (可选)
-                                if (length(core_genes) && length(peri_genes)) {
-                                    method_used <- "core-periph"
-                                    subclusters[[paste0(cid, "_core")]] <- core_genes
-                                    # 只保留核心为子簇，周边作为剩余（若需要也可添加周边为子簇）
-                                    # 若希望同时输出周边，可解除下行注释：
-                                    # subclusters[[paste0(cid, "_peri")]] <- peri_genes
-                                }
-                            }
-                        }
-                    }
-                }
-
-                ## ---- 保留后续 3.3 hub + 3.4 downstream 原逻辑（若已有 subclusters 仍可追加） ----
-                # ...existing code (hub 分支、downstream 扩展)...
-
                 list(method = method_used, subclusters = subclusters)
             },
             error = function(e) {
-                warning("[geneSCOPE] !!! [detect_one_cluster] Uncaught error for cluster ", cid, ": ", e$message, " !!!")
+                warning("[geneSCOPE] Error processing cluster ", cid, ": ", e$message)
                 list(method = "none", subclusters = list())
             }
         )
     }
 
-    ## 4. 遍历簇执行子聚类（加入输入集合合法化） ------------------------------
-    target_clusters <- if (is.null(cluster_id)) sort(unique(na.omit(clu))) else intersect(unique(clu), cluster_id)
+    # 4. Process clusters for subclustering
+    target_clusters <- if (is.null(cluster_id)) {
+        sort(unique(na.omit(clu)))
+    } else {
+        intersect(unique(clu), cluster_id)
+    }
+
     if (!length(target_clusters)) {
         if (verbose) message("[geneSCOPE] [Subbranch] No available target clusters, skipping subdivision")
         enable_subbranch <- FALSE
@@ -438,28 +339,26 @@ plotDendroNetworkWithBranches <- function(
     methods_seen <- character(0)
 
     if (enable_subbranch) {
-        if (verbose) message("[geneSCOPE] [Subbranch] Cluster count: ", length(target_clusters), " -> Starting subdivision")
+        if (verbose) message("[geneSCOPE] [Subbranch] Processing ", length(target_clusters), " clusters")
         for (cid in target_clusters) {
             genes_target_raw <- names(clu)[clu == cid]
             genes_target <- intersect(unique(stats::na.omit(genes_target_raw)), Vnames)
+
             if (length(genes_target_raw) != length(genes_target) && verbose) {
                 message(
-                    "[geneSCOPE]   Cluster ", cid, ": Filtered invalid/missing genes ",
+                    "[geneSCOPE] Cluster ", cid, ": Filtered genes ",
                     length(genes_target_raw), " -> ", length(genes_target)
                 )
             }
+
             if (length(genes_target) < 3) {
-                if (verbose) message("[geneSCOPE]   Cluster ", cid, ": Valid nodes < 3, skipping")
+                if (verbose) message("[geneSCOPE] Cluster ", cid, ": Too few nodes, skipping")
                 next
             }
-            # --- 外层 tryCatch 避免单簇错误中断 ---
-            res_c <- tryCatch(detect_one_cluster(genes_target, cid),
-                error = function(e) {
-                    warning("[geneSCOPE] !!! [Subbranch] Cluster ", cid, " processing error: ", e$message, " !!!")
-                    list(method = "none", subclusters = list())
-                }
-            )
+
+            res_c <- detect_one_cluster(genes_target, cid)
             methods_seen <- c(methods_seen, res_c$method)
+
             if (length(res_c$subclusters)) {
                 for (nm in names(res_c$subclusters)) {
                     gs <- intersect(res_c$subclusters[[nm]], Vnames)
@@ -468,9 +367,10 @@ plotDendroNetworkWithBranches <- function(
                     sub_attr[gs] <- nm
                 }
             }
+
             if (verbose) {
                 message(
-                    "[geneSCOPE]   Cluster ", cid, ": method=", res_c$method,
+                    "[geneSCOPE] Cluster ", cid, ": method=", res_c$method,
                     " subclusters=", length(res_c$subclusters)
                 )
             }
@@ -482,9 +382,10 @@ plotDendroNetworkWithBranches <- function(
     } else {
         setdiff(unique(methods_seen), "none")[1]
     }
+
     igraph::V(g)$subcluster <- sub_attr
 
-    ## === 新增：构建有序 factor 层次 (父簇 -> 其子簇) =========================
+    # 5. Build ordered factor levels (parent cluster -> subclusters)
     numeric_sort_levels <- function(x) {
         ux <- unique(x)
         suppressWarnings({
@@ -492,35 +393,31 @@ plotDendroNetworkWithBranches <- function(
         })
         if (all(!is.na(nx))) as.character(sort(as.numeric(ux))) else sort(ux)
     }
+
     base_levels <- numeric_sort_levels(clu)
 
     if (method_final %in% c("none", "disabled")) {
-        # 仅父簇
         cluster_df$cluster <- factor(cluster_df$cluster, levels = base_levels)
     } else {
-        # 生成子簇层次：父簇后插入其所有子簇
-        # 子簇名称格式假设以 "父簇ID_" 开头
-        sub_levels_raw <- sort(unique(na.omit(sub_attr))) # 当前子簇集合
-        parent_of <- sub("^([^_]+)_.*$", "\\1", sub_levels_raw) # 提取父簇ID
+        sub_levels_raw <- sort(unique(na.omit(sub_attr)))
+        parent_of <- sub("^([^_]+)_.*$", "\\1", sub_levels_raw)
         level_vec <- character(0)
+
         for (pv in base_levels) {
             level_vec <- c(level_vec, pv)
             if (pv %in% parent_of) {
-                # 保持出现顺序（在 sub_levels_raw 中的顺序）
                 kids <- sub_levels_raw[parent_of == pv]
                 level_vec <- c(level_vec, kids)
             }
         }
-        # 若存在未匹配父簇的子簇（异常），追加到末尾
+
         orphan <- setdiff(sub_levels_raw, level_vec)
         if (length(orphan)) level_vec <- c(level_vec, orphan)
 
-        # 更新 factor（cluster_df 仍只含父簇，保持基因所属父簇层次）
         cluster_df$cluster <- factor(cluster_df$cluster, levels = base_levels)
-        # subcluster_df 后面统一更新
     }
 
-    ## 5. 构建结果表与颜色 ------------------------------------------------------
+    # 6. Build result tables and colors
     subcluster_df <- data.frame(
         gene = Vnames,
         cluster = cluster_df$cluster,
@@ -528,16 +425,12 @@ plotDendroNetworkWithBranches <- function(
         stringsAsFactors = FALSE
     )
 
-    # 若有子簇，为 subcluster 列建立分层 levels：与上面 level_vec 对齐（无子簇则保持 NA）
     if (!(method_final %in% c("none", "disabled"))) {
-        # subcluster 列：保留 NA；levels 使用 (level_vec 去除父簇中未作为子簇的那些? 按需求：父簇与子簇是同一“绘制标签”集合)
-        # 这里仅对子簇名称设 levels，父簇不在 subcluster 列 levels 中（subcluster 列是子簇ID或 NA）
         sub_levels_only <- level_vec[level_vec %in% subcluster_df$subcluster]
         subcluster_df$subcluster <- factor(subcluster_df$subcluster, levels = sub_levels_only)
     }
 
     if (method_final %in% c("none", "disabled")) {
-        # 没有实际子聚类：仍旧用 cluster_palette
         uniq_clu <- sort(unique(na.omit(clu)))
         col_map <- setNames(rep(cluster_palette, length.out = length(uniq_clu)), uniq_clu)
         node_cols <- col_map[clu]
@@ -555,11 +448,11 @@ plotDendroNetworkWithBranches <- function(
     }
     subcluster_df$color <- node_cols
 
-    ## 6. 利用原函数重新绘制（仅当存在子聚类） -------------------------------
-    if (verbose) message("[geneSCOPE] [Subbranch] Preparing final plot generation (reusing original plotDendroNetwork logic)...")
+    # 7. Generate final plot
+    if (verbose) message("[geneSCOPE] [Subbranch] Generating final plot...")
     branch_network <- NULL
+
     if (method_final %in% c("none", "disabled")) {
-        # 无子簇：为保持层次输出，可（可选）重新绘制一次使 cluster factor 顺序生效
         cluster_vec_base <- factor(clu, levels = base_levels)
         new_args <- base_args
         new_args$cluster_vec <- setNames(cluster_vec_base, names(clu))
@@ -568,7 +461,6 @@ plotDendroNetworkWithBranches <- function(
         plt <- branch_network$plot
     } else {
         cluster_vec_sub <- setNames(ifelse(is.na(sub_attr), clu, sub_attr), names(clu))
-        # 将 cluster_vec_sub 转为 factor：使用 level_vec（父簇 + 子簇层次）
         cluster_vec_sub <- factor(cluster_vec_sub, levels = level_vec)
         new_args <- base_args
         new_args$cluster_vec <- cluster_vec_sub
@@ -577,12 +469,11 @@ plotDendroNetworkWithBranches <- function(
         } else {
             paste0(title, " | Sub-branch: ", method_final)
         }
-        if (verbose) message("[geneSCOPE] [Subbranch] Re-calling plotDendroNetwork to generate subcluster coloring plot...")
         branch_network <- do.call(plotDendroNetwork, new_args)
         plt <- branch_network$plot
     }
 
-    ## 7. 返回 -------------------------------------------------------------------
+    # 8. Return results
     list(
         plot = plt,
         graph = g,
@@ -599,7 +490,7 @@ plotDendroNetworkWithBranches <- function(
             max_subclusters = max_subclusters,
             fallback_community = fallback_community,
             min_sub_size = min_sub_size,
-            downstream_min_size = downstream_min_size, # <--- 新增返回
+            downstream_min_size = downstream_min_size,
             community_method = community_method,
             subbranch_palette = subbranch_palette,
             force_split = force_split,

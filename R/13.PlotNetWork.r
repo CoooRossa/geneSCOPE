@@ -1,28 +1,3 @@
-## ===== Helper utilities =====
-.parse_q <- function(qstr) {
-    if (!is.character(qstr) || length(qstr) != 1 ||
-        !grepl("^[qQ][0-9]+\\.?[0-9]*$", qstr)) {
-        stop("pct string must look like 'q90' / 'q99.5' …")
-    }
-    val <- as.numeric(sub("^[qQ]", "", qstr)) / 100
-    if (is.na(val) || val < 0 || val > 1) {
-        stop("pct out of range 0–100")
-    }
-    val
-}
-
-.filter_matrix_by_quantile <- function(mat, pct_min = "q0", pct_max = "q100") {
-    stopifnot(is.matrix(mat))
-    pmin <- .parse_q(pct_min)
-    pmax <- .parse_q(pct_max)
-    if (pmin > pmax) stop("pct_min > pct_max")
-    vec <- as.vector(mat)
-    thrL <- as.numeric(stats::quantile(vec, pmin, na.rm = TRUE))
-    thrU <- as.numeric(stats::quantile(vec, pmax, na.rm = TRUE))
-    mat[vec < thrL | vec > thrU] <- 0
-    Matrix::drop0(mat)
-}
-
 #' @title Visualise the Lee's-L gene-gene network
 #'
 #' @description
@@ -206,7 +181,7 @@ plotNetworkGenes <- function(
         A <- Lmat[idx, idx, drop = FALSE]
 
         ## (i) 先按表达占比 (pct_min) 做早期过滤
-        A <- .filter_matrix_by_quantile(A, pct_min, "q100") # 修复函数名
+        A <- .filter_matrix_by_quantile(A, pct_min, "q100") # Fixed function name
 
         ## (ii) 限定最大绝对值
         A[abs(A) > L_max] <- 0

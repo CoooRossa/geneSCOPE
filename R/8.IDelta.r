@@ -241,14 +241,14 @@ plotIDeltaByCluster <- function(
         ) +
         theme_minimal() +
         theme(
-            axis.text.x = element_blank(), # 去掉 x 轴刻度文字
-            panel.grid = element_blank(), # 去掉网格线
-            panel.border = element_rect(colour = "black", fill = NA), # 面板边框
-            axis.ticks.x = element_blank(), # 去掉 x 轴刻度线（可选）
-            plot.margin = margin(5, 20, 5, 5), # 增加右侧留白，防止标签被裁切
+            axis.text.x = element_blank(), # Remove x-axis text
+            panel.grid = element_blank(), # Remove grid lines
+            panel.border = element_rect(colour = "black", fill = NA), # Panel border
+            axis.ticks.x = element_blank(), # Remove x-axis ticks (optional)
+            plot.margin = margin(5, 20, 5, 5), # Increase right margin to prevent label clipping
             strip.background = element_rect(fill = "white", colour = NA)
         ) +
-        coord_cartesian(clip = "off") # 允许标签超出绘图区
+        coord_cartesian(clip = "off") # Allow labels to extend beyond plot area
 
     return(p)
 }

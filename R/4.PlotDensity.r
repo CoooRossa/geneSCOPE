@@ -1,14 +1,6 @@
 #' 4.PlotDensity.r (2025-01-06 rev)
 #' @title plotDensity - visualise grid-level density stored in @density
 #'
-#' @description
-#'   Draws one (or two) continuous heatmaps for density columns previously
-#'   created by \code{computeDensity()}.
-#'   this function first looks there but will fall back to the legacy
-#'   \code{coordObj@grid[[grid_name]]$densityDF} if necessary.
-#'   All other functionality (dual-scale heatmap, segmentation overlay,
-#'   square aspect, grid lines, scale bar) is preserved.
-#'
 #' @param coordObj  A \code{CoordObj}.
 #' @param grid_name Name of the grid layer to plot (e.g. "grid_lenGrid50").
 #' @param density1_name,density2_name Column names to plot.
