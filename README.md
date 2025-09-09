@@ -1,89 +1,133 @@
-# FG²CLI 
-## A Fast Geometric Gene Clustering using Lee’s L and Idelta
+# geneSCOPE
 
-**Spatial gene‑co‑distribution analysis toolkit (R/C++17, OpenMP)**  
-Supported platforms: **macOS** (Intel & Apple Silicon) **or Linux** (x86‑64, ARM64)
+> **Gene Spatial Correlation Of Pairwise Expression**
 
-***
-## 1 Prerequisites
+[![R build status](https://github.com/haenolab/geneSCOPE/workflows/R-CMD-check/badge.svg)](https://github.com/haenolab/geneSCOPE/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-| Component | macOS | Linux |
-|-----------|-------|-------|
-| R | ≥ 4.4 (download from <https://cran.r‑project.org>) | ≥ 4.4 (system repo or CRAN binary) |
-| OpenMP runtime | `brew install libomp` | `apt install libomp-dev` \| `dnf install libomp` |
-| Build tools | Xcode CLT (`xcode‑select --install`) | GCC ≥ 9 (or Clang + libstdc++17) |
+Tools to compute and visualize spatial correlation of pairwise gene expression, including Lee's L statistics, permutation-based inference, spatial weights, and network-based visualizations over grid-aggregated spatial transcriptomics data.
 
-### Optional but recommended
-* **Homebrew** on macOS – <https://brew.sh>
-* **pkg‑config** for easier configure detection
+## Installation
 
+### Quick Install (Recommended)
 
-### Configure Makevars (two options)
-
-<details>
-<summary><strong>Option A — quick one‑liner</strong></summary>
-
-Append the three needed lines in one shot:
-
-```bash
-cat >> ~/.R/Makevars <<'EOF'
-CXX_STD      = CXX17
-PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -I$(brew --prefix libomp)/include
-PKG_LIBS     = $(SHLIB_OPENMP_CXXFLAGS) -L$(brew --prefix libomp)/lib -lomp
-EOF
-```
-*(Open a new terminal or run `R CMD config CXX` to confirm the change.)*
-
-</details>
-
-<details>
-<summary><strong>Option B — manual edit (fine‑grained)</strong></summary>
-
-1. Open the file:
-   ```bash
-   nano -w ~/.R/Makevars   # or vi / code / gedit
-   ```
-2. Add / adjust these lines (avoid duplicates):
-   ```makefile
-   CXX_STD = CXX17
-   PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -I$(brew --prefix libomp)/include
-   PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) -L$(brew --prefix libomp)/lib -lomp
-   ```
-3. **Linux users:** replace `$(brew --prefix libomp)` with `/usr` or your distro‑specific prefix if headers & libs live elsewhere.
-
-</details>
-
-***
-## 2 Installation
-
-### Install from GitHub
 ```r
-# a) remotes
-install.packages("remotes")
-remotes::install_git("https://github.com/CoooRossa/FG2CLI.git", ref = "main")
-
-# b) devtools
-install.packages("devtools")     # one‑time
-library(devtools)
-install_github("CoooRossa/FG2CLI", ref = "main", dependencies = TRUE)
+# Install from GitHub
+if (!require("devtools")) install.packages("devtools")
+devtools::install_github("haenolab/geneSCOPE")
 ```
 
-> **Tip (macOS & Linux):** Before starting R set
-> ```bash
-> export OPENBLAS_NUM_THREADS=1   # Keep BLAS single‑threaded
-> export OMP_NUM_THREADS=8        # Adjust to <= physical cores
-> ```
+### Prerequisites
 
-***
-## 3 Troubleshooting
+- **R** ≥ 4.1.0
+- **C++17** compiler (GCC ≥ 9 or Clang)
+- **OpenMP** support (recommended for performance)
 
-| Error message | Cause | Quick fix |
-|---------------|-------|-----------|
-| `symbol not found '___kmpc_*'` | OpenMP runtime not linked | Install `libomp` and confirm `Makevars` paths |
-| `clang: error: unsupported option '-fopenmp'` | Missing Xcode CLT or GCC OpenMP | macOS: `xcode‑select --install` · Linux: `apt install build-essential libomp-dev` |
-| R session aborts when loading FG²CLI | BLAS & OpenMP oversubscribe threads | `OPENBLAS_NUM_THREADS=1` and set reasonable `OMP_NUM_THREADS` |
-| `omp.h` not found (Apple Silicon) | Wrong include path | Use `/opt/homebrew/opt/libomp/include` in `Makevars` |
-| Compilation fails on Linux | Old GCC/Clang without C++17 | Upgrade compiler (GCC ≥ 9) or install `g++‑11` etc. |
+#### Platform-specific setup:
 
-If problems persist, open an issue and attach the full compiler log plus `sessionInfo()`.  
-Happy clustering!
+**macOS:**
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# Install OpenMP (via Homebrew)
+brew install libomp
+```
+
+**Linux:**
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential libomp-dev
+
+# CentOS/RHEL
+sudo yum install gcc-c++ libgomp-devel
+```
+
+### HPC/Cluster Installation
+
+For HPC environments where dependencies may fail, use our specialized installers:
+
+```r
+# Step 1: Install dependencies (HPC-optimized)
+source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_hpc_dependencies.R")
+
+# Step 2: Install geneSCOPE
+source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_genescope_hpc.R")
+```
+
+See [HPC_INSTALL.md](HPC_INSTALL.md) for detailed troubleshooting.
+
+### Manual Installation with Dependencies
+
+If you encounter dependency issues on regular systems:
+
+```r
+# Download and run dependency installer
+source("https://raw.githubusercontent.com/haenolab/geneSCOPE/main/install_dependencies.R")
+
+# Then install the package
+devtools::install_github("haenolab/geneSCOPE")
+```
+
+## Quick Start
+
+```r
+library(geneSCOPE)
+
+# Load your spatial transcriptomics data
+# Create coordinate object
+coord_obj <- createCoordObj(coordinates, gene_expression)
+
+# Compute spatial weights
+coord_obj <- computeSpatialWeights(coord_obj, method = "queen")
+
+# Calculate Lee's L statistics
+coord_obj <- addLeeStats(coord_obj, genes = c("GENE1", "GENE2"))
+
+# Visualize results
+plotLeeLDistribution(coord_obj)
+plotNetworkGene(coord_obj, gene = "GENE1")
+```
+
+## Key Features
+
+- **Spatial Statistics**: Lee's L, Moran's I, and custom spatial correlation metrics
+- **Network Analysis**: Gene co-expression networks with spatial constraints
+- **Visualization**: Interactive plots for spatial patterns and gene networks
+- **High Performance**: C++17 backend with OpenMP parallelization
+- **Cross-platform**: Optimized for macOS, Linux, and HPC environments
+
+## Documentation
+
+- **Function Reference**: Run `help(package = "geneSCOPE")` in R
+- **Vignettes**: `browseVignettes("geneSCOPE")`
+- **Examples**: See `/examples` directory
+
+## Citation
+
+If you use geneSCOPE in your research, please cite:
+
+```
+Your Paper Title (2024)
+Authors et al.
+Journal Name
+DOI: xxx
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/haenolab/geneSCOPE/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/haenolab/geneSCOPE/discussions)
+- **Email**: your.email@domain.com

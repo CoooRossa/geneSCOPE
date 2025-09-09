@@ -2,6 +2,7 @@
 // Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 #include <RcppArmadillo.h>
+#include <RcppEigen.h>
 #include <Rcpp.h>
 
 using namespace Rcpp;
@@ -11,95 +12,357 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// idelta_cpp
-arma::vec idelta_cpp(const arma::sp_mat& G);
-RcppExport SEXP _FG2CLI_idelta_cpp(SEXP GSEXP) {
+// grid_nb_omp
+List grid_nb_omp(const int nrow, const int ncol, const bool queen);
+RcppExport SEXP _geneSCOPE_grid_nb_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type queen(queenSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_omp(nrow, ncol, queen));
+    return rcpp_result_gen;
+END_RCPP
+}
+// listw_B_omp
+SEXP listw_B_omp(const List nb);
+RcppExport SEXP _geneSCOPE_listw_B_omp(SEXP nbSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const List >::type nb(nbSEXP);
+    rcpp_result_gen = Rcpp::wrap(listw_B_omp(nb));
+    return rcpp_result_gen;
+END_RCPP
+}
+// grid_nb
+SEXP grid_nb(const int nrow, const int ncol, const bool queen);
+RcppExport SEXP _geneSCOPE_grid_nb(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type queen(queenSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb(nrow, ncol, queen));
+    return rcpp_result_gen;
+END_RCPP
+}
+// nb2mat
+SEXP nb2mat(SEXP nb);
+RcppExport SEXP _geneSCOPE_nb2mat(SEXP nbSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type nb(nbSEXP);
+    rcpp_result_gen = Rcpp::wrap(nb2mat(nb));
+    return rcpp_result_gen;
+END_RCPP
+}
+// lee_L
+arma::mat lee_L(const arma::mat& Xz, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_lee_L(SEXP XzSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(lee_L(Xz, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// lee_L_cache
+arma::mat lee_L_cache(const arma::mat& Xz, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_lee_L_cache(SEXP XzSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(lee_L_cache(Xz, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// lee_perm
+arma::mat lee_perm(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, arma::mat L_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_lee_perm(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP L_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type L_ref(L_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(lee_perm(Xz, W, idx_mat, L_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// lee_perm_block
+arma::mat lee_perm_block(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::uvec& block_ids, arma::mat L_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_lee_perm_block(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP L_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type L_ref(L_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(lee_perm_block(Xz, W, idx_mat, block_ids, L_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// lee_L_cols
+arma::mat lee_L_cols(const arma::mat& Xz, const arma::sp_mat& W, const arma::uvec& cols0, const int n_threads);
+RcppExport SEXP _geneSCOPE_lee_L_cols(SEXP XzSEXP, SEXP WSEXP, SEXP cols0SEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type cols0(cols0SEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(lee_L_cols(Xz, W, cols0, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// idelta_sparse_cpp
+arma::vec idelta_sparse_cpp(const arma::sp_mat& G, const int n_threads);
+RcppExport SEXP _geneSCOPE_idelta_sparse_cpp(SEXP GSEXP, SEXP n_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::sp_mat& >::type G(GSEXP);
-    rcpp_result_gen = Rcpp::wrap(idelta_cpp(G));
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(idelta_sparse_cpp(G, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
-// leeL_cpp
-arma::mat leeL_cpp(const arma::mat& Xz, const arma::sp_mat& W);
-RcppExport SEXP _FG2CLI_leeL_cpp(SEXP XzSEXP, SEXP WSEXP) {
+// idelta
+arma::vec idelta(const arma::sp_mat& G, const int n_threads);
+RcppExport SEXP _geneSCOPE_idelta(SEXP GSEXP, SEXP n_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
-    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_cpp(Xz, W));
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type G(GSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(idelta(G, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
-// leeL_perm_cpp
-arma::cube leeL_perm_cpp(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat);
-RcppExport SEXP _FG2CLI_leeL_perm_cpp(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP) {
+// pearson_block_cpp
+arma::mat pearson_block_cpp(const arma::mat& X, const int bs, const int n_threads);
+RcppExport SEXP _geneSCOPE_pearson_block_cpp(SEXP XSEXP, SEXP bsSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const int >::type bs(bsSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(pearson_block_cpp(X, bs, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// pearson_cor
+arma::mat pearson_cor(const arma::mat& X, const int bs, const int n_threads);
+RcppExport SEXP _geneSCOPE_pearson_cor(SEXP XSEXP, SEXP bsSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const int >::type bs(bsSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(pearson_cor(X, bs, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// loess_residual_bootstrap
+Rcpp::List loess_residual_bootstrap(const arma::vec& x, const arma::vec& y, const arma::uvec& strat, const arma::vec& grid, int B, double span, int deg, int n_threads, int k_max, bool keep_boot, int adjust_mode, int ci_type, double level);
+RcppExport SEXP _geneSCOPE_loess_residual_bootstrap(SEXP xSEXP, SEXP ySEXP, SEXP stratSEXP, SEXP gridSEXP, SEXP BSEXP, SEXP spanSEXP, SEXP degSEXP, SEXP n_threadsSEXP, SEXP k_maxSEXP, SEXP keep_bootSEXP, SEXP adjust_modeSEXP, SEXP ci_typeSEXP, SEXP levelSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type strat(stratSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type grid(gridSEXP);
+    Rcpp::traits::input_parameter< int >::type B(BSEXP);
+    Rcpp::traits::input_parameter< double >::type span(spanSEXP);
+    Rcpp::traits::input_parameter< int >::type deg(degSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type k_max(k_maxSEXP);
+    Rcpp::traits::input_parameter< bool >::type keep_boot(keep_bootSEXP);
+    Rcpp::traits::input_parameter< int >::type adjust_mode(adjust_modeSEXP);
+    Rcpp::traits::input_parameter< int >::type ci_type(ci_typeSEXP);
+    Rcpp::traits::input_parameter< double >::type level(levelSEXP);
+    rcpp_result_gen = Rcpp::wrap(loess_residual_bootstrap(x, y, strat, grid, B, span, deg, n_threads, k_max, keep_boot, adjust_mode, ci_type, level));
+    return rcpp_result_gen;
+END_RCPP
+}
+// morisita_horn_sparse
+arma::vec morisita_horn_sparse(const arma::sp_mat& G, const arma::umat& edges, bool use_chao, int nthreads);
+RcppExport SEXP _geneSCOPE_morisita_horn_sparse(SEXP GSEXP, SEXP edgesSEXP, SEXP use_chaoSEXP, SEXP nthreadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type G(GSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type edges(edgesSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_chao(use_chaoSEXP);
+    Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(morisita_horn_sparse(G, edges, use_chao, nthreads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_lr_perm_tiny
+arma::vec delta_lr_perm_tiny(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_lr_perm_tiny(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
     Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
     Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_perm_cpp(Xz, W, idx_mat));
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm_tiny(Xz, W, idx_mat, gene_pairs, delta_ref, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
-// grad_betas_cpp
-arma::mat grad_betas_cpp(const arma::mat& Xz, const arma::vec& cx, const arma::vec& cy);
-RcppExport SEXP _FG2CLI_grad_betas_cpp(SEXP XzSEXP, SEXP cxSEXP, SEXP cySEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type cx(cxSEXP);
-    Rcpp::traits::input_parameter< const arma::vec& >::type cy(cySEXP);
-    rcpp_result_gen = Rcpp::wrap(grad_betas_cpp(Xz, cx, cy));
-    return rcpp_result_gen;
-END_RCPP
-}
-// leeL_perm_ge_cpp
-arma::mat leeL_perm_ge_cpp(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::mat& L_ref);
-RcppExport SEXP _FG2CLI_leeL_perm_ge_cpp(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP L_refSEXP) {
+// delta_lr_perm_block_tiny
+arma::vec delta_lr_perm_block_tiny(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::uvec& block_ids, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_lr_perm_block_tiny(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
     Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
     Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type L_ref(L_refSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_perm_ge_cpp(Xz, W, idx_mat, L_ref));
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm_block_tiny(Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
-// leeL_minusR_perm_ge_cpp
-arma::mat leeL_minusR_perm_ge_cpp(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::mat& Delta_ref);
-RcppExport SEXP _FG2CLI_leeL_minusR_perm_ge_cpp(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP Delta_refSEXP) {
+// delta_lr_perm
+arma::vec delta_lr_perm(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads, const int chunk_size);
+RcppExport SEXP _geneSCOPE_delta_lr_perm(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP, SEXP chunk_sizeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
     Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
     Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type Delta_ref(Delta_refSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_minusR_perm_ge_cpp(Xz, W, idx_mat, Delta_ref));
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< const int >::type chunk_size(chunk_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm(Xz, W, idx_mat, gene_pairs, delta_ref, n_threads, chunk_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_lr_perm_block
+arma::vec delta_lr_perm_block(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::uvec& block_ids, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads, const int chunk_size);
+RcppExport SEXP _geneSCOPE_delta_lr_perm_block(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP, SEXP chunk_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< const int >::type chunk_size(chunk_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm_block(Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, n_threads, chunk_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_lr_perm_csr
+arma::vec delta_lr_perm_csr(const arma::mat& Xz, const arma::uvec& W_indices, const arma::vec& W_values, const arma::uvec& W_row_ptr, const arma::umat& idx_mat, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads, const bool clamp_nonneg_r);
+RcppExport SEXP _geneSCOPE_delta_lr_perm_csr(SEXP XzSEXP, SEXP W_indicesSEXP, SEXP W_valuesSEXP, SEXP W_row_ptrSEXP, SEXP idx_matSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP, SEXP clamp_nonneg_rSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_indices(W_indicesSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type W_values(W_valuesSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_row_ptr(W_row_ptrSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< const bool >::type clamp_nonneg_r(clamp_nonneg_rSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm_csr(Xz, W_indices, W_values, W_row_ptr, idx_mat, gene_pairs, delta_ref, n_threads, clamp_nonneg_r));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_lr_perm_csr_block
+arma::vec delta_lr_perm_csr_block(const arma::mat& Xz, const arma::uvec& W_indices, const arma::vec& W_values, const arma::uvec& W_row_ptr, const arma::umat& idx_mat, const arma::uvec& block_ids, const arma::umat& gene_pairs, const arma::vec& delta_ref, const int n_threads, const bool clamp_nonneg_r);
+RcppExport SEXP _geneSCOPE_delta_lr_perm_csr_block(SEXP XzSEXP, SEXP W_indicesSEXP, SEXP W_valuesSEXP, SEXP W_row_ptrSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP n_threadsSEXP, SEXP clamp_nonneg_rSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_indices(W_indicesSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type W_values(W_valuesSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_row_ptr(W_row_ptrSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< const bool >::type clamp_nonneg_r(clamp_nonneg_rSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_lr_perm_csr_block(Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, n_threads, clamp_nonneg_r));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_64bit_support
+bool test_64bit_support();
+RcppExport SEXP _geneSCOPE_test_64bit_support() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(test_64bit_support());
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_FG2CLI_idelta_cpp", (DL_FUNC) &_FG2CLI_idelta_cpp, 1},
-    {"_FG2CLI_leeL_cpp", (DL_FUNC) &_FG2CLI_leeL_cpp, 2},
-    {"_FG2CLI_leeL_perm_cpp", (DL_FUNC) &_FG2CLI_leeL_perm_cpp, 3},
-    {"_FG2CLI_grad_betas_cpp", (DL_FUNC) &_FG2CLI_grad_betas_cpp, 3},
-    {"_FG2CLI_leeL_perm_ge_cpp", (DL_FUNC) &_FG2CLI_leeL_perm_ge_cpp, 4},
-    {"_FG2CLI_leeL_minusR_perm_ge_cpp", (DL_FUNC) &_FG2CLI_leeL_minusR_perm_ge_cpp, 4},
+    {"_geneSCOPE_grid_nb_omp", (DL_FUNC) &_geneSCOPE_grid_nb_omp, 3},
+    {"_geneSCOPE_listw_B_omp", (DL_FUNC) &_geneSCOPE_listw_B_omp, 1},
+    {"_geneSCOPE_grid_nb", (DL_FUNC) &_geneSCOPE_grid_nb, 3},
+    {"_geneSCOPE_nb2mat", (DL_FUNC) &_geneSCOPE_nb2mat, 1},
+    {"_geneSCOPE_lee_L", (DL_FUNC) &_geneSCOPE_lee_L, 3},
+    {"_geneSCOPE_lee_L_cache", (DL_FUNC) &_geneSCOPE_lee_L_cache, 3},
+    {"_geneSCOPE_lee_perm", (DL_FUNC) &_geneSCOPE_lee_perm, 5},
+    {"_geneSCOPE_lee_perm_block", (DL_FUNC) &_geneSCOPE_lee_perm_block, 6},
+    {"_geneSCOPE_lee_L_cols", (DL_FUNC) &_geneSCOPE_lee_L_cols, 4},
+    {"_geneSCOPE_idelta_sparse_cpp", (DL_FUNC) &_geneSCOPE_idelta_sparse_cpp, 2},
+    {"_geneSCOPE_idelta", (DL_FUNC) &_geneSCOPE_idelta, 2},
+    {"_geneSCOPE_pearson_block_cpp", (DL_FUNC) &_geneSCOPE_pearson_block_cpp, 3},
+    {"_geneSCOPE_pearson_cor", (DL_FUNC) &_geneSCOPE_pearson_cor, 3},
+    {"_geneSCOPE_loess_residual_bootstrap", (DL_FUNC) &_geneSCOPE_loess_residual_bootstrap, 13},
+    {"_geneSCOPE_morisita_horn_sparse", (DL_FUNC) &_geneSCOPE_morisita_horn_sparse, 4},
+    {"_geneSCOPE_delta_lr_perm_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_tiny, 6},
+    {"_geneSCOPE_delta_lr_perm_block_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block_tiny, 7},
+    {"_geneSCOPE_delta_lr_perm", (DL_FUNC) &_geneSCOPE_delta_lr_perm, 7},
+    {"_geneSCOPE_delta_lr_perm_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block, 8},
+    {"_geneSCOPE_delta_lr_perm_csr", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr, 9},
+    {"_geneSCOPE_delta_lr_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr_block, 10},
+    {"_geneSCOPE_test_64bit_support", (DL_FUNC) &_geneSCOPE_test_64bit_support, 0},
     {NULL, NULL, 0}
 };
 
-RcppExport void R_init_FG2CLI(DllInfo *dll) {
+RcppExport void R_init_geneSCOPE(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
 }
