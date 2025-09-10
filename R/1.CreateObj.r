@@ -167,12 +167,13 @@ createCoordObj <- function(xenium_dir,
 
   ## ---- 2. Environment variable management ------------------------------------
   thread_vars <- c(
-    "OMP_NUM_THREADS", "OMP_THREAD_LIMIT", "OMP_SCHEDULE",
+    "OMP_NUM_THREADS", "OMP_THREAD_LIMIT",
     "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     "BLAS_NUM_THREADS", "LAPACK_NUM_THREADS"
   )
 
   old_env <- sapply(thread_vars, Sys.getenv, unset = NA_character_)
+  old_schedule <- Sys.getenv("OMP_SCHEDULE", unset = NA_character_)
 
   on.exit(
     {
@@ -185,6 +186,12 @@ createCoordObj <- function(xenium_dir,
           do.call(Sys.setenv, args)
         }
       }
+      # Restore OMP_SCHEDULE separately
+      if (is.na(old_schedule)) {
+        Sys.unsetenv("OMP_SCHEDULE")
+      } else {
+        Sys.setenv(OMP_SCHEDULE = old_schedule)
+      }
     },
     add = TRUE
   )
@@ -194,6 +201,12 @@ createCoordObj <- function(xenium_dir,
     args <- list()
     args[[var]] <- "1"
     do.call(Sys.setenv, args)
+  }
+  
+  # Set valid OpenMP schedule only for Linux (where it's more stable)
+  # macOS OpenMP can be problematic with schedule settings
+  if (os_type == "linux") {
+    Sys.setenv(OMP_SCHEDULE = "static")
   }
 
   # Safely set data.table threads
