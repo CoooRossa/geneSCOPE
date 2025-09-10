@@ -80,7 +80,6 @@
 
 #' @noRd
 .getLeeMatrix <- function(coordObj, grid_name = NULL, lee_layer = NULL, verbose = FALSE) {
-
     ## ---- 0. Select grid sub-layer ------------------------------------------------
     g_layer <- .selectGridLayer(coordObj, grid_name, verbose = verbose)
     if (is.null(grid_name)) { # Write back the actual name
@@ -115,7 +114,6 @@
                 "); please specify `lee_layer` explicitly."
             )
         }
-
     }
 
     ## ---- 2. Search @stats → @grid in order ------------------------------------

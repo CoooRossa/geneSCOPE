@@ -7,7 +7,7 @@ cat("=== geneSCOPE 详细日志格式验证测试 ===\n\n")
 # 测试新格式的函数名包含功能
 test_verbose_format <- function() {
     cat("1. 检查详细日志格式一致性...\n")
-    
+
     # 模拟新格式的详细消息
     test_messages <- c(
         "[geneSCOPE::createCoordObj] Loading required packages",
@@ -16,24 +16,24 @@ test_verbose_format <- function() {
         "[geneSCOPE::clusterGenes] Performing gene clustering analysis",
         "[geneSCOPE::plotNetworkGenes] Generating network visualization"
     )
-    
+
     cat("   测试消息格式:\n")
     for (msg in test_messages) {
         cat("   ✓", msg, "\n")
     }
-    
+
     cat("\n2. 验证格式特性:\n")
     cat("   ✓ 所有消息都包含 'geneSCOPE::functionName' 前缀\n")
     cat("   ✓ 没有省略号 (...)\n")
     cat("   ✓ 没有步骤编号 (Step 1, Step 2, 等)\n")
     cat("   ✓ 消息简洁明确\n")
     cat("   ✓ 包含足够的上下文信息\n")
-    
+
     cat("\n3. 与旧格式对比:\n")
     cat("   旧格式: [geneSCOPE] Loading required packages...\n")
     cat("   新格式: [geneSCOPE::createCoordObj] Loading required packages\n")
     cat("   改进: 更具体的函数标识，无冗余省略号\n")
-    
+
     return(TRUE)
 }
 

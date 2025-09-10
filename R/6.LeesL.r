@@ -177,7 +177,7 @@ addLeeStats <- function(coordObj,
 
     ## --- 2. Lee's L computation with error recovery ---
     if (verbose) message("[geneSCOPE::addLeeStats] Computing Lee's L statistics")
-    
+
     # Multi-retry mechanism with reduced thread count
     current_cores <- ncores
     min_cores <- 1
@@ -203,7 +203,7 @@ addLeeStats <- function(coordObj,
                     backing_path = backing_path
                 )
                 t_end <- Sys.time()
-                
+
                 if (verbose) {
                     time_msg <- if (attempt == 1) "completed" else "retry successful"
                     message("[geneSCOPE::addLeeStats]  Lee's L ", time_msg, " (", format(t_end - t_start), ")")

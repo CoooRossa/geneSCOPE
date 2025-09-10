@@ -491,21 +491,21 @@ plotLvsR <- function(coordObj,
 #' can be used to assess whether more perms are needed.
 #' @export
 getTopDeltaL <- function(coordObj,
-                          grid_name,
-                          pear_level = c("cell", "grid"),
-                          pear_range = c(-1, 1),
-                          L_range = c(-1, 1),
-                          top_n = 10,
-                          direction = c("largest", "smallest", "both"),
-                          do_perm = TRUE,
-                          perms = 1000,
-                          block_side = 8,
-                          use_blocks = TRUE,
-                          ncores = 1,
-                          clamp_mode = c("none", "ref_only", "both"),
-                          p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
-                          mem_limit_GB = 2,
-                          pval_mode = c("beta", "mid", "uniform")) {
+                         grid_name,
+                         pear_level = c("cell", "grid"),
+                         pear_range = c(-1, 1),
+                         L_range = c(-1, 1),
+                         top_n = 10,
+                         direction = c("largest", "smallest", "both"),
+                         do_perm = TRUE,
+                         perms = 1000,
+                         block_side = 8,
+                         use_blocks = TRUE,
+                         ncores = 1,
+                         clamp_mode = c("none", "ref_only", "both"),
+                         p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
+                         mem_limit_GB = 2,
+                         pval_mode = c("beta", "mid", "uniform")) {
   pear_level <- match.arg(pear_level)
   direction <- match.arg(direction)
   p_adj_mode <- match.arg(p_adj_mode)
