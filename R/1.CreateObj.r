@@ -96,7 +96,13 @@ createCoordObj <- function(xenium_dir,
       if (os_type == "linux") {
         mem_info <- readLines("/proc/meminfo")
         mem_total <- grep("MemTotal", mem_info, value = TRUE)
-        as.numeric(gsub("[^0-9]", "", mem_total)) / 1024 / 1024
+        mem_kb <- as.numeric(gsub("[^0-9]", "", mem_total))
+        mem_gb <- mem_kb / 1024 / 1024
+        # Add bounds checking to catch unrealistic values
+        if (mem_gb > 1000) {
+          warning("Detected unusually high memory: ", round(mem_gb, 1), "GB. This may indicate a parsing error.")
+        }
+        mem_gb
       } else if (os_type == "macos") {
         mem_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
         mem_bytes / 1024^3
@@ -145,8 +151,15 @@ createCoordObj <- function(xenium_dir,
   }
 
   if (verbose) {
+    # Format memory display appropriately
+    mem_display <- if (sys_mem_gb >= 1024) {
+      paste0(round(sys_mem_gb / 1024, 1), "TB")
+    } else {
+      paste0(round(sys_mem_gb, 1), "GB")
+    }
+
     if (ncores_safe < ncores) {
-      message("[geneSCOPE::createCoordObj] Core configuration: using ", ncores_safe, "/", ncores, " cores (", round(sys_mem_gb, 1), "GB RAM, ", os_type, ")")
+      message("[geneSCOPE::createCoordObj] Core configuration: using ", ncores_safe, "/", ncores, " cores (", mem_display, " RAM, ", os_type, ")")
     } else {
       message("[geneSCOPE::createCoordObj] Core configuration: using ", ncores_safe, " cores")
     }
