@@ -11,58 +11,6 @@
 #' @param length_out Number of grid points
 #' @param downsample Downsample (ratio or integer)
 #' @param n_strata Number of strata (t  if (ncores > safe_cores) {
-    if   internal_clamp_mode <- clamp_mode
-  if (clamp_mode == "both") {
-    if (verbose) message("[geneSCOPE::getTopDeltaL] clamp_mode='both' currently equivalent to ref_only (reference truncation only)")
-    internal_clamp_mode <- "ref_only"
-  }
-  Pear_for_delta <- if (internal_clamp_mode == "ref_only") pmax(Pear_v  sel$raw_p <- p_values
-  sel$mc_se <- mc_se
-  sel$p_ci_lo <- p_ci_lo
-  sel$p_ci_hi <- p_ci_hi
-  sel$FDR <- FDR
-  sel$stat_type <- switch(clamp_mode,
-    none     = "Delta",
-    ref_only = "Delta_refClamp",
-    both     = "Delta_clamp_Ronly"
-  )
-  sel$pval_mode <- pval_mode
-  if (p_adj_mode == "bonferroni") {
-    sel <- sel[sel$FDR < 0.05, , drop = FALSE]
-    if (!nrow(sel)) {
-      if (verbose) message("[geneSCOPE::getTopDeltaL] No Bonferroni-significant pairs (FDR < 0.05).")
-    }
-  }
-
-  if (verbose) {
-    message("[geneSCOPE::getTopDeltaL] Analysis completed successfully")
-    message("[geneSCOPE::getTopDeltaL]   Final result: ", nrow(sel), " gene pairs")
-  }
-
-  selvec
-
-  df <- data.frame(
-    gene1 = rep(common, each = length(common))[ut],
-    gene2 = rep(common, length(common))[ut],
-    LeesL = LeesL_vec,
-    Pear  = Pear_vec,
-    Delta = LeesL_vec - Pear_for_delta
-  )
-  
-  if (verbose) {
-    message("[geneSCOPE::getTopDeltaL]   Total gene pairs: ", nrow(df))
-    message("[geneSCOPE::getTopDeltaL]   Clamp mode: ", clamp_mode)
-  }
-
-  # ===== Fix coverage: first use counts long table (grid_id,gene,count) then fallback to matrix =====
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Computing gene expression coverage percentages")e("[geneSCOPE::getTopDeltaL] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
-    ncores <- safe_cores
-  }
-  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
-  Sys.setenv(OMP_NUM_THREADS = ncores)
-
-  # ---- Extract matrices ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Extracting Lee's L and Pearson correlation matrices") will be truncated to unique r values-1)
 #' @param k_max LOESS maximum neighbors
 #' @param jitter_eps Jitter for r
 #' @param ci_method "percentile","basic","bc"
