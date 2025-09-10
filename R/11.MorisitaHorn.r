@@ -199,9 +199,25 @@ morisitaHornOnNetwork <- function(coordObj,
     )
 
     if (verbose) {
-        mh_stats <- summary(mh_vec)
-        message("[geneSCOPE::morisitaHornOnNetwork]   Morisita-Horn similarity range: [", round(mh_stats[1], 4), ", ", round(mh_stats[6], 4), "]")
-        message("[geneSCOPE::morisitaHornOnNetwork]   Mean similarity: ", round(mh_stats[4], 4))
+        # Check if mh_vec contains valid numeric values
+        if (is.numeric(mh_vec) && length(mh_vec) > 0) {
+            finite_vals <- mh_vec[is.finite(mh_vec)]
+            if (length(finite_vals) > 0) {
+                mh_min <- min(finite_vals, na.rm = TRUE)
+                mh_max <- max(finite_vals, na.rm = TRUE)
+                mh_mean <- mean(finite_vals, na.rm = TRUE)
+                message("[geneSCOPE::morisitaHornOnNetwork]   Morisita-Horn similarity range: [", round(mh_min, 4), ", ", round(mh_max, 4), "]")
+                message("[geneSCOPE::morisitaHornOnNetwork]   Mean similarity: ", round(mh_mean, 4))
+                if (length(finite_vals) < length(mh_vec)) {
+                    n_invalid <- length(mh_vec) - length(finite_vals)
+                    message("[geneSCOPE::morisitaHornOnNetwork]   Warning: ", n_invalid, " non-finite values found")
+                }
+            } else {
+                message("[geneSCOPE::morisitaHornOnNetwork]   Warning: All similarity values are non-finite")
+            }
+        } else {
+            message("[geneSCOPE::morisitaHornOnNetwork]   Warning: Similarity computation returned non-numeric results")
+        }
     }
 
     igraph::edge_attr(gnet, "CMH") <- mh_vec
