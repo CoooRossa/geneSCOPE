@@ -2,10 +2,10 @@
 % Please edit documentation in R/12.ClusterGenes.r
 \name{clusterGenes}
 \alias{clusterGenes}
-\title{Gene Clustering (results written to coordObj@meta.data)}
+\title{Gene Clustering (results written to scope_obj@meta.data)}
 \usage{
 clusterGenes(
-  coordObj,
+  scope_obj,
   grid_name = NULL,
   lee_stats_layer = "LeeStats_Xz",
   L_min = 0,
@@ -32,5 +32,5 @@ clusterGenes(
 )
 }
 \description{
-Based on Lee's L statistics for filtering, graph construction, multiple community detection and optional consensus, output cluster numbers to coordObj@meta.data.
+Based on Lee's L statistics for filtering, graph construction, multiple community detection and optional consensus, output cluster numbers to scope_obj@meta.data.
 }

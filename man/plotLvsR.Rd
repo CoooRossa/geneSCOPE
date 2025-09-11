@@ -5,7 +5,7 @@
 \title{Scatter plot of Lee's L versus Pearson correlation}
 \usage{
 plotLvsR(
-  coordObj,
+  scope_obj,
   grid_name,
   pear_level = c("cell", "grid"),
   delta_top_n = 10,
@@ -13,7 +13,7 @@ plotLvsR(
 )
 }
 \arguments{
-\item{coordObj}{A \code{CoordObj} containing both Lee's L matrices
+\item{scope_obj}{A \code{scope_object} containing both Lee's L matrices
 (in \code{LeeStats_Xz}) and Pearson correlation
 matrices.}
 

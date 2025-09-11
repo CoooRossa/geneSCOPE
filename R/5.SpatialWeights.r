@@ -3,12 +3,12 @@
 #'
 #' @description
 #'   Builds a Queen-style neighbour list for the effective grid cells in a
-#'   \code{CoordObj} layer, then (optionally) converts it to a binary
+#'   \code{scope_object} layer, then (optionally) converts it to a binary
 #'   \code{dgCMatrix} and/or a \code{listw} object.  All outputs match the
 #'   structure produced by the legacy implementation, but are generated via
 #'   parallel C++ helpers for speed.
 #'
-#' @param coordObj   A \code{CoordObj} with at least one populated
+#' @param scope_obj   A \code{scope_object} with at least one populated
 #'                   \code{@grid} slot.
 #' @param grid_name  Character. Name of the grid sub-layer to process. If
 #'                   \code{NULL} and only one sub-layer exists, it is selected
@@ -23,7 +23,7 @@
 #'                   object in \code{$listw}.
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #'
-#' @return The modified \code{CoordObj} is returned invisibly.
+#' @return The modified \code{scope_object} is returned invisibly.
 #'
 #' @details
 #'   The full \eqn{h \times h} Queen lattice (\eqn{h = \max(xbins\_eff,
@@ -36,7 +36,7 @@
 #'
 #' @examples
 #' \dontrun{
-#' coord <- computeSpatialWeights(
+#' coord <- computeWeights(
 #'   coord,
 #'   grid_name   = "25um",
 #'   style       = "W",
@@ -47,14 +47,14 @@
 #' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom spdep nb2listw
 #' @export
-computeSpatialWeights <- function(coordObj,
-                                  grid_name = NULL,
-                                  style = "B",
-                                  store_mat = TRUE,
-                                  zero_policy = TRUE,
-                                  store_listw = TRUE,
-                                  verbose = TRUE) {
-  if (verbose) message("[geneSCOPE::computeSpatialWeights] Computing spatial weights for grid layer")
+computeWeights <- function(scope_obj,
+                           grid_name = NULL,
+                           style = "B",
+                           store_mat = TRUE,
+                           zero_policy = TRUE,
+                           store_listw = TRUE,
+                           verbose = TRUE) {
+  if (verbose) message("[geneSCOPE::computeWeights] Computing spatial weights for grid layer")
 
   # Use OpenMP-only configuration for C++ spatial operations
   thread_config <- configureThreadsFor("openmp_only",
@@ -72,12 +72,12 @@ computeSpatialWeights <- function(coordObj,
   }
 
   ## ---------- 0. Select grid layer (helper) -------------------------------
-  g_layer <- .selectGridLayer(coordObj, grid_name)
+  g_layer <- .selectGridLayer(scope_obj, grid_name)
 
   ## If grid_name not provided, fill back actual name for writing back
   if (is.null(grid_name)) {
-    grid_name <- names(coordObj@grid)[
-      vapply(coordObj@grid, identical, logical(1), g_layer)
+    grid_name <- names(scope_obj@grid)[
+      vapply(scope_obj@grid, identical, logical(1), g_layer)
     ]
   }
 
@@ -103,7 +103,7 @@ computeSpatialWeights <- function(coordObj,
 
   if (verbose) {
     message(
-      "[geneSCOPE::computeSpatialWeights] Grid dimensions: ", length(grid_id), " grids, ",
+      "[geneSCOPE::computeWeights] Grid dimensions: ", length(grid_id), " grids, ",
       hbins, "×", hbins, " lattice"
     )
   }
@@ -146,13 +146,13 @@ computeSpatialWeights <- function(coordObj,
     diag(W) <- 0
     W@x[] <- 1
     dimnames(W) <- list(grid_id, grid_id)
-    coordObj@grid[[grid_name]]$W <- W
+    scope_obj@grid[[grid_name]]$W <- W
   }
   if (store_listw) {
-    coordObj@grid[[grid_name]]$listw <- listw_obj
+    scope_obj@grid[[grid_name]]$listw <- listw_obj
   }
 
-  if (verbose) message("[geneSCOPE::computeSpatialWeights] Spatial weights computation completed")
+  if (verbose) message("[geneSCOPE::computeWeights] Spatial weights computation completed")
 
-  invisible(coordObj)
+  invisible(scope_obj)
 }

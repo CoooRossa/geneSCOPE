@@ -5,7 +5,7 @@
 \title{基于树形网络的分支子聚类可视化}
 \usage{
 plotDendroNetworkWithBranches(
-  coordObj,
+  scope_obj,
   grid_name = NULL,
   lee_stats_layer = "LeeStats_Xz",
   gene_subset = NULL,
@@ -57,7 +57,7 @@ plotDendroNetworkWithBranches(
 )
 }
 \arguments{
-\item{coordObj}{A \code{CoordObj} containing \code{@grid} and Lee's
+\item{scope_obj}{A \code{scope_object} containing \code{@grid} and Lee's
 statistics.}
 
 \item{grid_name}{Character. Grid sub-layer to plot. Defaults to the
@@ -149,8 +149,8 @@ base_network, branch_network, params)
 }
 \examples{
 \dontrun{
-p <- plotDendroNetworkWithBranches(coordObj,
-    grid_name = "grid_lenGrid30",
+p <- plotDendroNetworkWithBranches(scope_obj,
+    grid_name = "grid_grid_length30",
     cluster_vec = "modL0.15",
     enable_subbranch = TRUE
 )

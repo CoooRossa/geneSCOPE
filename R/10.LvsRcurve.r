@@ -1,6 +1,6 @@
 #' @title Simplified and robust Lee's L vs Pearson r bootstrap curve (ensure CI output)
 #' @description Fit LOESS from (Lee's L, r) upper triangle point set and generate 95% confidence bands through residual bootstrap.
-#' @param coordObj CoordObj
+#' @param scope_obj scope_object
 #' @param grid_name Grid layer name
 #' @param level "grid" or "cell"
 #' @param lee_stats_layer Lee statistics layer
@@ -10,7 +10,7 @@
 #' @param ncore Threads
 #' @param length_out Number of grid points
 #' @param downsample Downsample (ratio or integer)
-#' @param n_strata Number of strata (t  if (ncores > safe_cores) {
+#' @param n_strata Number of strata (too large will be truncated to unique r values-1)
 #' @param k_max LOESS maximum neighbors
 #' @param jitter_eps Jitter for r
 #' @param ci_method "percentile","basic","bc"
@@ -19,58 +19,58 @@
 #' @param widen_span floor width smoothing span
 #' @param curve_name Output name
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
-#' @return Modified CoordObj
+#' @return Modified scope_object
 #' @export
-addLRcurve <- function(coordObj,
-                       grid_name,
-                       level = c("grid", "cell"),
-                       lee_stats_layer = "LeeStats_Xz",
-                       span = 0.45,
-                       B = 1000,
-                       deg = 1,
-                       ncore = max(1, parallel::detectCores() - 1),
-                       length_out = 1000,
-                       downsample = 1,
-                       n_strata = 50,
-                       k_max = Inf,
-                       jitter_eps = 0,
-                       ci_method = c("percentile", "basic", "bc"),
-                       ci_adjust = c("none", "analytic"),
-                       min_rel_width = 0,
-                       widen_span = 0.1,
-                       curve_name = "LR_curve2",
-                       verbose = TRUE) {
+computeLvsRCurve <- function(scope_obj,
+                        grid_name,
+                        level = c("grid", "cell"),
+                        lee_stats_layer = "LeeStats_Xz",
+                        span = 0.45,
+                        B = 1000,
+                        deg = 1,
+                        ncore = max(1, parallel::detectCores() - 1),
+                        length_out = 1000,
+                        downsample = 1,
+                        n_strata = 50,
+                        k_max = Inf,
+                        jitter_eps = 0,
+                        ci_method = c("percentile", "basic", "bc"),
+                        ci_adjust = c("none", "analytic"),
+                        min_rel_width = 0,
+                        widen_span = 0.1,
+                        curve_name = "LR_curve2",
+                        verbose = TRUE) {
   ci_method <- match.arg(ci_method)
   ci_adjust <- match.arg(ci_adjust)
   level <- match.arg(level)
   if (min_rel_width < 0) stop("min_rel_width cannot be negative")
   if (B < 20) {
-    if (verbose) message("[geneSCOPE::addLRcurve] Warning: B < 20 may be unstable")
+    if (verbose) message("[geneSCOPE::computeLvsRCurve] Warning: B < 20 may be unstable")
   }
 
   if (verbose) {
-    message("[geneSCOPE::addLRcurve] Starting Lee's L vs Pearson r bootstrap curve analysis")
-    message("[geneSCOPE::addLRcurve]   Grid layer: ", grid_name)
-    message("[geneSCOPE::addLRcurve]   Analysis level: ", level)
-    message("[geneSCOPE::addLRcurve]   Bootstrap iterations: ", B)
-    message("[geneSCOPE::addLRcurve]   CI method: ", ci_method)
+    message("[geneSCOPE::computeLvsRCurve] Starting Lee's L vs Pearson r bootstrap curve analysis")
+    message("[geneSCOPE::computeLvsRCurve]   Grid layer: ", grid_name)
+    message("[geneSCOPE::computeLvsRCurve]   Analysis level: ", level)
+    message("[geneSCOPE::computeLvsRCurve]   Bootstrap iterations: ", B)
+    message("[geneSCOPE::computeLvsRCurve]   CI method: ", ci_method)
   }
 
   # 1. Extract matrices
-  if (verbose) message("[geneSCOPE::addLRcurve] Extracting Lee's L and Pearson correlation matrices")
-  g_layer <- .selectGridLayer(coordObj, grid_name)
-  grid_name <- names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
-  Lmat <- .getLeeMatrix(coordObj, grid_name, lee_layer = lee_stats_layer)
-  rmat <- .getPearsonMatrix(coordObj, grid_name, level = ifelse(level == "grid", "grid", "cell"))
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Extracting Lee's L and Pearson correlation matrices")
+  g_layer <- .selectGridLayer(scope_obj, grid_name)
+  grid_name <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+  Lmat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = lee_stats_layer)
+  rmat <- .getPearsonMatrix(scope_obj, grid_name, level = ifelse(level == "grid", "grid", "cell"))
 
   common <- intersect(rownames(Lmat), rownames(rmat))
   if (length(common) < 2) stop("Insufficient common genes")
-  
+
   if (verbose) {
-    message("[geneSCOPE::addLRcurve]   Found ", length(common), " common genes between matrices")
-    message("[geneSCOPE::addLRcurve]   Matrix dimensions: ", nrow(Lmat), "×", ncol(Lmat))
+    message("[geneSCOPE::computeLvsRCurve]   Found ", length(common), " common genes between matrices")
+    message("[geneSCOPE::computeLvsRCurve]   Matrix dimensions: ", nrow(Lmat), "×", ncol(Lmat))
   }
-  
+
   Lmat <- Lmat[common, common, drop = FALSE]
   rmat <- rmat[common, common, drop = FALSE]
   ut <- upper.tri(Lmat, diag = FALSE)
@@ -78,48 +78,48 @@ addLRcurve <- function(coordObj,
   rv <- rmat[ut]
 
   # 2. Clean / Downsample
-  if (verbose) message("[geneSCOPE::addLRcurve] Cleaning and preprocessing data points")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Cleaning and preprocessing data points")
   ok <- is.finite(Lv) & is.finite(rv)
   Lv <- Lv[ok]
   rv <- rv[ok]
   if (!length(Lv)) stop("No valid points")
-  
-  if (verbose) message("[geneSCOPE::addLRcurve]   Initial data points: ", length(Lv))
-  
+
+  if (verbose) message("[geneSCOPE::computeLvsRCurve]   Initial data points: ", length(Lv))
+
   if (is.numeric(downsample) && downsample < 1) {
     keep <- sample.int(length(Lv), max(1L, floor(downsample * length(Lv))))
     Lv <- Lv[keep]
     rv <- rv[keep]
-    if (verbose) message("[geneSCOPE::addLRcurve]   Downsampled to: ", length(Lv), " points (ratio: ", downsample, ")")
+    if (verbose) message("[geneSCOPE::computeLvsRCurve]   Downsampled to: ", length(Lv), " points (ratio: ", downsample, ")")
   } else if (is.numeric(downsample) && downsample >= 1 && length(Lv) > downsample) {
     keep <- sample.int(length(Lv), downsample)
     Lv <- Lv[keep]
     rv <- rv[keep]
-    if (verbose) message("[geneSCOPE::addLRcurve]   Downsampled to: ", length(Lv), " points (target: ", downsample, ")")
+    if (verbose) message("[geneSCOPE::computeLvsRCurve]   Downsampled to: ", length(Lv), " points (target: ", downsample, ")")
   }
   if (jitter_eps > 0) {
     rv <- jitter(rv, factor = jitter_eps)
-    if (verbose) message("[geneSCOPE::addLRcurve]   Applied jitter to r values (eps: ", jitter_eps, ")")
+    if (verbose) message("[geneSCOPE::computeLvsRCurve]   Applied jitter to r values (eps: ", jitter_eps, ")")
   }
 
   # 3. Stratify (by r quantiles) — fallback if failed
-  if (verbose) message("[geneSCOPE::addLRcurve] Setting up stratified sampling")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Setting up stratified sampling")
   uniq_r <- sort(unique(rv))
   if (length(uniq_r) < 3) stop("r values too discrete")
   n_strata_eff <- min(n_strata, length(uniq_r) - 1)
-  
+
   if (verbose) {
-    message("[geneSCOPE::addLRcurve]   Unique r values: ", length(uniq_r))
-    message("[geneSCOPE::addLRcurve]   Effective strata: ", n_strata_eff)
+    message("[geneSCOPE::computeLvsRCurve]   Unique r values: ", length(uniq_r))
+    message("[geneSCOPE::computeLvsRCurve]   Effective strata: ", n_strata_eff)
   }
-  
+
   probs <- seq(0, 1, length.out = n_strata_eff + 1)
   brks <- unique(quantile(rv, probs, na.rm = TRUE))
   if (length(brks) < 2) {
     # Fallback: uniform slices
     brks <- seq(min(rv), max(rv), length.out = n_strata_eff + 1)
     brks <- unique(brks)
-    if (verbose) message("[geneSCOPE::addLRcurve]   Using fallback uniform stratification")
+    if (verbose) message("[geneSCOPE::computeLvsRCurve]   Using fallback uniform stratification")
   }
   if (length(brks) < 2) stop("Cannot establish strata")
   strat <- cut(rv, breaks = brks, include.lowest = TRUE, labels = FALSE)
@@ -129,19 +129,19 @@ addLRcurve <- function(coordObj,
   strat <- strat[ok2]
 
   # 4. xgrid
-  if (verbose) message("[geneSCOPE::addLRcurve] Preparing analysis grid and fitting LOESS model")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Preparing analysis grid and fitting LOESS model")
   xr <- range(rv)
   if (diff(xr) <= 0) stop("r has no span")
   xgrid <- seq(xr[1], xr[2], length.out = length_out)
-  
+
   if (verbose) {
-    message("[geneSCOPE::addLRcurve]   Analysis range: [", round(xr[1], 3), ", ", round(xr[2], 3), "]")
-    message("[geneSCOPE::addLRcurve]   Grid points: ", length_out)
-    message("[geneSCOPE::addLRcurve]   Using ", ncore, " cores for bootstrap")
+    message("[geneSCOPE::computeLvsRCurve]   Analysis range: [", round(xr[1], 3), ", ", round(xr[2], 3), "]")
+    message("[geneSCOPE::computeLvsRCurve]   Grid points: ", length_out)
+    message("[geneSCOPE::computeLvsRCurve]   Using ", ncore, " cores for bootstrap")
   }
 
   # Directly call unified interface (no longer check old version)
-  if (verbose) message("[geneSCOPE::addLRcurve] Running LOESS residual bootstrap analysis")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Running LOESS residual bootstrap analysis")
   keep_boot <- TRUE
   adjust_mode <- if (ci_method == "percentile" && ci_adjust == "analytic") 1L else 0L
   res <- loess_residual_bootstrap(
@@ -168,15 +168,15 @@ addLRcurve <- function(coordObj,
     lo <- res$lo_bc
     hi <- res$hi_bc
   }
-  
+
   if (verbose) {
-    message("[geneSCOPE::addLRcurve] Bootstrap completed, processing confidence intervals")
-    message("[geneSCOPE::addLRcurve]   CI method applied: ", ci_method)
+    message("[geneSCOPE::computeLvsRCurve] Bootstrap completed, processing confidence intervals")
+    message("[geneSCOPE::computeLvsRCurve]   CI method applied: ", ci_method)
   }
-  
+
   # 6. floor widen
   if (verbose && min_rel_width > 0) {
-    message("[geneSCOPE::addLRcurve] Applying minimum relative width constraints")
+    message("[geneSCOPE::computeLvsRCurve] Applying minimum relative width constraints")
   }
   if (min_rel_width > 0) {
     rng_fit <- diff(range(fit, finite = TRUE))
@@ -201,7 +201,7 @@ addLRcurve <- function(coordObj,
 
   # ---- New: Local residual scale adaptive lower bound (no new parameters) ----------------------------
   # Purpose: Avoid "points more dispersed but CI narrower"; force width >= 2*1.96*local MAD
-  if (verbose) message("[geneSCOPE::addLRcurve] Applying local residual scale adaptation")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Applying local residual scale adaptation")
   {
     if (length(Lv) > 20) {
       # Fit values interpolated to original r
@@ -278,7 +278,7 @@ addLRcurve <- function(coordObj,
   }
 
   # ---- New: CI edge smoothing (post-processing only, does not change algorithm) ---------------------------
-  if (verbose) message("[geneSCOPE::addLRcurve] Applying confidence interval edge smoothing")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Applying confidence interval edge smoothing")
   {
     if (length(lo) >= 15 && all(is.finite(xgrid))) {
       span_s <- 0.06 + 10 / length(lo) # Adaptive small span, smaller with longer length
@@ -326,7 +326,7 @@ addLRcurve <- function(coordObj,
   }
 
   # ---- CI edge smoothing completed, enter length check ----
-  if (verbose) message("[geneSCOPE::addLRcurve] Finalizing curve data and storing results")
+  if (verbose) message("[geneSCOPE::computeLvsRCurve] Finalizing curve data and storing results")
   ## ---- 6. Write back to @stats -------------------------------------------------------
   n_grid <- length(xgrid)
   if (!all(
@@ -340,12 +340,12 @@ addLRcurve <- function(coordObj,
     ))
   }
 
-  if (is.null(coordObj@stats)) coordObj@stats <- list()
-  if (is.null(coordObj@stats[[grid_name]])) {
-    coordObj@stats[[grid_name]] <- list()
+  if (is.null(scope_obj@stats)) scope_obj@stats <- list()
+  if (is.null(scope_obj@stats[[grid_name]])) {
+    scope_obj@stats[[grid_name]] <- list()
   }
-  if (is.null(coordObj@stats[[grid_name]][[lee_stats_layer]])) {
-    coordObj@stats[[grid_name]][[lee_stats_layer]] <- list()
+  if (is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+    scope_obj@stats[[grid_name]][[lee_stats_layer]] <- list()
   }
 
   ## ---- meta update ----
@@ -363,23 +363,23 @@ addLRcurve <- function(coordObj,
     sigma2_edf = res$sigma2_edf,
     resid_global_mad = res$resid_mad,
     adjust_mode = adjust_mode,
-    note = "Generated by addLRcurve2 with residual-MAD floor + edge smoothing",
+    note = "Generated by computeLvsRCurve with residual-MAD floor + edge smoothing",
     local_mad_diag = if (exists("local_mad_diag")) local_mad_diag else NULL,
     edge_smooth = if (exists("edge_smooth_info")) edge_smooth_info else NULL
   )
   meta_col <- rep(list(meta_obj), length(fit))
 
-  coordObj@stats[[grid_name]][[lee_stats_layer]][[curve_name]] <-
+  scope_obj@stats[[grid_name]][[lee_stats_layer]][[curve_name]] <-
     data.frame(Pear = xgrid, fit = fit, lo95 = lo, hi95 = hi, meta = I(meta_col))
 
   if (verbose) {
-    message("[geneSCOPE::addLRcurve] Analysis completed successfully")
-    message("[geneSCOPE::addLRcurve]   Curve stored as: ", curve_name)
-    message("[geneSCOPE::addLRcurve]   Data points in curve: ", length(xgrid))
-    message("[geneSCOPE::addLRcurve]   Bootstrap iterations used: ", res$B)
+    message("[geneSCOPE::computeLvsRCurve] Analysis completed successfully")
+    message("[geneSCOPE::computeLvsRCurve]   Curve stored as: ", curve_name)
+    message("[geneSCOPE::computeLvsRCurve]   Data points in curve: ", length(xgrid))
+    message("[geneSCOPE::computeLvsRCurve]   Bootstrap iterations used: ", res$B)
   }
 
-  invisible(coordObj)
+  invisible(scope_obj)
 }
 
 #' @title Scatter plot of Lee's L versus Pearson correlation
@@ -391,7 +391,7 @@ addLRcurve <- function(coordObj,
 #'   annotates the largest positive and negative L–rplotLvsR differences
 #'   (\code{Delta}).
 #'
-#' @param coordObj    A \code{CoordObj} containing both Lee's L matrices
+#' @param scope_obj    A \code{scope_object} containing both Lee's L matrices
 #'                    (in \code{LeeStats_Xz}) and Pearson correlation
 #'                    matrices.
 #' @param grid_name   Character. Grid sub-layer name.
@@ -404,13 +404,13 @@ addLRcurve <- function(coordObj,
 #'
 #' @return A \code{ggplot} object.
 #'
-#' @seealso \code{\link{getTopDeltaL}}
+#' @seealso \code{\link{getTopLvsR}}
 #' @importFrom ggplot2 ggplot aes geom_point geom_hline geom_vline scale_x_continuous scale_y_continuous labs theme_minimal theme element_text element_rect element_line element_blank
 #' @importFrom ggrepel geom_text_repel
 #' @importFrom dplyr mutate bind_rows slice_max slice_min distinct
 #' @importFrom scales label_number
 #' @export
-plotLvsR <- function(coordObj,
+plotLvsR <- function(scope_obj,
                      grid_name,
                      pear_level = c("cell", "grid"),
                      delta_top_n = 10,
@@ -418,8 +418,8 @@ plotLvsR <- function(coordObj,
   pear_level <- match.arg(pear_level)
 
   ## ---- 1. Lee's L and Pearson r ------------------------------------------------
-  L_mat <- .getLeeMatrix(coordObj, grid_name, lee_layer = "LeeStats_Xz")
-  r_mat <- .getPearsonMatrix(coordObj, grid_name,
+  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = "LeeStats_Xz")
+  r_mat <- .getPearsonMatrix(scope_obj, grid_name,
     level = pear_level
   )
 
@@ -459,7 +459,7 @@ plotLvsR <- function(coordObj,
     ylab <- "Pearson correlation"
     ttl <- sprintf(
       "Lee’s L vs Pearson  (%s, %s)",
-      sub("grid_lenGrid", "Grid ", grid_name),
+      sub("grid", "Grid ", grid_name),
       ifelse(pear_level == "cell", "cell level", "grid level")
     )
   } else {
@@ -471,7 +471,7 @@ plotLvsR <- function(coordObj,
     ylab <- "Lee’s L"
     ttl <- sprintf(
       "Pearson vs Lee’s L  (%s, %s)",
-      sub("grid_lenGrid", "Grid ", grid_name),
+      sub("grid", "Grid ", grid_name),
       ifelse(pear_level == "cell", "cell level", "grid level")
     )
   }
@@ -554,23 +554,23 @@ plotLvsR <- function(coordObj,
 #' Output column mc_se≈sqrt(p*(1-p)/N), and Clopper–Pearson interval
 #' can be used to assess whether more perms are needed.
 #' @export
-getTopDeltaL <- function(coordObj,
-                         grid_name,
-                         pear_level = c("cell", "grid"),
-                         pear_range = c(-1, 1),
-                         L_range = c(-1, 1),
-                         top_n = 10,
-                         direction = c("largest", "smallest", "both"),
-                         do_perm = TRUE,
-                         perms = 1000,
-                         block_side = 8,
-                         use_blocks = TRUE,
-                         ncores = 1,
-                         clamp_mode = c("none", "ref_only", "both"),
-                         p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
-                         mem_limit_GB = 2,
-                         pval_mode = c("beta", "mid", "uniform"),
-                         verbose = TRUE) {
+getTopLvsR <- function(scope_obj,
+                       grid_name,
+                       pear_level = c("cell", "grid"),
+                       pear_range = c(-1, 1),
+                       L_range = c(-1, 1),
+                       top_n = 10,
+                       direction = c("largest", "smallest", "both"),
+                       do_perm = TRUE,
+                       perms = 1000,
+                       block_side = 8,
+                       use_blocks = TRUE,
+                       ncores = 1,
+                       clamp_mode = c("none", "ref_only", "both"),
+                       p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
+                       mem_limit_GB = 2,
+                       pval_mode = c("beta", "mid", "uniform"),
+                       verbose = TRUE) {
   pear_level <- match.arg(pear_level)
   direction <- match.arg(direction)
   p_adj_mode <- match.arg(p_adj_mode)
@@ -578,11 +578,11 @@ getTopDeltaL <- function(coordObj,
   pval_mode <- match.arg(pval_mode)
 
   if (verbose) {
-    message("[geneSCOPE::getTopDeltaL] Starting top Delta analysis")
-    message("[geneSCOPE::getTopDeltaL]   Grid layer: ", grid_name)
-    message("[geneSCOPE::getTopDeltaL]   Pearson level: ", pear_level)
-    message("[geneSCOPE::getTopDeltaL]   Direction: ", direction)
-    message("[geneSCOPE::getTopDeltaL]   Top N: ", top_n)
+    message("[geneSCOPE::getTopLvsR] Starting top Delta analysis")
+    message("[geneSCOPE::getTopLvsR]   Grid layer: ", grid_name)
+    message("[geneSCOPE::getTopLvsR]   Pearson level: ", pear_level)
+    message("[geneSCOPE::getTopLvsR]   Direction: ", direction)
+    message("[geneSCOPE::getTopLvsR]   Top N: ", top_n)
   }
 
   # ---- Core count clipping ----
@@ -596,23 +596,23 @@ getTopDeltaL <- function(coordObj,
     max(1, phys - 2)
   )
   if (ncores > safe_cores) {
-    message("[geneSCOPE::getTopDeltaL] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
+    message("[geneSCOPE::getTopLvsR] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
     ncores <- safe_cores
   }
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
   Sys.setenv(OMP_NUM_THREADS = ncores)
 
   # ---- Extract matrices ----
-  L_mat <- .getLeeMatrix(coordObj, grid_name, lee_layer = "LeeStats_Xz")
-  r_mat <- .getPearsonMatrix(coordObj, grid_name, level = pear_level)
+  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = "LeeStats_Xz")
+  r_mat <- .getPearsonMatrix(scope_obj, grid_name, level = pear_level)
   common <- intersect(rownames(L_mat), rownames(r_mat))
   if (length(common) < 2) stop("Insufficient common genes")
-  
+
   if (verbose) {
-    message("[geneSCOPE::getTopDeltaL]   Found ", length(common), " common genes between matrices")
-    message("[geneSCOPE::getTopDeltaL]   Matrix dimensions: ", nrow(L_mat), "×", ncol(L_mat))
+    message("[geneSCOPE::getTopLvsR]   Found ", length(common), " common genes between matrices")
+    message("[geneSCOPE::getTopLvsR]   Matrix dimensions: ", nrow(L_mat), "×", ncol(L_mat))
   }
-  
+
   L_mat <- L_mat[common, common]
   r_mat <- r_mat[common, common]
   diag(L_mat) <- NA
@@ -622,10 +622,10 @@ getTopDeltaL <- function(coordObj,
   Pear_vec <- r_mat[ut]
 
   # ---- Delta ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Computing Delta values and applying filters")
+  if (verbose) message("[geneSCOPE::getTopLvsR] Computing Delta values and applying filters")
   internal_clamp_mode <- clamp_mode
   if (clamp_mode == "both") {
-    message("[geneSCOPE::getTopDeltaL] clamp_mode='both' currently equivalent to ref_only (reference truncation only)")
+    message("[geneSCOPE::getTopLvsR] clamp_mode='both' currently equivalent to ref_only (reference truncation only)")
     internal_clamp_mode <- "ref_only"
   }
   Pear_for_delta <- if (internal_clamp_mode == "ref_only") pmax(Pear_vec, 0) else Pear_vec
@@ -641,7 +641,7 @@ getTopDeltaL <- function(coordObj,
   # ===== Fix coverage: first use counts long table (grid_id,gene,count) then fallback to matrix =====
   {
     expr_pct_map <- setNames(rep(0, length(common)), common) # Default 0
-    g_layer_try <- tryCatch(.selectGridLayer(coordObj, grid_name), error = function(e) NULL)
+    g_layer_try <- tryCatch(.selectGridLayer(scope_obj, grid_name), error = function(e) NULL)
     coverage_done <- FALSE
 
     # --- 1. Prefer counts long table ---
@@ -694,8 +694,8 @@ getTopDeltaL <- function(coordObj,
       }
       expr_mat <- pick_matrix(g_layer_try)
       if (is.null(expr_mat) && pear_level == "cell") {
-        cell_env <- tryCatch(coordObj@cell, error = function(e) NULL)
-        if (is.null(cell_env)) cell_env <- tryCatch(coordObj@cells, error = function(e) NULL)
+        cell_env <- tryCatch(scope_obj@cell, error = function(e) NULL)
+        if (is.null(cell_env)) cell_env <- tryCatch(scope_obj@cells, error = function(e) NULL)
         expr_mat <- pick_matrix(cell_env)
       }
       if (!is.null(expr_mat)) {
@@ -730,20 +730,20 @@ getTopDeltaL <- function(coordObj,
   # ===== Coverage calculation ends =====
 
   # ---- Threshold filtering ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Applying threshold filters")
+  if (verbose) message("[geneSCOPE::getTopLvsR] Applying threshold filters")
   df <- df[df$Pear >= pear_range[1] & df$Pear <= pear_range[2] &
     df$LeesL >= L_range[1] & df$LeesL <= L_range[2], ]
   if (!nrow(df)) stop("Thresholds remove all pairs")
   total_universe <- nrow(df)
-  
+
   if (verbose) {
-    message("[geneSCOPE::getTopDeltaL]   Pairs after filtering: ", total_universe)
-    message("[geneSCOPE::getTopDeltaL]   Pearson range: [", pear_range[1], ", ", pear_range[2], "]")
-    message("[geneSCOPE::getTopDeltaL]   Lee's L range: [", L_range[1], ", ", L_range[2], "]")
+    message("[geneSCOPE::getTopLvsR]   Pairs after filtering: ", total_universe)
+    message("[geneSCOPE::getTopLvsR]   Pearson range: [", pear_range[1], ", ", pear_range[2], "]")
+    message("[geneSCOPE::getTopLvsR]   Lee's L range: [", L_range[1], ", ", L_range[2], "]")
   }
 
   # ---- Select top ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Selecting top gene pairs by Delta values")
+  if (verbose) message("[geneSCOPE::getTopLvsR] Selecting top gene pairs by Delta values")
   sel <- switch(direction,
     largest = dplyr::slice_max(df, Delta, n = top_n),
     smallest = dplyr::slice_min(df, Delta, n = top_n),
@@ -754,33 +754,33 @@ getTopDeltaL <- function(coordObj,
   )
   sel <- dplyr::distinct(sel, gene1, gene2, .keep_all = TRUE)
   rownames(sel) <- NULL
-  
+
   if (verbose) {
-    message("[geneSCOPE::getTopDeltaL]   Selected ", nrow(sel), " top gene pairs")
+    message("[geneSCOPE::getTopLvsR]   Selected ", nrow(sel), " top gene pairs")
     if (nrow(sel) > 0) {
       delta_range <- range(sel$Delta)
-      message("[geneSCOPE::getTopDeltaL]   Delta range: [", round(delta_range[1], 4), ", ", round(delta_range[2], 4), "]")
+      message("[geneSCOPE::getTopLvsR]   Delta range: [", round(delta_range[1], 4), ", ", round(delta_range[2], 4), "]")
     }
   }
-  
+
   if (!nrow(sel) || !do_perm) {
     sel$stat_type <- switch(clamp_mode,
       none     = "Delta",
       ref_only = "Delta_refClamp",
       both     = "Delta_clamp_Ronly"
     )
-    if (verbose && !do_perm) message("[geneSCOPE::getTopDeltaL] Skipping permutation testing (do_perm = FALSE)")
+    if (verbose && !do_perm) message("[geneSCOPE::getTopLvsR] Skipping permutation testing (do_perm = FALSE)")
     return(sel)
   }
 
   # ---- Permutation preparation ----
   if (verbose) {
-    message("[geneSCOPE::getTopDeltaL] Preparing permutation analysis")
-    message("[geneSCOPE::getTopDeltaL]   Permutations: ", perms)
-    message("[geneSCOPE::getTopDeltaL]   P-value method: ", pval_mode)
-    message("[geneSCOPE::getTopDeltaL]   Multiple testing correction: ", p_adj_mode)
+    message("[geneSCOPE::getTopLvsR] Preparing permutation analysis")
+    message("[geneSCOPE::getTopLvsR]   Permutations: ", perms)
+    message("[geneSCOPE::getTopLvsR]   P-value method: ", pval_mode)
+    message("[geneSCOPE::getTopLvsR]   Multiple testing correction: ", p_adj_mode)
   }
-  g_layer <- .selectGridLayer(coordObj, grid_name)
+  g_layer <- .selectGridLayer(scope_obj, grid_name)
   Xz <- g_layer$Xz
   W <- g_layer$W
   grid_info <- g_layer$grid_info
@@ -825,13 +825,13 @@ getTopDeltaL <- function(coordObj,
     target_batch <- max(1L, floor(target_batch / 2))
   }
   message(
-    "[geneSCOPE::getTopDeltaL] Planned batch_size=", target_batch,
+    "[geneSCOPE::getTopLvsR] Planned batch_size=", target_batch,
     " (estimated idx_mat ", sprintf("%.2f", est_bytes(target_batch) / 1024^2),
     " MB / limit ", sprintf("%.2f", max_idx_bytes / 1024^2), " MB)"
   )
 
   # ---- Permutation loop ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Starting permutation testing loop")
+  if (verbose) message("[geneSCOPE::getTopLvsR] Starting permutation testing loop")
   remaining <- perms
   exceed_count <- rep(0L, nrow(sel))
   perm_threads <- ncores
@@ -841,7 +841,7 @@ getTopDeltaL <- function(coordObj,
     success <- FALSE
     while (!success && perm_threads >= 1) {
       message(sprintf(
-        "[geneSCOPE::getTopDeltaL] Permutation attempt #%d threads=%d batch=%d remain=%d clamp_mode=%s",
+        "[geneSCOPE::getTopLvsR] Permutation attempt #%d threads=%d batch=%d remain=%d clamp_mode=%s",
         attempt, perm_threads, bsz, remaining, clamp_mode
       ))
       attempt <- attempt + 1
@@ -869,7 +869,7 @@ getTopDeltaL <- function(coordObj,
         error = function(e) e
       )
       if (inherits(res, "error")) {
-        message("[geneSCOPE::getTopDeltaL]  Batch failed: ", conditionMessage(res))
+        message("[geneSCOPE::getTopLvsR]  Batch failed: ", conditionMessage(res))
         if (perm_threads > 1) {
           perm_threads <- max(1, floor(perm_threads / 2))
           next
@@ -885,7 +885,7 @@ getTopDeltaL <- function(coordObj,
   }
 
   # ---- p-values and multiple correction ----
-  if (verbose) message("[geneSCOPE::getTopDeltaL] Computing p-values and applying multiple testing correction")
+  if (verbose) message("[geneSCOPE::getTopLvsR] Computing p-values and applying multiple testing correction")
   N <- perms
   k <- exceed_count
   p_values <- switch(pval_mode,
@@ -909,8 +909,8 @@ getTopDeltaL <- function(coordObj,
   if (verbose) {
     sig_count <- sum(p_values < 0.05, na.rm = TRUE)
     fdr_sig_count <- sum(FDR < 0.05, na.rm = TRUE)
-    message("[geneSCOPE::getTopDeltaL]   Significant pairs (p < 0.05): ", sig_count, "/", length(p_values))
-    message("[geneSCOPE::getTopDeltaL]   Significant pairs (FDR < 0.05): ", fdr_sig_count, "/", length(FDR))
+    message("[geneSCOPE::getTopLvsR]   Significant pairs (p < 0.05): ", sig_count, "/", length(p_values))
+    message("[geneSCOPE::getTopLvsR]   Significant pairs (FDR < 0.05): ", fdr_sig_count, "/", length(FDR))
   }
 
   sel$raw_p <- p_values
@@ -926,7 +926,7 @@ getTopDeltaL <- function(coordObj,
   sel$pval_mode <- pval_mode
   if (p_adj_mode == "bonferroni") {
     sel <- sel[sel$FDR < 0.05, , drop = FALSE]
-    if (!nrow(sel)) message("[geneSCOPE::getTopDeltaL] No Bonferroni-significant pairs (FDR < 0.05).")
+    if (!nrow(sel)) message("[geneSCOPE::getTopLvsR] No Bonferroni-significant pairs (FDR < 0.05).")
   }
 
   sel

@@ -2,35 +2,35 @@
 #' @description Internal helper functions used throughout the package
 
 #' @noRd
-.selectGridLayer <- function(coordObj, grid_name = NULL, verbose = FALSE) {
+.selectGridLayer <- function(scope_obj, grid_name = NULL, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
 
-    if (is.null(coordObj@grid) || length(coordObj@grid) == 0) {
-        stop("No grid layers found in coordObj")
+    if (is.null(scope_obj@grid) || length(scope_obj@grid) == 0) {
+        stop("No grid layers found in scope_obj")
     }
 
     if (is.null(grid_name)) {
-        if (length(coordObj@grid) == 1) {
+        if (length(scope_obj@grid) == 1) {
             # Removed verbose message to avoid redundancy
-            return(coordObj@grid[[1]])
+            return(scope_obj@grid[[1]])
         } else {
             stop("Multiple grid layers found. Please specify grid_name.")
         }
     }
 
-    if (!grid_name %in% names(coordObj@grid)) {
+    if (!grid_name %in% names(scope_obj@grid)) {
         stop("Grid layer '", grid_name, "' not found.")
     }
 
     # Removed verbose message to avoid redundancy with main functions
-    return(coordObj@grid[[grid_name]])
+    return(scope_obj@grid[[grid_name]])
 }
 
 #' @noRd
-.checkGridContent <- function(coordObj, grid_name, verbose = FALSE) {
+.checkGridContent <- function(scope_obj, grid_name, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
 
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
 
     required_elements <- c("grid_info", "counts")
     missing <- setdiff(required_elements, names(g_layer))
@@ -46,7 +46,7 @@
 }
 
 #' @noRd
-.getGeneSubset <- function(coordObj, genes = NULL, cluster_col = NULL, cluster_num = NULL, verbose = FALSE) {
+.getGeneSubset <- function(scope_obj, genes = NULL, cluster_col = NULL, cluster_num = NULL, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
 
     if (!is.null(genes)) {
@@ -54,12 +54,12 @@
     }
 
     if (!is.null(cluster_col) && !is.null(cluster_num)) {
-        if (is.null(coordObj@meta.data) || !cluster_col %in% colnames(coordObj@meta.data)) {
+        if (is.null(scope_obj@meta.data) || !cluster_col %in% colnames(scope_obj@meta.data)) {
             stop("Cluster column '", cluster_col, "' not found in meta.data")
         }
 
-        cluster_values <- coordObj@meta.data[[cluster_col]]
-        selected_genes <- rownames(coordObj@meta.data)[cluster_values == cluster_num]
+        cluster_values <- scope_obj@meta.data[[cluster_col]]
+        selected_genes <- rownames(scope_obj@meta.data)[cluster_values == cluster_num]
         selected_genes <- selected_genes[!is.na(selected_genes)]
 
         if (length(selected_genes) == 0) {
@@ -70,8 +70,8 @@
     }
 
     # If no subset specified, return all genes
-    if (!is.null(coordObj@meta.data)) {
-        all_genes <- rownames(coordObj@meta.data)
+    if (!is.null(scope_obj@meta.data)) {
+        all_genes <- rownames(scope_obj@meta.data)
         return(all_genes)
     }
 
@@ -79,20 +79,20 @@
 }
 
 #' @noRd
-.getLeeMatrix <- function(coordObj, grid_name = NULL, lee_layer = NULL, verbose = FALSE) {
+.getLeeMatrix <- function(scope_obj, grid_name = NULL, lee_layer = NULL, verbose = FALSE) {
     ## ---- 0. Select grid sub-layer ------------------------------------------------
-    g_layer <- .selectGridLayer(coordObj, grid_name, verbose = verbose)
+    g_layer <- .selectGridLayer(scope_obj, grid_name, verbose = verbose)
     if (is.null(grid_name)) { # Write back the actual name
-        grid_name <- names(coordObj@grid)[
-            vapply(coordObj@grid, identical, logical(1), g_layer)
+        grid_name <- names(scope_obj@grid)[
+            vapply(scope_obj@grid, identical, logical(1), g_layer)
         ]
     }
 
     ## ---- 1. Auto-detect LeeStats layer name ----------------------------------------
     if (is.null(lee_layer)) {
         cand <- character(0)
-        if (!is.null(coordObj@stats[[grid_name]])) {
-            cand <- names(coordObj@stats[[grid_name]])
+        if (!is.null(scope_obj@stats[[grid_name]])) {
+            cand <- names(scope_obj@stats[[grid_name]])
         }
         cand <- c(cand, names(g_layer))
         cand <- unique(cand[grepl("^LeeStats_", cand)])
@@ -118,9 +118,9 @@
 
     ## ---- 2. Search @stats → @grid in order ------------------------------------
     leeStat <- NULL
-    if (!is.null(coordObj@stats[[grid_name]]) &&
-        !is.null(coordObj@stats[[grid_name]][[lee_layer]])) {
-        leeStat <- coordObj@stats[[grid_name]][[lee_layer]]
+    if (!is.null(scope_obj@stats[[grid_name]]) &&
+        !is.null(scope_obj@stats[[grid_name]][[lee_layer]])) {
+        leeStat <- scope_obj@stats[[grid_name]][[lee_layer]]
     }
 
     if (is.null(leeStat) && !is.null(g_layer[[lee_layer]])) {
@@ -146,7 +146,7 @@
 }
 
 #' @noRd
-.getPearsonMatrix <- function(coordObj,
+.getPearsonMatrix <- function(scope_obj,
                               grid_name = NULL,
                               level = c("grid", "cell")) {
     level <- match.arg(level)
@@ -157,17 +157,17 @@
 
     ## ---------- 2. Get matrix --------------------------------------------------
     if (level == "grid") {
-        g_layer <- .selectGridLayer(coordObj, grid_name)
+        g_layer <- .selectGridLayer(scope_obj, grid_name)
         if (is.null(grid_name)) {
-            grid_name <- names(coordObj@grid)[
-                vapply(coordObj@grid, identical, logical(1), g_layer)
+            grid_name <- names(scope_obj@grid)[
+                vapply(scope_obj@grid, identical, logical(1), g_layer)
             ]
         }
 
         ##   2a. New version: @stats[[grid_name]]
-        rmat <- if (!is.null(coordObj@stats[[grid_name]]) &&
-            !is.null(coordObj@stats[[grid_name]][[corr_name]])) {
-            coordObj@stats[[grid_name]][[corr_name]]
+        rmat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
+            !is.null(scope_obj@stats[[grid_name]][[corr_name]])) {
+            scope_obj@stats[[grid_name]][[corr_name]]
         } else {
             NULL
         }
@@ -181,9 +181,9 @@
             stop("Pearson matrix not found for grid layer '", grid_name, "'.")
         }
 
-        ## Lee’s L alignment
+        ## Lee's L alignment
         Lmat <- tryCatch(
-            .getLeeMatrix(coordObj, grid_name = grid_name),
+            .getLeeMatrix(scope_obj, grid_name = grid_name),
             error = function(e) NULL
         )
         if (!is.null(Lmat)) {
@@ -193,37 +193,37 @@
     } else { # ---------- single-cell ----------
 
         ##   2a. New version: @stats[["cell"]]
-        rmat <- if (!is.null(coordObj@stats[["cell"]]) &&
-            !is.null(coordObj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]])) {
-            coordObj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]]
+        rmat <- if (!is.null(scope_obj@stats[["cell"]]) &&
+            !is.null(scope_obj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]])) {
+            scope_obj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]]
         } else {
             NULL
         }
 
         ##   2b. Fallback: @cells$pearson_cor
-        if (is.null(rmat) && !is.null(coordObj@cells[[corr_name]])) {
-            rmat <- coordObj@cells[[corr_name]]
+        if (is.null(rmat) && !is.null(scope_obj@cells[[corr_name]])) {
+            rmat <- scope_obj@cells[[corr_name]]
         }
 
         if (is.null(rmat)) {
-            stop("Pearson matrix at cell level not found in coordObj.")
+            stop("Pearson matrix at cell level not found in scope_obj.")
         }
 
-        ## Lee’s L alignment (if single-cell layer exists)
+        ## Lee's L alignment (if single-cell layer exists)
         Lmat <- NULL
-        if (!is.null(coordObj@stats[["cell"]])) {
+        if (!is.null(scope_obj@stats[["cell"]])) {
             layer_L <- intersect(
-                grep("^LeeStats_", names(coordObj@stats[["cell"]]),
+                grep("^LeeStats_", names(scope_obj@stats[["cell"]]),
                     value = TRUE
                 ),
                 paste0("LeeStats_Xz", f_cell_suf)
             )
             if (length(layer_L)) {
-                Lmat <- coordObj@stats[["cell"]][[layer_L[1]]]$L
+                Lmat <- scope_obj@stats[["cell"]][[layer_L[1]]]$L
             }
         }
-        if (is.null(Lmat) && !is.null(coordObj@cells$LeeStats_Xz)) {
-            Lmat <- coordObj@cells$LeeStats_Xz$L
+        if (is.null(Lmat) && !is.null(scope_obj@cells$LeeStats_Xz)) {
+            Lmat <- scope_obj@cells$LeeStats_Xz$L
         }
 
         if (!is.null(Lmat)) {
@@ -415,4 +415,15 @@
     thrU <- as.numeric(stats::quantile(vec, pmax, na.rm = TRUE))
     mat[vec < thrL | vec > thrU] <- 0
     Matrix::drop0(mat)
+}
+
+#' @noRd
+.assign_block_id <- function(grid_info, block_side = 8) {
+  # gx / gy start at 1
+  bx <- (grid_info$gx - 1L) %/% block_side
+  by <- (grid_info$gy - 1L) %/% block_side
+  # merge into a single integer id
+  max_by <- max(by)
+  block_id <- bx * (max_by + 1L) + by + 1L
+  block_id
 }

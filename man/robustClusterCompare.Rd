@@ -5,7 +5,7 @@
 \title{执行健壮的聚类比较}
 \usage{
 robustClusterCompare(
-  coordObj,
+  scope_obj,
   grid_size = 10,
   include_cmh = FALSE,
   unify_types = TRUE,
@@ -14,7 +14,7 @@ robustClusterCompare(
 )
 }
 \arguments{
-\item{coordObj}{CoordObj对象}
+\item{scope_obj}{scope_object对象}
 
 \item{grid_size}{网格尺寸}
 

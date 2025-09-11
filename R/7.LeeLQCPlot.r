@@ -1,14 +1,14 @@
 #' @title Plot Distribution of Lee's L Values
 #' @description
-#'   Extract the Lee's L matrix from a specified grid sublayer and LeeStats layer within `coordObj`.
+#'   Extract the Lee's L matrix from a specified grid sublayer and LeeStats layer within `scope_obj`.
 #'   Bin the off-diagonal elements of the Lee's L matrix into intervals and plot a histogram to
 #'   visualize the distribution of Lee's L values. Optionally, take the absolute value of Lee's L
 #'   before plotting. The plot adheres to publication-quality aesthetic standards.
 #'
-#' @param coordObj         An object in which Lee's L has already been computed and stored under
-#'                         `coordObj@grid[[grid_name]][[lee_stats_layer]]$L`.
-#' @param grid_name        Character (optional). The name of the grid sublayer to use (e.g., `"grid_lenGrid50"`).
-#'                         If NULL and there is only one sublayer under `coordObj@grid`, that layer is used.
+#' @param scope_obj         An object in which Lee's L has already been computed and stored under
+#'                         `scope_obj@grid[[grid_name]][[lee_stats_layer]]$L`.
+#' @param grid_name        Character (optional). The name of the grid sublayer to use (e.g., `"grid50"`).
+#'                         If NULL and there is only one sublayer under `scope_obj@grid`, that layer is used.
 #'                         Otherwise, this parameter is required.
 #' @param lee_stats_layer  Character (optional). Name of the LeeStats layer to use (e.g., `"LeeStats_Xz"`).
 #'                         If NULL, attempts to automatically detect a single layer whose name starts
@@ -29,15 +29,15 @@
 #' @importFrom ggplot2 ggplot aes geom_histogram labs theme_bw theme element_rect element_line element_text coord_cartesian expansion
 #' @importFrom grid unit
 #' @export
-plotLeeLDistribution <- function(coordObj,
-                                 grid_name = NULL,
-                                 lee_stats_layer = NULL,
-                                 bins = 30,
-                                 xlim = NULL,
-                                 title = NULL,
-                                 use_abs = FALSE) {
+plotLDistribution <- function(scope_obj,
+                              grid_name = NULL,
+                              lee_stats_layer = NULL,
+                              bins = 30,
+                              xlim = NULL,
+                              title = NULL,
+                              use_abs = FALSE) {
   ## ---- 1. Get Lee's L (helper will auto-match layer names) ---------------------------
-  Lmat <- .getLeeMatrix(coordObj,
+  Lmat <- .getLeeMatrix(scope_obj,
     grid_name = grid_name,
     lee_layer = lee_stats_layer
   )
@@ -101,24 +101,24 @@ plotLeeLDistribution <- function(coordObj,
 
 #' @title Plot Lee's L vs. Gene Total Count Fold Change (All Gene Pairs)
 #' @description
-#'   For a given `coordObj`, extract the Lee's L matrix from
-#'   `coordObj@grid[[grid_name]][[lee_stats_layer]]$L`.
+#'   For a given `scope_obj`, extract the Lee's L matrix from
+#'   `scope_obj@grid[[grid_name]][[lee_stats_layer]]$L`.
 #'   Summarize each gene's total count across all grid cells from
-#'   `coordObj@grid[[grid_name]]$counts`. For every gene pair (i, j) with i < j,
+#'   `scope_obj@grid[[grid_name]]$counts`. For every gene pair (i, j) with i < j,
 #'   compute Lee's L and the fold change of their total counts
 #'   (fold change = max(total_i, total_j) / min(total_i, total_j), ≥ 1).
 #'   Finally, plot a scatterplot with Lee's L on the x-axis and fold change on
 #'   the y-axis, using a 25% gray background and publication-quality aesthetics.
 #'
-#' @param coordObj        An object containing
-#'                        `coordObj@grid[[grid_name]]$counts` and
-#'                        `coordObj@grid[[grid_name]][[lee_stats_layer]]$L`.
+#' @param scope_obj        An object containing
+#'                        `scope_obj@grid[[grid_name]]$counts` and
+#'                        `scope_obj@grid[[grid_name]][[lee_stats_layer]]$L`.
 #' @param grid_name       Character (optional). The name of the grid sublayer to use.
-#'                        If NULL and `coordObj@grid` has exactly one sublayer,
+#'                        If NULL and `scope_obj@grid` has exactly one sublayer,
 #'                        that sublayer is used automatically. Otherwise, it must be provided.
 #' @param lee_stats_layer Character (optional). The name of the LeeStats layer (e.g., `"LeeStats_Xz"`).
 #'                        If NULL, the function searches for exactly one layer under
-#'                        `coordObj@grid[[grid_name]]` whose name starts with `"LeeStats_"`.
+#'                        `scope_obj@grid[[grid_name]]` whose name starts with `"LeeStats_"`.
 #'                        If multiple matches are found, an error is thrown and the user must
 #'                        supply `lee_stats_layer` explicitly.
 #' @param title           Character (optional). Plot title. Defaults to
@@ -132,15 +132,15 @@ plotLeeLDistribution <- function(coordObj,
 #' @importFrom tidyr crossing
 #' @importFrom grid unit
 #' @export
-plotLeeLScatter <- function(coordObj,
-                            grid_name = NULL,
-                            lee_stats_layer = NULL,
-                            title = NULL) {
+plotLScatter <- function(scope_obj,
+                         grid_name = NULL,
+                         lee_stats_layer = NULL,
+                         title = NULL) {
   ## ---- 1. Grid layer & counts ----------------------------------------------
-  g_layer <- .selectGridLayer(coordObj, grid_name)
+  g_layer <- .selectGridLayer(scope_obj, grid_name)
   if (is.null(grid_name)) {
-    grid_name <- names(coordObj@grid)[
-      vapply(coordObj@grid, identical, logical(1), g_layer)
+    grid_name <- names(scope_obj@grid)[
+      vapply(scope_obj@grid, identical, logical(1), g_layer)
     ]
   }
 
@@ -150,7 +150,7 @@ plotLeeLScatter <- function(coordObj,
   }
 
   ## ---- 2. Lee's L -------------------------------------------------------
-  Lmat <- .getLeeMatrix(coordObj,
+  Lmat <- .getLeeMatrix(scope_obj,
     grid_name = grid_name,
     lee_layer = lee_stats_layer
   )

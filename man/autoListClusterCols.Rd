@@ -5,14 +5,14 @@
 \title{自动列出现有聚类列}
 \usage{
 autoListClusterCols(
-  coordObj,
+  scope_obj,
   grid_sizes = c(10, 30, 55),
   pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9"),
   include_cmh = TRUE
 )
 }
 \arguments{
-\item{coordObj}{CoordObj}
+\item{scope_obj}{scope_object}
 
 \item{grid_sizes}{整数向量 (例如 c(10,30,55))}
 

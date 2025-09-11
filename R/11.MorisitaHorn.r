@@ -5,9 +5,9 @@
 #'   (\code{L_min} threshold), computes Morisita–Horn similarity along the
 #'   selected edges using the sparse C++ kernel
 #'   \code{morisita_horn_sparse_cpp()}, and writes the updated network back
-#'   into the chosen grid layer of a \code{CoordObj}.
+#'   into the chosen grid layer of a \code{scope_object}.
 #'
-#' @param coordObj   A \code{CoordObj} with populated \code{@grid} slot.
+#' @param scope_obj   A \code{scope_object} with populated \code{@grid} slot.
 #' @param grid_name  Character. Grid sub-layer to use. If \code{NULL} and only
 #'                   one layer exists it is chosen automatically.
 #' @param lee_layer  Name of the layer that contains Lee's statistics
@@ -26,7 +26,7 @@
 #'                   lambda terms (default \code{TRUE}).
 #' @param verbose    Logical. Whether to print progress messages (default TRUE).
 #'
-#' @return The modified \code{CoordObj} (invisibly).  The graph stored in
+#' @return The modified \code{scope_object} (invisibly).  The graph stored in
 #'   \code{graph_slot_mh} gains a numeric edge attribute \code{CMH}.
 #'
 #' @seealso \code{\link{morisita_horn_sparse_cpp}}
@@ -42,71 +42,71 @@
 #' @importFrom Matrix sparseMatrix Diagonal
 #' @importFrom igraph as_edgelist edge_attr graph_from_data_frame
 #' @export
-morisitaHornOnNetwork <- function(coordObj,
-                                  grid_name = NULL,
-                                  lee_layer = "LeeStats_Xz",
-                                  graph_slot = "g_consensus",
-                                  graph_slot_mh = "g_morisita",
-                                  L_min = 0,
-                                  area_norm = TRUE,
-                                  ncore = 8,
-                                  use_chao = TRUE,
-                                  verbose = TRUE) {
+computeMH <- function(scope_obj,
+                      grid_name = NULL,
+                      lee_layer = "LeeStats_Xz",
+                      graph_slot = "g_consensus",
+                      graph_slot_mh = "g_morisita",
+                      L_min = 0,
+                      area_norm = TRUE,
+                      ncore = 8,
+                      use_chao = TRUE,
+                      verbose = TRUE) {
     if (verbose) {
-        message("[geneSCOPE::morisitaHornOnNetwork] Starting Morisita-Horn similarity computation on gene network")
-        message("[geneSCOPE::morisitaHornOnNetwork]   Lee layer: ", lee_layer)
-        message("[geneSCOPE::morisitaHornOnNetwork]   L_min threshold: ", L_min)
-        message("[geneSCOPE::morisitaHornOnNetwork]   Area normalization: ", area_norm)
-        message("[geneSCOPE::morisitaHornOnNetwork]   Chao correction: ", use_chao)
-        message("[geneSCOPE::morisitaHornOnNetwork]   OpenMP threads: ", ncore)
+        message("[geneSCOPE::computeMH] Starting Morisita-Horn similarity computation on gene network")
+        message("[geneSCOPE::computeMH]   Lee layer: ", lee_layer)
+        message("[geneSCOPE::computeMH]   L_min threshold: ", L_min)
+        message("[geneSCOPE::computeMH]   Area normalization: ", area_norm)
+        message("[geneSCOPE::computeMH]   Chao correction: ", use_chao)
+        message("[geneSCOPE::computeMH]   OpenMP threads: ", ncore)
     }
 
     ## —— 1. Select and check grid layer —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Selecting and validating grid layer")
-    g_layer <- .selectGridLayer(coordObj, grid_name)
-    gname <- names(coordObj@grid)[
-        vapply(coordObj@grid, identical, logical(1), g_layer)
+    if (verbose) message("[geneSCOPE::computeMH] Selecting and validating grid layer")
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    gname <- names(scope_obj@grid)[
+        vapply(scope_obj@grid, identical, logical(1), g_layer)
     ]
-    .checkGridContent(coordObj, gname)
+    .checkGridContent(scope_obj, gname)
 
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   Selected grid layer: ", gname)
+    if (verbose) message("[geneSCOPE::computeMH]   Selected grid layer: ", gname)
 
     ## —— 2. Get Lee's L —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Extracting Lee's L matrix")
-    Lmat <- .getLeeMatrix(coordObj, grid_name = gname, lee_layer = lee_layer)
+    if (verbose) message("[geneSCOPE::computeMH] Extracting Lee's L matrix")
+    Lmat <- .getLeeMatrix(scope_obj, grid_name = gname, lee_layer = lee_layer)
 
     if (verbose) {
-        message("[geneSCOPE::morisitaHornOnNetwork]   Lee's L matrix dimensions: ", nrow(Lmat), "×", ncol(Lmat))
+        message("[geneSCOPE::computeMH]   Lee's L matrix dimensions: ", nrow(Lmat), "×", ncol(Lmat))
         lee_stats <- summary(as.vector(Lmat[upper.tri(Lmat)]))
-        message("[geneSCOPE::morisitaHornOnNetwork]   Lee's L range: [", round(lee_stats[1], 4), ", ", round(lee_stats[6], 4), "]")
+        message("[geneSCOPE::computeMH]   Lee's L range: [", round(lee_stats[1], 4), ", ", round(lee_stats[6], 4), "]")
     }
 
     ## —— 3. Try to read existing graph (only when graph_slot is not NULL) —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Searching for existing gene network")
+    if (verbose) message("[geneSCOPE::computeMH] Searching for existing gene network")
     gnet <- NULL
     if (!is.null(graph_slot)) {
-        if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   Looking for graph in slot: ", graph_slot)
+        if (verbose) message("[geneSCOPE::computeMH]   Looking for graph in slot: ", graph_slot)
         # ① First check @stats
-        if (!is.null(coordObj@stats) &&
-            !is.null(coordObj@stats[[gname]]) &&
-            !is.null(coordObj@stats[[gname]][[lee_layer]]) &&
-            !is.null(coordObj@stats[[gname]][[lee_layer]][[graph_slot]])) {
-            gnet <- coordObj@stats[[gname]][[lee_layer]][[graph_slot]]
-            if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   Found existing graph in @stats")
+        if (!is.null(scope_obj@stats) &&
+            !is.null(scope_obj@stats[[gname]]) &&
+            !is.null(scope_obj@stats[[gname]][[lee_layer]]) &&
+            !is.null(scope_obj@stats[[gname]][[lee_layer]][[graph_slot]])) {
+            gnet <- scope_obj@stats[[gname]][[lee_layer]][[graph_slot]]
+            if (verbose) message("[geneSCOPE::computeMH]   Found existing graph in @stats")
         }
         # ② Then check legacy @grid
         else if (!is.null(g_layer[[lee_layer]]) &&
             !is.null(g_layer[[lee_layer]][[graph_slot]])) {
             gnet <- g_layer[[lee_layer]][[graph_slot]]
-            if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   Found existing graph in @grid (legacy)")
+            if (verbose) message("[geneSCOPE::computeMH]   Found existing graph in @grid (legacy)")
         }
     } else {
-        if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   graph_slot is NULL, will build temporary graph")
+        if (verbose) message("[geneSCOPE::computeMH]   graph_slot is NULL, will build temporary graph")
     }
 
     ## —— 4. If still no network, build based on L_min —— ##
     if (is.null(gnet)) {
-        if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Building new network from Lee's L matrix")
+        if (verbose) message("[geneSCOPE::computeMH] Building new network from Lee's L matrix")
         keep <- (Lmat >= L_min)
         diag(keep) <- FALSE
         idx <- which(keep, arr.ind = TRUE)
@@ -115,8 +115,8 @@ morisitaHornOnNetwork <- function(coordObj,
         }
 
         if (verbose) {
-            message("[geneSCOPE::morisitaHornOnNetwork]   Edges meeting L_min threshold: ", nrow(idx))
-            message("[geneSCOPE::morisitaHornOnNetwork]   Edge weight range: [", round(min(Lmat[idx]), 4), ", ", round(max(Lmat[idx]), 4), "]")
+            message("[geneSCOPE::computeMH]   Edges meeting L_min threshold: ", nrow(idx))
+            message("[geneSCOPE::computeMH]   Edge weight range: [", round(min(Lmat[idx]), 4), ", ", round(max(Lmat[idx]), 4), "]")
         }
 
         edges_df <- data.frame(
@@ -131,19 +131,19 @@ morisitaHornOnNetwork <- function(coordObj,
     if (verbose) {
         n_vertices <- igraph::vcount(gnet)
         n_edges <- igraph::ecount(gnet)
-        message("[geneSCOPE::morisitaHornOnNetwork]   Final network: ", n_vertices, " vertices, ", n_edges, " edges")
+        message("[geneSCOPE::computeMH]   Final network: ", n_vertices, " vertices, ", n_edges, " edges")
     }
 
     ## —— 5. gene × grid sparse count matrix (same as legacy) —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Constructing gene × grid sparse count matrix")
+    if (verbose) message("[geneSCOPE::computeMH] Constructing gene × grid sparse count matrix")
     counts_dt <- g_layer$counts[count > 0]
     genes <- sort(unique(counts_dt$gene))
     grids <- g_layer$grid_info$grid_id
 
     if (verbose) {
-        message("[geneSCOPE::morisitaHornOnNetwork]   Unique genes: ", length(genes))
-        message("[geneSCOPE::morisitaHornOnNetwork]   Grid cells: ", length(grids))
-        message("[geneSCOPE::morisitaHornOnNetwork]   Non-zero counts: ", nrow(counts_dt))
+        message("[geneSCOPE::computeMH]   Unique genes: ", length(genes))
+        message("[geneSCOPE::computeMH]   Grid cells: ", length(grids))
+        message("[geneSCOPE::computeMH]   Non-zero counts: ", nrow(counts_dt))
     }
 
     Gsp <- Matrix::sparseMatrix(
@@ -156,41 +156,41 @@ morisitaHornOnNetwork <- function(coordObj,
 
     if (verbose) {
         sparsity <- (1 - length(Gsp@x) / (nrow(Gsp) * ncol(Gsp))) * 100
-        message("[geneSCOPE::morisitaHornOnNetwork]   Sparse matrix: ", nrow(Gsp), "×", ncol(Gsp), " (", round(sparsity, 2), "% sparse)")
+        message("[geneSCOPE::computeMH]   Sparse matrix: ", nrow(Gsp), "×", ncol(Gsp), " (", round(sparsity, 2), "% sparse)")
     }
 
     ## —— 5a. Optional area normalization —— ##
     if (area_norm) {
-        if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Applying area normalization to count matrix")
+        if (verbose) message("[geneSCOPE::computeMH] Applying area normalization to count matrix")
         gi <- g_layer$grid_info
         if (all(c("width", "height") %in% names(gi))) {
             gi <- gi[match(colnames(Gsp), gi$grid_id), ]
             area_vec <- gi$width * gi$height
             if (length(unique(area_vec)) == 1L) {
-                if (verbose) message("[geneSCOPE::morisitaHornOnNetwork]   Uniform grid area: ", unique(area_vec))
+                if (verbose) message("[geneSCOPE::computeMH]   Uniform grid area: ", unique(area_vec))
                 Gsp@x <- Gsp@x / unique(area_vec)
             } else {
                 if (verbose) {
                     area_stats <- summary(area_vec)
-                    message("[geneSCOPE::morisitaHornOnNetwork]   Variable grid areas: [", round(area_stats[1], 3), ", ", round(area_stats[6], 3), "]")
+                    message("[geneSCOPE::computeMH]   Variable grid areas: [", round(area_stats[1], 3), ", ", round(area_stats[6], 3), "]")
                 }
                 Gsp <- Gsp %*% Matrix::Diagonal(x = 1 / area_vec)
             }
         } else {
-            if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Warning: grid_info lacks width/height; skipping area_norm")
+            if (verbose) message("[geneSCOPE::computeMH] Warning: grid_info lacks width/height; skipping area_norm")
         }
     } else {
-        if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Skipping area normalization (area_norm = FALSE)")
+        if (verbose) message("[geneSCOPE::computeMH] Skipping area normalization (area_norm = FALSE)")
     }
 
     ## —— 6. Morisita–Horn (C++) —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Computing Morisita-Horn similarities using C++ kernel")
+    if (verbose) message("[geneSCOPE::computeMH] Computing Morisita-Horn similarities using C++ kernel")
     ed <- t(igraph::as_edgelist(gnet, names = FALSE) - 1L)
     storage.mode(ed) <- "integer"
 
     if (verbose) {
-        message("[geneSCOPE::morisitaHornOnNetwork]   Processing ", ncol(ed), " edges")
-        message("[geneSCOPE::morisitaHornOnNetwork]   C++ threads: ", ncore)
+        message("[geneSCOPE::computeMH]   Processing ", ncol(ed), " edges")
+        message("[geneSCOPE::computeMH]   C++ threads: ", ncore)
     }
 
     mh_vec <- morisita_horn_sparse(
@@ -206,34 +206,34 @@ morisitaHornOnNetwork <- function(coordObj,
                 mh_min <- min(finite_vals, na.rm = TRUE)
                 mh_max <- max(finite_vals, na.rm = TRUE)
                 mh_mean <- mean(finite_vals, na.rm = TRUE)
-                message("[geneSCOPE::morisitaHornOnNetwork]   Morisita-Horn similarity range: [", round(mh_min, 4), ", ", round(mh_max, 4), "]")
-                message("[geneSCOPE::morisitaHornOnNetwork]   Mean similarity: ", round(mh_mean, 4))
+                message("[geneSCOPE::computeMH]   Morisita-Horn similarity range: [", round(mh_min, 4), ", ", round(mh_max, 4), "]")
+                message("[geneSCOPE::computeMH]   Mean similarity: ", round(mh_mean, 4))
                 if (length(finite_vals) < length(mh_vec)) {
                     n_invalid <- length(mh_vec) - length(finite_vals)
-                    message("[geneSCOPE::morisitaHornOnNetwork]   Warning: ", n_invalid, " non-finite values found")
+                    message("[geneSCOPE::computeMH]   Warning: ", n_invalid, " non-finite values found")
                 }
             } else {
-                message("[geneSCOPE::morisitaHornOnNetwork]   Warning: All similarity values are non-finite")
+                message("[geneSCOPE::computeMH]   Warning: All similarity values are non-finite")
             }
         } else {
-            message("[geneSCOPE::morisitaHornOnNetwork]   Warning: Similarity computation returned non-numeric results")
+            message("[geneSCOPE::computeMH]   Warning: Similarity computation returned non-numeric results")
         }
     }
 
     igraph::edge_attr(gnet, "CMH") <- mh_vec
 
     ## —— 7. Write to @stats —— ##
-    if (verbose) message("[geneSCOPE::morisitaHornOnNetwork] Storing network with Morisita-Horn similarities")
-    if (is.null(coordObj@stats)) coordObj@stats <- list()
-    if (is.null(coordObj@stats[[gname]])) coordObj@stats[[gname]] <- list()
-    if (is.null(coordObj@stats[[gname]][[lee_layer]])) coordObj@stats[[gname]][[lee_layer]] <- list()
-    coordObj@stats[[gname]][[lee_layer]][[graph_slot_mh]] <- gnet
+    if (verbose) message("[geneSCOPE::computeMH] Storing network with Morisita-Horn similarities")
+    if (is.null(scope_obj@stats)) scope_obj@stats <- list()
+    if (is.null(scope_obj@stats[[gname]])) scope_obj@stats[[gname]] <- list()
+    if (is.null(scope_obj@stats[[gname]][[lee_layer]])) scope_obj@stats[[gname]][[lee_layer]] <- list()
+    scope_obj@stats[[gname]][[lee_layer]][[graph_slot_mh]] <- gnet
 
     if (verbose) {
-        message("[geneSCOPE::morisitaHornOnNetwork] Analysis completed successfully")
-        message("[geneSCOPE::morisitaHornOnNetwork]   Network stored in slot: ", graph_slot_mh)
-        message("[geneSCOPE::morisitaHornOnNetwork]   Edge attribute 'CMH' contains Morisita-Horn similarities")
+        message("[geneSCOPE::computeMH] Analysis completed successfully")
+        message("[geneSCOPE::computeMH]   Network stored in slot: ", graph_slot_mh)
+        message("[geneSCOPE::computeMH]   Edge attribute 'CMH' contains Morisita-Horn similarities")
     }
 
-    invisible(coordObj)
+    invisible(scope_obj)
 }

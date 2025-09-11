@@ -1,9 +1,9 @@
-#' @title Add Lee's L statistics to a CoordObj
+#' @title Add Lee's L statistics to a scope_object
 #' @description
 #'   High-level wrapper that computes Lee's L, analytical Z-scores, empirical
 #'   p-values via block permutations, FDR, spatial gradients, quality-control
 #'   metrics, and stores everything under a new layer in \code{@grid}.
-#' @param coordObj A \code{CoordObj} with at least one populated \code{@grid} slot.
+#' @param scope_obj A \code{scope_object} with at least one populated \code{@grid} slot.
 #' @param grid_name Character. Name of the grid sub-layer to process. If
 #'   \code{NULL} and only one sub-layer exists, it is selected automatically.
 #' @param genes Optional character vector of genes to include; if \code{NULL}
@@ -24,29 +24,29 @@
 #' @param backing_path Character. Directory for temporary files (default tempdir()).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @param ncore Deprecated. Use \code{ncores} instead.
-#' @return The modified \code{CoordObj}.
+#' @return The modified \code{scope_object}.
 #' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom stats sd pnorm p.adjust coef lm
 #' @importFrom igraph graph_from_adjacency_matrix simplify degree cluster_louvain cluster_leiden components modularity
 #' @export
-addLeeStats <- function(coordObj,
-                        grid_name = NULL,
-                        genes = NULL,
-                        within = TRUE,
-                        ncores = 1,
-                        block_side = 8,
-                        perms = 1000,
-                        block_size = 64,
-                        L_min = 0,
-                        norm_layer = "Xz",
-                        lee_stats_layer_name = NULL,
-                        legacy_formula = FALSE,
-                        mem_limit_GB = 2,
-                        chunk_size = 32L,
-                        use_bigmemory = TRUE,
-                        backing_path = tempdir(),
-                        verbose = TRUE,
-                        ncore = NULL) {
+computeL <- function(scope_obj,
+                     grid_name = NULL,
+                     genes = NULL,
+                     within = TRUE,
+                     ncores = 1,
+                     block_side = 8,
+                     perms = 1000,
+                     block_size = 64,
+                     L_min = 0,
+                     norm_layer = "Xz",
+                     lee_stats_layer_name = NULL,
+                     legacy_formula = FALSE,
+                     mem_limit_GB = 2,
+                     chunk_size = 32L,
+                     use_bigmemory = TRUE,
+                     backing_path = tempdir(),
+                     verbose = TRUE,
+                     ncore = NULL) {
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
 
     # Handle deprecated parameter
@@ -76,11 +76,11 @@ addLeeStats <- function(coordObj,
     # Only warn if user setting significantly exceeds safe range
     if (verbose) {
         if (cores_to_use < ncores * 0.75) {
-            message("[geneSCOPE::addLeeStats] Core configuration: using ", cores_to_use, "/", ncores, " cores (", os_type, " system limit)")
+            message("[geneSCOPE::computeL] Core configuration: using ", cores_to_use, "/", ncores, " cores (", os_type, " system limit)")
         } else if (cores_to_use < ncores) {
-            message("[geneSCOPE::addLeeStats] Core configuration: using ", cores_to_use, "/", ncores, " cores (optimized)")
+            message("[geneSCOPE::computeL] Core configuration: using ", cores_to_use, "/", ncores, " cores (optimized)")
         } else {
-            message("[geneSCOPE::addLeeStats] Core configuration: using ", ncores, " cores")
+            message("[geneSCOPE::computeL] Core configuration: using ", ncores, " cores")
         }
     }
 
@@ -97,24 +97,24 @@ addLeeStats <- function(coordObj,
     ncores_cpp <- thread_config$openmp_threads
 
     ## --- 1. Check if spatial weights exist, auto-compute if missing ---
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
     grid_name <- if (is.null(grid_name)) {
-        names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
+        names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
     } else {
         grid_name
     }
 
     # Check if spatial weight matrix exists
     if (is.null(g_layer$W) || sum(g_layer$W) == 0) {
-        message("[geneSCOPE::addLeeStats] Computing spatial weights matrix")
-        coordObj <- computeSpatialWeights(coordObj,
+        message("[geneSCOPE::computeL] Computing spatial weights matrix")
+        scope_obj <- computeWeights(scope_obj,
             grid_name = grid_name,
             style = "B",
             store_mat = TRUE,
             store_listw = FALSE
         )
         # Re-extract layer after computing weights
-        g_layer <- .selectGridLayer(coordObj, grid_name)
+        g_layer <- .selectGridLayer(scope_obj, grid_name)
     }
 
     # Cross-platform memory calculation
@@ -145,10 +145,10 @@ addLeeStats <- function(coordObj,
     # More reasonable bigmemory configuration
     if (matrix_size_gb > mem_limit_GB) {
         if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
-            if (verbose) message("[geneSCOPE::addLeeStats] !!! Warning: bigmemory not available on Windows; using regular matrices !!!")
+            if (verbose) message("[geneSCOPE::computeL] !!! Warning: bigmemory not available on Windows; using regular matrices !!!")
             use_bigmemory <- FALSE
         } else {
-            if (verbose) message("[geneSCOPE::addLeeStats] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
+            if (verbose) message("[geneSCOPE::computeL] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
             use_bigmemory <- TRUE
             # Less conservative chunk size
             chunk_size <- min(chunk_size, switch(os_type,
@@ -176,7 +176,7 @@ addLeeStats <- function(coordObj,
     }
 
     ## --- 2. Lee's L computation with error recovery ---
-    if (verbose) message("[geneSCOPE::addLeeStats] Computing Lee's L statistics")
+    if (verbose) message("[geneSCOPE::computeL] Computing Lee's L statistics")
 
     # Multi-retry mechanism with reduced thread count
     current_cores <- ncores
@@ -185,13 +185,13 @@ addLeeStats <- function(coordObj,
     attempt <- 1
 
     while (!success && current_cores >= min_cores) {
-        if (verbose && attempt > 1) message("[geneSCOPE::addLeeStats]  Retry #", attempt, " with ", current_cores, " cores")
+        if (verbose && attempt > 1) message("[geneSCOPE::computeL]  Retry #", attempt, " with ", current_cores, " cores")
 
         result <- tryCatch(
             {
                 # Execute computation
                 t_start <- Sys.time()
-                res <- .computeLeeL(coordObj,
+                res <- .computeLeeL(scope_obj,
                     grid_name = grid_name,
                     norm_layer = norm_layer,
                     genes = genes,
@@ -206,13 +206,13 @@ addLeeStats <- function(coordObj,
 
                 if (verbose) {
                     time_msg <- if (attempt == 1) "completed" else "retry successful"
-                    message("[geneSCOPE::addLeeStats]  Lee's L ", time_msg, " (", format(t_end - t_start), ")")
+                    message("[geneSCOPE::computeL]  Lee's L ", time_msg, " (", format(t_end - t_start), ")")
                 }
 
                 list(success = TRUE, object = res)
             },
             error = function(e) {
-                if (verbose && attempt > 1) message("[geneSCOPE::addLeeStats]  Attempt failed: ", conditionMessage(e))
+                if (verbose && attempt > 1) message("[geneSCOPE::computeL]  Attempt failed: ", conditionMessage(e))
                 list(success = FALSE, error = e)
             }
         )
@@ -226,7 +226,7 @@ addLeeStats <- function(coordObj,
             attempt <- attempt + 1
             # Reduce thread count
             current_cores <- max(floor(current_cores / 2), min_cores)
-            if (verbose) message("[geneSCOPE::addLeeStats]  Reducing cores to ", current_cores, " and retrying")
+            if (verbose) message("[geneSCOPE::computeL]  Reducing cores to ", current_cores, " and retrying")
             # Give system some time to recover
             Sys.sleep(3)
             # Force garbage collection
@@ -253,7 +253,7 @@ addLeeStats <- function(coordObj,
 
         # Handle large matrices more carefully
         if (inherits(L, "big.matrix")) {
-            if (verbose) message("[geneSCOPE::addLeeStats]  Computing Z-scores in chunks")
+            if (verbose) message("[geneSCOPE::computeL]  Computing Z-scores in chunks")
             Z_mat <- L # Use the same backing store
             # Process in chunks to avoid memory issues
             n_genes <- ncol(L)
@@ -288,20 +288,20 @@ addLeeStats <- function(coordObj,
         }
 
         if (inherits(L, "big.matrix")) {
-            if (verbose) message("[geneSCOPE::addLeeStats]  Converting to regular matrix for permutation tests")
+            if (verbose) message("[geneSCOPE::computeL]  Converting to regular matrix for permutation tests")
             L_reg <- as.matrix(L)
         } else {
             L_reg <- L
         }
 
         # Permutation test with error recovery
-        if (verbose) message("[geneSCOPE::addLeeStats] Running permutation tests")
+        if (verbose) message("[geneSCOPE::computeL] Running permutation tests")
         perm_success <- FALSE
         perm_cores <- current_cores
         perm_attempt <- 1
 
         while (!perm_success && perm_cores >= 1) {
-            if (verbose && perm_attempt > 1) message("[geneSCOPE::addLeeStats]  Retry #", perm_attempt, " with ", perm_cores, " cores")
+            if (verbose && perm_attempt > 1) message("[geneSCOPE::computeL]  Retry #", perm_attempt, " with ", perm_cores, " cores")
 
             perm_result <- tryCatch(
                 {
@@ -315,12 +315,12 @@ addLeeStats <- function(coordObj,
                     t_end <- Sys.time()
                     if (verbose) {
                         time_msg <- if (perm_attempt == 1) "completed" else "retry successful"
-                        message("[geneSCOPE::addLeeStats]  Permutation test ", time_msg, " (", format(t_end - t_start), ")")
+                        message("[geneSCOPE::computeL]  Permutation test ", time_msg, " (", format(t_end - t_start), ")")
                     }
                     list(success = TRUE, object = p_result)
                 },
                 error = function(e) {
-                    if (verbose && perm_attempt > 1) message("[geneSCOPE::addLeeStats]  Test failed: ", conditionMessage(e))
+                    if (verbose && perm_attempt > 1) message("[geneSCOPE::computeL]  Test failed: ", conditionMessage(e))
                     list(success = FALSE, error = e)
                 }
             )
@@ -331,14 +331,14 @@ addLeeStats <- function(coordObj,
             } else {
                 perm_attempt <- perm_attempt + 1
                 perm_cores <- max(floor(perm_cores / 2), 1)
-                if (verbose) message("[geneSCOPE::addLeeStats]  Reducing cores to ", perm_cores, " and retrying")
+                if (verbose) message("[geneSCOPE::computeL]  Reducing cores to ", perm_cores, " and retrying")
                 Sys.sleep(2)
                 gc(verbose = FALSE)
             }
         }
 
         if (!perm_success) {
-            if (verbose) message("[geneSCOPE::addLeeStats] !!! Warning: Permutation test failed; setting P = NULL !!!")
+            if (verbose) message("[geneSCOPE::computeL] !!! Warning: Permutation test failed; setting P = NULL !!!")
             NULL
         } else {
             P
@@ -347,7 +347,7 @@ addLeeStats <- function(coordObj,
         NULL
     }
 
-    ## --- 5. FDR: Three Monte Carlo smoothing strategies as in getTopDeltaL ---
+    ## --- 5. FDR: Three Monte Carlo smoothing strategies as in getTopLvsR ---
     # Explanation:
     #   If P exists: P = (k+1)/(perms+1); infer k = round(P*(perms+1)-1)
     #   p_beta    = (k+1)/(perms+2)        (Jeffreys, default more robust/slightly conservative)
@@ -355,7 +355,7 @@ addLeeStats <- function(coordObj,
     #   p_uniform = (k+U)/(perms+1)        (random jitter, expected equal to discrete grid, breaks staircase)
     #   Main output FDR = BH(p_beta)
     if (inherits(Z_mat, "big.matrix")) {
-        if (verbose) message("[geneSCOPE::addLeeStats] Computing FDR corrections")
+        if (verbose) message("[geneSCOPE::computeL] Computing FDR corrections")
         n_genes <- ncol(Z_mat)
         idx_chunks <- seq(1, n_genes, by = chunk_size)
 
@@ -537,10 +537,10 @@ addLeeStats <- function(coordObj,
 
     ## --- 8. Write to stats (main FDR replacement; retain old matrices; add FDR_storey) ---
     layer_name <- if (is.null(lee_stats_layer_name)) paste0("LeeStats_", norm_layer) else lee_stats_layer_name
-    if (is.null(coordObj@stats)) coordObj@stats <- list()
-    if (is.null(coordObj@stats[[gname]])) coordObj@stats[[gname]] <- list()
+    if (is.null(scope_obj@stats)) scope_obj@stats <- list()
+    if (is.null(scope_obj@stats[[gname]])) scope_obj@stats[[gname]] <- list()
 
-    coordObj@stats[[gname]][[layer_name]] <- list(
+    scope_obj@stats[[gname]][[layer_name]] <- list(
         L = L,
         Z = Z_mat,
         P = P,
@@ -570,12 +570,12 @@ addLeeStats <- function(coordObj,
         )
     )
 
-    invisible(coordObj)
+    invisible(scope_obj)
 }
 
 
 #' @noRd
-.computeLeeL <- function(coordObj,
+.computeLeeL <- function(scope_obj,
                          grid_name = NULL,
                          norm_layer = "Xz",
                          genes = NULL,
@@ -590,11 +590,11 @@ addLeeStats <- function(coordObj,
     }
 
     ## ---- 0. Get grid layer (new helper) ---------------------------------
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
     # Fill back layer name string, for later writing back to stats
     if (is.null(grid_name)) {
-        grid_name <- names(coordObj@grid)[
-            vapply(coordObj@grid, identical, logical(1), g_layer)
+        grid_name <- names(scope_obj@grid)[
+            vapply(scope_obj@grid, identical, logical(1), g_layer)
         ]
     }
 
@@ -640,7 +640,7 @@ addLeeStats <- function(coordObj,
         ## ======================================================
     } else {
         message(sprintf(
-            "[geneSCOPE::addLeeStats] Estimated matrix %.1f GB > limit %.1f GB; switching to chunked, streamed write",
+            "[geneSCOPE::computeL] Estimated matrix %.1f GB > limit %.1f GB; switching to chunked, streamed write",
             bytes_L, mem_limit_GB
         ))
 
@@ -707,7 +707,7 @@ addLeeStats <- function(coordObj,
         cells     = rownames(Xz_full),
         W         = W,
         grid_info = g_layer$grid_info,
-        grid_name = grid_name # ← Additional return, convenient for addLeeStats
+        grid_name = grid_name # ← Additional return, convenient for computeL
     )
 }
 

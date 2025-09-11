@@ -5,14 +5,14 @@
 \title{获取有效的聚类列名}
 \usage{
 getValidClusterColumns(
-  coordObj,
+  scope_obj,
   grid_size = 10,
   include_cmh = FALSE,
   pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9")
 )
 }
 \arguments{
-\item{coordObj}{CoordObj对象}
+\item{scope_obj}{scope_object对象}
 
 \item{grid_size}{网格尺寸}
 
@@ -21,7 +21,7 @@ getValidClusterColumns(
 \item{pct_filters}{百分比过滤字符串向量}
 }
 \value{
-存在于coordObj中的有效列名向量
+存在于scope_obj中的有效列名向量
 }
 \description{
 根据网格尺寸和聚类参数模式生成有效的列名列表

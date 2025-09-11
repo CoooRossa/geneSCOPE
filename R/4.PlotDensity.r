@@ -1,8 +1,8 @@
 #' 4.PlotDensity.r (2025-01-06 rev)
 #' @title plotDensity - visualise grid-level density stored in @density
 #'
-#' @param coordObj  A \code{CoordObj}.
-#' @param grid_name Name of the grid layer to plot (e.g. "grid_lenGrid50").
+#' @param scope_obj  A \code{scope_object}.
+#' @param grid_name Name of the grid layer to plot (e.g. "grid50").
 #' @param density1_name,density2_name Column names to plot.
 #' @param palette1,palette2 Color palettes for density1 and density2.
 #' @param alpha1,alpha2 Alpha transparency for density layers.
@@ -24,7 +24,7 @@
 #' @importFrom scales alpha number_format squish
 #' @importFrom data.table rbindlist
 #' @export
-plotDensity <- function(coordObj,
+plotDensity <- function(scope_obj,
                         grid_name,
                         density1_name,
                         density2_name = NULL,
@@ -50,8 +50,8 @@ plotDensity <- function(coordObj,
 
     ## ------------------------------------------------------------------ 1
     ## validate grid layer & retrieve geometry
-    g_layer <- .selectGridLayer(coordObj, grid_name)
-    grid_layer_name <- names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    grid_layer_name <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
     grid_info <- g_layer$grid_info
     if (is.null(grid_info) ||
         !all(c("grid_id", "xmin", "xmax", "ymin", "ymax") %in% names(grid_info))) {
@@ -60,7 +60,7 @@ plotDensity <- function(coordObj,
 
     ## ------------------------------------------------------------------ 2
     ## locate density data frame (new slot first, old slot as fallback)
-    densityDF <- coordObj@density[[grid_layer_name]]
+    densityDF <- scope_obj@density[[grid_layer_name]]
     if (is.null(densityDF)) {
         densityDF <- g_layer$densityDF
     } # legacy
@@ -157,14 +157,14 @@ plotDensity <- function(coordObj,
         nucleus = "segmentation_nucleus",
         both    = c("segmentation_cell", "segmentation_nucleus")
     )
-    seg_layers <- seg_layers[seg_layers %in% names(coordObj@coord)]
+    seg_layers <- seg_layers[seg_layers %in% names(scope_obj@coord)]
 
     if (length(seg_layers)) {
-        seg_dt <- data.table::rbindlist(coordObj@coord[seg_layers],
+        seg_dt <- data.table::rbindlist(scope_obj@coord[seg_layers],
             use.names = TRUE, fill = TRUE
         )
         if (seg_type == "both") {
-            is_cell <- seg_dt$cell %in% coordObj@coord$segmentation_cell$cell
+            is_cell <- seg_dt$cell %in% scope_obj@coord$segmentation_cell$cell
             seg_dt[, segClass := ifelse(is_cell, "cell", "nucleus")]
             p <- p +
                 ggforce::geom_shape(
@@ -277,7 +277,7 @@ plotDensity <- function(coordObj,
 #'   can be ordered by the sum, difference, or individual gene density, and
 #'   densities may be min-max rescaled to 0-1 for direct visual comparison.
 #'
-#' @param coord_obj A \code{CoordObj} containing a \code{@grid} slot that
+#' @param scope_obj A \code{scope_object} containing a \code{@grid} slot that
 #'                  includes \code{densityDF}.
 #' @param layer_name Character. The grid sub-layer to query.
 #' @param gene1,gene2 Character. Names of the two genes to compare.
@@ -302,7 +302,7 @@ plotDensity <- function(coordObj,
 #' plot(p)
 #' }
 #' @export
-plotDensityMirror <- function(coord_obj,
+plotDensityMirror <- function(scope_obj,
                               layer_name,
                               gene1,
                               gene2,
@@ -312,10 +312,10 @@ plotDensityMirror <- function(coord_obj,
     genes <- c(gene1, gene2)
 
     # --- 0. Extract layer data ------------------------------------------------
-    if (layer_name %in% names(coord_obj@grid)) {
+    if (layer_name %in% names(scope_obj@grid)) {
         # Grid-based layer
-        g_layer <- .selectGridLayer(coord_obj, layer_name)
-        density_df <- coord_obj@density[[layer_name]]
+        g_layer <- .selectGridLayer(scope_obj, layer_name)
+        density_df <- scope_obj@density[[layer_name]]
         if (is.null(density_df) && !is.null(g_layer$densityDF)) {
             density_df <- g_layer$densityDF
         }
@@ -326,9 +326,9 @@ plotDensityMirror <- function(coord_obj,
             rownames(density_df) <- density_df$grid_id
         }
         df <- tibble::rownames_to_column(density_df, "grid_id")[, c("grid_id", genes)]
-    } else if (layer_name %in% names(coord_obj@cells)) {
+    } else if (layer_name %in% names(scope_obj@cells)) {
         # Cell-based layer (counts or logCPM)
-        mat <- coord_obj@cells[[layer_name]]
+        mat <- scope_obj@cells[[layer_name]]
         if (methods::is(mat, "dgCMatrix")) {
             mat <- as.matrix(mat)
         }
@@ -343,7 +343,7 @@ plotDensityMirror <- function(coord_obj,
         )
         colnames(df)[2:3] <- genes
     } else {
-        stop("Layer '", layer_name, "' not found in coord_obj.")
+        stop("Layer '", layer_name, "' not found in scope_obj.")
     }
 
     # --- 1. Filter & optional rescaling ---------------------------------------
@@ -392,7 +392,7 @@ plotDensityMirror <- function(coord_obj,
                 "%s: %s vs %s",
                 layer_name, gene1, gene2
             ),
-            x = ifelse(layer_name %in% names(coord_obj@grid), "Grid", "Cell"),
+            x = ifelse(layer_name %in% names(scope_obj@grid), "Grid", "Cell"),
             y = ifelse(rescale, "Rescaled expression", "Expression")
         ) +
         ggplot2::theme_bw(base_size = 8) +
@@ -420,10 +420,10 @@ plotDensityMirror <- function(coord_obj,
 #' of the original coordinates (no stretching or squeezing), following the
 #' same padding logic used in `plotDensity()`.
 #'
-#' @param coordObj   A coord-style S4 object that contains a `@grid` slot,
+#' @param scope_obj   A coord-style S4 object that contains a `@grid` slot,
 #'                   e.g. produced by the STUtility pipeline.
 #' @param grid_name  Character. The name of the grid layer to plot, e.g.
-#'                   "grid_lenGrid31". Must exist inside `coordObj@grid`.
+#'                   "grid31". Must exist inside `scope_obj@grid`.
 #' @param colour     Border colour for grid rectangles. Default "black".
 #' @param linewidth  Border line width for rectangles. Default 0.2.
 #' @param panel_bg   Background colour of the panel. Default "#C0C0C0".
@@ -434,17 +434,17 @@ plotDensityMirror <- function(coord_obj,
 #' @export
 #'
 #' @examples
-#' p <- plotGridBoundary(P5.coord, "grid_lenGrid31")
+#' p <- plotGridBoundary(P5.coord, "grid31")
 #' plot(p)
 #' @export
-plotGridBoundary <- function(coordObj,
+plotGridBoundary <- function(scope_obj,
                              grid_name,
                              colour = "black",
                              linewidth = 0.2,
                              panel_bg = "#C0C0C0",
                              base_size = 10) {
     ## --- 0. Retrieve grid layer & grid_info ------------------------------
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
     grid_info <- g_layer$grid_info
     if (is.null(grid_info) ||
         !all(c("grid_id", "xmin", "xmax", "ymin", "ymax") %in% names(grid_info))) {
@@ -508,14 +508,14 @@ plotGridBoundary <- function(coordObj,
 #' @title Plot Gene Centroid Expression with Segmentation Overlay
 #' @description
 #'   Plots cell centroids coloured by the normalised expression of two specified genes.
-#'   Expression values are extracted from `coordObj@cells$counts`, min-max scaled
+#'   Expression values are extracted from `scope_obj@cells$counts`, min-max scaled
 #'   to 0-1 separately for each gene, and mapped to point transparency (`alpha`) so
 #'   that higher expression appears more opaque. Centroids of cells expressing
 #'   `gene1` are drawn with `palette1`; centroids of cells expressing `gene2` with
 #'   `palette2`. Cells that express neither gene are not shown. Optionally overlays
 #'   cell/nucleus segmentation polygons.
 #'
-#' @param coordObj   A `CoordObj` containing `coord$centroids`, segmentation
+#' @param scope_obj   A `scope_object` containing `coord$centroids`, segmentation
 #'                   vertices, and `cells$counts`.
 #' @param gene1_name Character. Name of the first gene.
 #' @param gene2_name Character. Name of the second gene.
@@ -545,38 +545,38 @@ plotGridBoundary <- function(coordObj,
 #' @importFrom data.table rbindlist
 #' @importFrom scales alpha
 #' @export
-plotGeneCentroids <- function(coordObj,
-                              gene1_name,
-                              gene2_name,
-                              palette1 = "#fc3d5d",
-                              palette2 = "#4753f8",
-                              size1 = 0.3,
-                              size2 = 0.3,
-                              alpha1 = 1,
-                              alpha2 = 0.5,
-                              seg_type = c("none", "cell", "nucleus", "both"),
-                              colour_cell = "black",
-                              colour_nucleus = "#3182bd",
-                              alpha_seg = 0.2,
-                              grid_gap = 100,
-                              scale_text_size = 2.4,
-                              bar_len = 400,
-                              bar_offset = 0.01,
-                              arrow_pt = 4,
-                              scale_legend_colour = "black",
-                              max.cutoff1 = 1,
-                              max.cutoff2 = 1) {
+plotDensityCentroids <- function(scope_obj,
+                                 gene1_name,
+                                 gene2_name,
+                                 palette1 = "#fc3d5d",
+                                 palette2 = "#4753f8",
+                                 size1 = 0.3,
+                                 size2 = 0.3,
+                                 alpha1 = 1,
+                                 alpha2 = 0.5,
+                                 seg_type = c("none", "cell", "nucleus", "both"),
+                                 colour_cell = "black",
+                                 colour_nucleus = "#3182bd",
+                                 alpha_seg = 0.2,
+                                 grid_gap = 100,
+                                 scale_text_size = 2.4,
+                                 bar_len = 400,
+                                 bar_offset = 0.01,
+                                 arrow_pt = 4,
+                                 scale_legend_colour = "black",
+                                 max.cutoff1 = 1,
+                                 max.cutoff2 = 1) {
     seg_type <- match.arg(seg_type)
 
     ## ---- 0. counts / centroid ----------
-    if (is.null(coordObj@cells$counts)) {
-        stop("coordObj@cells$counts is missing.")
+    if (is.null(scope_obj@cells$counts)) {
+        stop("scope_obj@cells$counts is missing.")
     }
-    counts <- coordObj@cells$counts
+    counts <- scope_obj@cells$counts
     if (!(gene1_name %in% rownames(counts))) stop("Gene1 not found in counts.")
     if (!(gene2_name %in% rownames(counts))) stop("Gene2 not found in counts.")
 
-    ctd <- coordObj@coord$centroids
+    ctd <- scope_obj@coord$centroids
     stopifnot(all(c("cell", "x", "y") %in% names(ctd)))
 
     expr1 <- counts[gene1_name, ]
@@ -630,16 +630,16 @@ plotGeneCentroids <- function(coordObj,
             nucleus = "segmentation_nucleus",
             both    = c("segmentation_cell", "segmentation_nucleus")
         )
-        seg_layers <- seg_layers[seg_layers %in% names(coordObj@coord)]
+        seg_layers <- seg_layers[seg_layers %in% names(scope_obj@coord)]
 
         if (length(seg_layers)) {
-            seg_dt <- data.table::rbindlist(coordObj@coord[seg_layers],
+            seg_dt <- data.table::rbindlist(scope_obj@coord[seg_layers],
                 use.names = TRUE, fill = TRUE
             )
             seg_dt$cell <- as.character(seg_dt$cell)
 
             if (seg_type == "both") {
-                seg_dt[, type := ifelse(cell %in% coordObj@coord$segmentation_cell$cell,
+                seg_dt[, type := ifelse(cell %in% scope_obj@coord$segmentation_cell$cell,
                     "cell", "nucleus"
                 )]
                 p <- p +

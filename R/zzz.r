@@ -59,28 +59,7 @@ fixRNG <- function(seed = 42) {
   }
 }
 
-#' @title Select Grid Layer
-#' @description Helper function to select a grid layer from coordObj
-#' @param coordObj A CoordObj
-#' @param grid_name Optional grid layer name
-#' @return The selected grid layer
-#' @keywords internal
-#' @export
-selectGridLayer <- function(coordObj, grid_name = NULL) {
-  if (is.null(grid_name)) {
-    if (length(coordObj@grid) == 1) {
-      return(coordObj@grid[[1]])
-    } else {
-      stop("Multiple grid layers found. Please specify grid_name.")
-    }
-  } else {
-    if (grid_name %in% names(coordObj@grid)) {
-      return(coordObj@grid[[grid_name]])
-    } else {
-      stop("Grid layer '", grid_name, "' not found.")
-    }
-  }
-}
+# Removed duplicate .selectGridLayer definition - now defined in 0.Helpers.r
 
 # Internal compatibility aliases for C++ function name compatibility
 .leeL_cpp_cache <- function(...) leeL_cpp_cache(...)

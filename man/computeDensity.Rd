@@ -5,7 +5,7 @@
 \title{computeDensity - save density tables under @density}
 \usage{
 computeDensity(
-  coordObj,
+  scope_obj,
   grid_name = NULL,
   density_name = "density",
   genes = NULL,
@@ -17,21 +17,21 @@ computeDensity(
 )
 }
 \arguments{
-\item{coordObj}{A \code{CoordObj} produced by \code{createCoordObj()}.}
+\item{scope_obj}{A \code{scope_object} produced by \code{createSCOPE()}.}
 
 \item{grid_name}{Character (optional). Target grid sub-layer; if
 \code{NULL} and only one grid layer exists, that one
 is used automatically.}
 
 \item{density_name}{Character. Column name to create / overwrite inside
-\code{coordObj@density[[grid_name]]}.}
+\code{scope_obj@density[[grid_name]]}.}
 
 \item{genes}{Character vector (optional). Gene symbols to include.
 If supplied, this takes priority over
 \code{cluster_col}/\code{cluster_num}.}
 
 \item{cluster_col}{Character (optional). Column in
-\code{coordObj@meta.data} that stores cluster labels.}
+\code{scope_obj@meta.data} that stores cluster labels.}
 
 \item{cluster_num}{Scalar (optional). The cluster value whose member
 genes are selected when \code{cluster_col} is given.}
@@ -50,13 +50,13 @@ global total across all grids.}
 \item{verbose}{Logical. Whether to print progress messages (default TRUE).}
 }
 \value{
-The modified \code{CoordObj} (invisibly).
+The modified \code{scope_object} (invisibly).
 }
 \description{
 For a chosen grid sub-layer, sum the counts of a user-defined gene set
-(specified directly or via a cluster in \code{coordObj@meta.data}),
+(specified directly or via a cluster in \code{scope_obj@meta.data}),
 optionally normalise the counts, divide by the grid-cell area, and write
-the result into \code{coordObj@density[[grid_name]]}.
+the result into \code{scope_obj@density[[grid_name]]}.
 Each call can add \strong{multiple named density columns} to the same grid-layer
 table by using different \code{density_name}s.
 }

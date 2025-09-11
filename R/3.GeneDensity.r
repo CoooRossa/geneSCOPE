@@ -3,23 +3,23 @@
 #'
 #' @description
 #'   For a chosen grid sub-layer, sum the counts of a user-defined gene set
-#'   (specified directly or via a cluster in \code{coordObj@meta.data}),
+#'   (specified directly or via a cluster in \code{scope_obj@meta.data}),
 #'   optionally normalise the counts, divide by the grid-cell area, and write
-#'   the result into \code{coordObj@density[[grid_name]]}.
+#'   the result into \code{scope_obj@density[[grid_name]]}.
 #'   Each call can add **multiple named density columns** to the same grid-layer
 #'   table by using different \code{density_name}s.
 #'
-#' @param coordObj        A \code{CoordObj} produced by \code{createCoordObj()}.
+#' @param scope_obj        A \code{scope_object} produced by \code{createscope_object()}.
 #' @param grid_name       Character (optional). Target grid sub-layer; if
 #'                        \code{NULL} and only one grid layer exists, that one
 #'                        is used automatically.
 #' @param density_name    Character. Column name to create / overwrite inside
-#'                        \code{coordObj@density[[grid_name]]}.
+#'                        \code{scope_obj@density[[grid_name]]}.
 #' @param genes           Character vector (optional). Gene symbols to include.
 #'                        If supplied, this takes priority over
 #'                        \code{cluster_col}/\code{cluster_num}.
 #' @param cluster_col     Character (optional). Column in
-#'                        \code{coordObj@meta.data} that stores cluster labels.
+#'                        \code{scope_obj@meta.data} that stores cluster labels.
 #' @param cluster_num     Scalar (optional). The cluster value whose member
 #'                        genes are selected when \code{cluster_col} is given.
 #' @param layer_name      Character. Which count layer inside the grid to read
@@ -33,10 +33,10 @@
 #'                          global total across all grids.
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #'
-#' @return The modified \code{CoordObj} (invisibly).
+#' @return The modified \code{scope_object} (invisibly).
 #' @importFrom data.table as.data.table copy fifelse
 #' @export
-computeDensity <- function(coordObj,
+computeDensity <- function(scope_obj,
                            grid_name = NULL,
                            density_name = "density",
                            genes = NULL,
@@ -51,10 +51,10 @@ computeDensity <- function(coordObj,
 
     ## --------------------------------------------------------------------- 2
     ## pick grid layer & sanity check
-    g_layer <- .selectGridLayer(coordObj, grid_name)
-    grid_layer_name <- names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    grid_layer_name <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
 
-    .checkGridContent(coordObj, grid_layer_name)
+    .checkGridContent(scope_obj, grid_layer_name)
 
     grid_info <- g_layer$grid_info
     counts_dt <- g_layer[[layer_name]]
@@ -70,7 +70,7 @@ computeDensity <- function(coordObj,
 
     ## --------------------------------------------------------------------- 3
     ## decide gene set
-    sel_genes <- .getGeneSubset(coordObj,
+    sel_genes <- .getGeneSubset(scope_obj,
         genes        = genes,
         cluster_col  = cluster_col,
         cluster_num  = cluster_num
@@ -120,8 +120,8 @@ computeDensity <- function(coordObj,
     ## --------------------------------------------------------------------- 7
     ## create / update @density entry for this grid layer
     all_ids <- grid_dt$grid_id
-    dens_df <- if (!is.null(coordObj@density[[grid_layer_name]])) {
-        coordObj@density[[grid_layer_name]]
+    dens_df <- if (!is.null(scope_obj@density[[grid_layer_name]])) {
+        scope_obj@density[[grid_layer_name]]
     } else {
         data.frame(row.names = all_ids)
     }
@@ -136,9 +136,9 @@ computeDensity <- function(coordObj,
     dens_df[[density_name]] <- dens_vec[rownames(dens_df)]
     dens_df[[density_name]][is.na(dens_df[[density_name]])] <- 0
 
-    coordObj@density[[grid_layer_name]] <- dens_df
+    scope_obj@density[[grid_layer_name]] <- dens_df
 
     if (verbose) message("[geneSCOPE::computeDensity] Density computation completed")
 
-    invisible(coordObj)
+    invisible(scope_obj)
 }

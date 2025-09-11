@@ -9,7 +9,7 @@
 #'   correlations when \code{show_sign = TRUE}.  Nodes are coloured by supplied
 #'   cluster labels or a meta-data column; hubs receive a thicker outline.
 #'
-#' @param coordObj        A \code{CoordObj} containing \code{@grid} and Lee's
+#' @param scope_obj        A \code{scope_object} containing \code{@grid} and Lee's
 #'                        statistics.
 #' @param grid_name       Character. Grid sub-layer to plot. Defaults to the
 #'                        first layer.
@@ -50,13 +50,13 @@
 #' @importFrom stats approxfun quantile hclust as.dendrogram
 #' @importFrom Matrix drop0
 #' @export
-plotNetworkGenes <- function(
-    coordObj,
-    ## ---------- 数据层 ----------
+plotNetwork <- function(
+    scope_obj,
+    ## ---------- Data layers ----------
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
-    gene_subset = NULL, # 现在兼容直接给基因向量或 (cluster_col, cluster_num)
-    ## ---------- 过滤阈值 ----------
+    gene_subset = NULL, # Now compatible with direct gene vector or (cluster_col, cluster_num)
+    ## ---------- Filter thresholds ----------
     L_min = 0,
     L_min_neg = NULL,
     p_cut = NULL,
@@ -68,12 +68,12 @@ plotNetworkGenes <- function(
     CI_rule = c("remove_within", "remove_outside"),
     drop_isolated = TRUE,
     weight_abs = TRUE,
-    ## ---------- 共识网络 ----------
+    ## ---------- Consensus network ----------
     use_consensus_graph = TRUE,
     graph_slot_name = "g_consensus",
-    ## ---------- FDR 来源新增 ----------
+    ## ---------- New FDR source ----------
     fdr_source = c("FDR", "FDR_storey", "FDR_beta", "FDR_mid", "FDR_uniform", "FDR_disc"),
-    ## ---------- 绘图参数 ----------
+    ## ---------- Plot parameters ----------
     cluster_vec = NULL,
     cluster_palette = c(
         "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#FFFF33",
@@ -100,21 +100,21 @@ plotNetworkGenes <- function(
     CI_rule <- match.arg(CI_rule)
     fdr_source <- match.arg(fdr_source)
 
-    ## ===== 0. 锁定并校验网格层 =====
-    g_layer <- .selectGridLayer(coordObj, grid_name) # 若 grid_name=NULL 自动唯一层
+    ## ===== 0. Lock and validate grid layer =====
+    g_layer <- .selectGridLayer(scope_obj, grid_name) # If grid_name=NULL auto select unique layer
     grid_name <- if (is.null(grid_name)) {
-        names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
+        names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
     } else {
         as.character(grid_name)
     }
 
-    .checkGridContent(coordObj, grid_name) # 若缺必要字段将直接报错
+    .checkGridContent(scope_obj, grid_name) # Error directly if missing required fields
 
-    ## ===== 1. 读取 LeeStats 对象及其矩阵 =====
-    ##  先定位 LeeStats 层（可在 @stats[[grid]] 或 @grid[[grid]]）
-    leeStat <- if (!is.null(coordObj@stats[[grid_name]]) &&
-        !is.null(coordObj@stats[[grid_name]][[lee_stats_layer]])) {
-        coordObj@stats[[grid_name]][[lee_stats_layer]]
+    ## ===== 1. Read LeeStats object and its matrices =====
+    ##  First locate LeeStats layer (can be in @stats[[grid]] or @grid[[grid]])
+    leeStat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
+        !is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+        scope_obj@stats[[grid_name]][[lee_stats_layer]]
     } else if (!is.null(g_layer[[lee_stats_layer]])) {
         g_layer[[lee_stats_layer]]
     } else {
@@ -124,10 +124,10 @@ plotNetworkGenes <- function(
         )
     }
 
-    Lmat <- .getLeeMatrix(coordObj,
+    Lmat <- .getLeeMatrix(scope_obj,
         grid_name = grid_name,
         lee_layer = lee_stats_layer
-    ) # 仅提取对齐后的 L
+    ) # Only extract aligned L
 
     ## ===== 2. 基因子集 =====
     all_genes <- rownames(Lmat)
@@ -137,14 +137,14 @@ plotNetworkGenes <- function(
         ## (A) 直接给定基因向量
         keep_genes <- intersect(
             all_genes,
-            .getGeneSubset(coordObj, genes = gene_subset)
+            .getGeneSubset(scope_obj, genes = gene_subset)
         )
     } else if (is.list(gene_subset) &&
         all(c("cluster_col", "cluster_num") %in% names(gene_subset))) {
         ## (B) 用聚类列 + 编号语法：gene_subset = list(cluster_col = "..", cluster_num = ..)
         keep_genes <- intersect(
             all_genes,
-            .getGeneSubset(coordObj,
+            .getGeneSubset(scope_obj,
                 cluster_col = gene_subset$cluster_col,
                 cluster_num = gene_subset$cluster_num
             )
@@ -162,7 +162,7 @@ plotNetworkGenes <- function(
 
     if (use_consensus && isTRUE(use_FDR)) {
         # 共识图模式通常已预先过滤，这里不给二次 FDR 筛选
-        message("[geneSCOPE::plotNetworkGenes] use_consensus_graph=TRUE ignoring FDR re-filtering (assuming graph already filtered).")
+        message("[geneSCOPE::plotNetwork] use_consensus_graph=TRUE ignoring FDR re-filtering (assuming graph already filtered).")
     }
 
     if (use_consensus) {
@@ -204,7 +204,7 @@ plotNetworkGenes <- function(
             f_lo <- approxfun(curve$Pear, curve$lo95, rule = 2)
             f_hi <- approxfun(curve$Pear, curve$hi95, rule = 2)
 
-            rMat <- .getPearsonMatrix(coordObj, level = "cell") # 取单细胞 Pearson
+            rMat <- .getPearsonMatrix(scope_obj, level = "cell") # 取单细胞 Pearson
             rMat <- rMat[keep_genes, keep_genes, drop = FALSE]
 
             mask <- if (CI_rule == "remove_within") {
@@ -247,7 +247,7 @@ plotNetworkGenes <- function(
             }
             if (inherits(FDR_sel, "big.matrix")) {
                 message(
-                    "[geneSCOPE::plotNetworkGenes] Using FDR source '", FDR_used_name,
+                    "[geneSCOPE::plotNetwork] Using FDR source '", FDR_used_name,
                     "' (big.matrix) → converting to regular matrix for subset filtering"
                 )
                 FDR_sel <- bigmemory::as.matrix(FDR_sel)
@@ -259,7 +259,7 @@ plotNetworkGenes <- function(
             }
             FDRmat <- FDR_sel[idx, idx, drop = FALSE]
             A[FDRmat > FDR_max | is.na(FDRmat)] <- 0
-            message(sprintf("[geneSCOPE::plotNetworkGenes] Using FDR source '%s' (FDR_max=%.3g)", FDR_used_name, FDR_max))
+            message(sprintf("[geneSCOPE::plotNetwork] Using FDR source '%s' (FDR_max=%.3g)", FDR_used_name, FDR_max))
         }
 
         ## (vi) 对称化并去对角
@@ -311,11 +311,11 @@ plotNetworkGenes <- function(
 
     ## helper – 从 meta.data 拿列
     get_meta_cluster <- function(col) {
-        if (is.null(coordObj@meta.data) || !(col %in% colnames(coordObj@meta.data))) {
-            stop("Column ‘", col, "’ not found in coordObj@meta.data.")
+        if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
+            stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
         }
-        tmp <- coordObj@meta.data[[col]]
-        names(tmp) <- rownames(coordObj@meta.data)
+        tmp <- scope_obj@meta.data[[col]]
+        names(tmp) <- rownames(scope_obj@meta.data)
         tmp[Vnames]
     }
 
@@ -535,7 +535,7 @@ plotNetworkGenes <- function(
 #'   tree algorithms within and between clusters, optionally weighted by
 #'   personalized PageRank scores derived from Morisita's Iδ values.
 #'
-#' @inheritParams plotNetworkGenes
+#' @inheritParams plotNetwork
 #' @param IDelta_col_name Character. Column name in \code{meta.data} containing
 #'                        Morisita's Iδ values for PageRank weighting. If \code{NULL},
 #'                        no PageRank weighting is applied.
@@ -565,7 +565,7 @@ plotNetworkGenes <- function(
 #' @importFrom stats quantile median
 #' @export
 plotDendroNetwork <- function(
-    coordObj,
+    scope_obj,
     ## ---------- 数据层 ----------
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
@@ -609,15 +609,15 @@ plotDendroNetwork <- function(
     tree_mode = c("rooted", "radial", "forest")) {
     tree_layout <- TRUE # 固定为树状布局
     ## ========= 0. 读共识图 ========
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
     grid_name <- if (is.null(grid_name)) {
-        names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
+        names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
     } else {
         grid_name
     }
-    leeStat <- if (!is.null(coordObj@stats[[grid_name]]) &&
-        !is.null(coordObj@stats[[grid_name]][[lee_stats_layer]])) {
-        coordObj@stats[[grid_name]][[lee_stats_layer]]
+    leeStat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
+        !is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+        scope_obj@stats[[grid_name]][[lee_stats_layer]]
     } else {
         g_layer[[lee_stats_layer]]
     }
@@ -632,11 +632,11 @@ plotDendroNetwork <- function(
     stopifnot(inherits(g_raw, "igraph"))
 
     ## ========= 1. 子集基因 =========
-    keep_genes <- rownames(coordObj@meta.data)
+    keep_genes <- rownames(scope_obj@meta.data)
     if (!is.null(gene_subset)) {
         keep_genes <- intersect(
             keep_genes,
-            .getGeneSubset(coordObj, genes = gene_subset)
+            .getGeneSubset(scope_obj, genes = gene_subset)
         )
     }
     g <- igraph::induced_subgraph(g_raw, intersect(V(g_raw)$name, keep_genes))
@@ -645,7 +645,7 @@ plotDendroNetwork <- function(
 
     ## ========= 2. Δ-PageRank 重新加权  =========
     if (!is.null(IDelta_col_name)) {
-        delta <- coordObj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
+        delta <- scope_obj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
         delta[is.na(delta)] <- median(delta, na.rm = TRUE)
         q <- stats::quantile(delta, c(.1, .9))
         delta <- pmax(pmin(delta, q[2]), q[1]) # 与 dendroRW 同
@@ -678,7 +678,7 @@ plotDendroNetwork <- function(
     names(clu) <- Vnames
     if (!is.null(cluster_vec)) {
         cv <- if (length(cluster_vec) == 1) {
-            coordObj@meta.data[Vnames, cluster_vec, drop = TRUE]
+            scope_obj@meta.data[Vnames, cluster_vec, drop = TRUE]
         } else {
             cluster_vec[Vnames]
         }
@@ -854,11 +854,11 @@ plotDendroNetwork <- function(
 
     ## helper – 从 meta.data 拿列
     get_meta_cluster <- function(col) {
-        if (is.null(coordObj@meta.data) || !(col %in% colnames(coordObj@meta.data))) {
-            stop("Column ‘", col, "’ not found in coordObj@meta.data.")
+        if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
+            stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
         }
-        tmp <- coordObj@meta.data[[col]]
-        names(tmp) <- rownames(coordObj@meta.data)
+        tmp <- scope_obj@meta.data[[col]]
+        names(tmp) <- rownames(scope_obj@meta.data)
         tmp[Vnames]
     }
 
@@ -1068,7 +1068,7 @@ plotDendroNetwork <- function(
 #'   highly connected within and between user-specified clusters, producing
 #'   an intuitive tree that can be plotted or further analysed.
 #'
-#' @param coordObj        A \code{CoordObj} containing \code{@grid} with a
+#' @param scope_obj        A \code{scope_object} containing \code{@grid} with a
 #'                        consensus gene–gene graph and associated metadata.
 #' @param grid_name       Character. Grid sub-layer to use; if \code{NULL}
 #'                        the first layer is chosen automatically.
@@ -1121,23 +1121,23 @@ plotDendroNetwork <- function(
 #'
 #' @examples
 #' \dontrun{
-#' dend_res <- buildMultiClusterDendrogramRW(
-#'     coordObj        = P5.coord,
-#'     grid_name       = "25um",
-#'     cluster_name    = "modL0.15",
-#'     cluster_ids     = c("C3", "C5", "C7"),
+#' dend_res <- plotRWDendrogram(
+#'     scope_obj = P5.coord,
+#'     grid_name = "25um",
+#'     cluster_name = "modL0.15",
+#'     cluster_ids = c("C3", "C5", "C7"),
 #'     IDelta_col_name = "25um_iDelta_raw",
-#'     linkage         = "average",
-#'     dist_mode       = "one_minus",
-#'     plot_dend       = TRUE
+#'     linkage = "average",
+#'     dist_mode = "one_minus",
+#'     plot_dend = TRUE
 #' )
 #' }
 #' @importFrom igraph edge_attr_names as_edgelist as_data_frame page_rank induced_subgraph ecount
 #' @importFrom stats hclust as.dendrogram quantile
 #' @importFrom graphics plot
 #' @export
-buildMultiClusterDendrogramRW <- function(
-    coordObj,
+plotRWDendrogram <- function(
+    scope_obj,
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
     graph_slot = "g_consensus",
@@ -1154,17 +1154,17 @@ buildMultiClusterDendrogramRW <- function(
     dist_mode <- match.arg(dist_mode)
 
     ## ---------- 0. 锁定网格层 & LeeStats ----------
-    g_layer <- .selectGridLayer(coordObj, grid_name)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
     if (is.null(grid_name)) {
-        grid_name <- names(coordObj@grid)[
-            vapply(coordObj@grid, identical, logical(1), g_layer)
+        grid_name <- names(scope_obj@grid)[
+            vapply(scope_obj@grid, identical, logical(1), g_layer)
         ]
     }
 
     ## LeeStats 对象（备用）
-    leeStat <- if (!is.null(coordObj@stats[[grid_name]]) &&
-        !is.null(coordObj@stats[[grid_name]][[lee_stats_layer]])) {
-        coordObj@stats[[grid_name]][[lee_stats_layer]]
+    leeStat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
+        !is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+        scope_obj@stats[[grid_name]][[lee_stats_layer]]
     } else if (!is.null(g_layer[[lee_stats_layer]])) {
         g_layer[[lee_stats_layer]]
     } else {
@@ -1175,7 +1175,7 @@ buildMultiClusterDendrogramRW <- function(
     }
 
     ## 统一用 .getLeeMatrix() 取 L，并对齐 Pearson 基因集（若存在）
-    Lmat <- .getLeeMatrix(coordObj,
+    Lmat <- .getLeeMatrix(scope_obj,
         grid_name = grid_name,
         lee_layer = lee_stats_layer
     )
@@ -1201,12 +1201,12 @@ buildMultiClusterDendrogramRW <- function(
     }
 
     ## ---------- 2. 解析聚类 ----------
-    memb <- coordObj@meta.data[[cluster_name]]
+    memb <- scope_obj@meta.data[[cluster_name]]
     memb <- if (is.factor(memb)) as.character(memb) else memb
     if (is.null(cluster_ids)) cluster_ids <- sort(unique(na.omit(memb)))
     cluster_ids <- as.character(cluster_ids)
 
-    gene_all <- rownames(coordObj@meta.data)[memb %in% cluster_ids]
+    gene_all <- rownames(scope_obj@meta.data)[memb %in% cluster_ids]
     if (length(gene_all) < 2) {
         stop("Need at least two genes in the selected clusters.")
     }
@@ -1245,13 +1245,13 @@ buildMultiClusterDendrogramRW <- function(
     }
 
     ## ---------- 4. Personalized PageRank ----------
-    delta <- coordObj@meta.data[[IDelta_col_name]]
+    delta <- scope_obj@meta.data[[IDelta_col_name]]
     delta[is.na(delta)] <- median(delta, na.rm = TRUE)
     q <- quantile(delta, c(.1, .9))
     delta <- pmax(pmin(delta, q[2]), q[1])
     pers <- exp(delta - max(delta))
     pers <- pers / sum(pers)
-    names(pers) <- rownames(coordObj@meta.data)
+    names(pers) <- rownames(scope_obj@meta.data)
 
     pers_g <- pers[V(g)$name]
     pers_g <- pers_g / sum(pers_g)
@@ -1322,11 +1322,11 @@ buildMultiClusterDendrogramRW <- function(
 #' @description
 #'   Generates a dot plot that juxtaposes gene–cluster memberships obtained
 #'   under different CI³ thresholds or weighting options.  The function takes a
-#'   set of membership columns already stored in \code{coordObj@meta.data},
+#'   set of membership columns already stored in \code{scope_obj@meta.data},
 #'   reshapes them into long format, applies an adaptive discrete palette, and
 #'   saves the figure to disk.
 #'
-#' @param coordObj   A \code{CoordObj} whose \code{@meta.data} contains the
+#' @param scope_obj   A \code{scope_object} whose \code{@meta.data} contains the
 #'                   membership columns listed in \code{method_cols}.
 #' @param method_cols Character vector of column names, ordered from most
 #'                   stringent to least stringent. **Each column must be a
@@ -1347,7 +1347,7 @@ buildMultiClusterDendrogramRW <- function(
 #' @examples
 #' \dontrun{
 #' p <- plotClusterComparison(
-#'     coordObj,
+#'     scope_obj,
 #'     method_cols = c(
 #'         "All_res0.1_grid50",
 #'         "q80_res0.1_grid50",
@@ -1368,14 +1368,14 @@ buildMultiClusterDendrogramRW <- function(
 #' )
 #' }
 #' @export
-plotClusterComparison <- function(coordObj,
+plotClusterComparison <- function(scope_obj,
                                   method_cols,
                                   method_labels = method_cols,
                                   point_size = 3,
                                   palette = RColorBrewer::brewer.pal) {
     stopifnot(length(method_cols) == length(method_labels))
 
-    df <- coordObj@meta.data |>
+    df <- scope_obj@meta.data |>
         tibble::rownames_to_column("gene") |>
         dplyr::select(gene, tidyselect::all_of(method_cols))
 
@@ -1437,14 +1437,14 @@ plotClusterComparison <- function(coordObj,
     invisible(p)
 }
 #' @title 统一聚类结果数据类型
-#' @description 将CoordObj中指定的聚类结果列统一转换为因子类型
-#' @param coordObj CoordObj对象，包含聚类结果
+#' @description 将scope_object中指定的聚类结果列统一转换为因子类型
+#' @param scope_obj scope_object对象，包含聚类结果
 #' @param grid_sizes 要处理的网格尺寸向量
 #' @param verbose 是否打印详细信息
-#' @return 修改后的CoordObj对象
-unifyClusteringTypes <- function(coordObj, grid_sizes = c(10, 30, 55), verbose = TRUE) {
+#' @return 修改后的scope_object对象
+unifyClusteringTypes <- function(scope_obj, grid_sizes = c(10, 30, 55), verbose = TRUE) {
     # 获取所有列名
-    all_cols <- colnames(coordObj@meta.data)
+    all_cols <- colnames(scope_obj@meta.data)
 
     # 计数统计
     converted_count <- 0
@@ -1457,62 +1457,62 @@ unifyClusteringTypes <- function(coordObj, grid_sizes = c(10, 30, 55), verbose =
         matching_cols <- grep(grid_pattern, all_cols, value = TRUE)
 
         if (length(matching_cols) == 0) {
-            if (verbose) message("[geneSCOPE::plotNetworkGenes] No clustering results found for grid size ", i)
+            if (verbose) message("[geneSCOPE::plotNetwork] No clustering results found for grid size ", i)
             next
         }
 
-        if (verbose) message("[geneSCOPE::plotNetworkGenes] Processing grid size ", i, ", found ", length(matching_cols), " clustering results")
+        if (verbose) message("[geneSCOPE::plotNetwork] Processing grid size ", i, ", found ", length(matching_cols), " clustering results")
 
         # 处理每列
         for (col in matching_cols) {
             # 跳过已经是因子类型的列
-            if (is.factor(coordObj@meta.data[[col]])) {
+            if (is.factor(scope_obj@meta.data[[col]])) {
                 already_factor <- already_factor + 1
                 next
             }
 
             # 转换为因子类型（保留NA值）
-            values <- coordObj@meta.data[[col]]
+            values <- scope_obj@meta.data[[col]]
             if (all(is.na(values))) {
                 # 全部为NA的列，仍然创建一个空因子
-                coordObj@meta.data[[col]] <- factor(values)
+                scope_obj@meta.data[[col]] <- factor(values)
             } else {
                 non_na <- values[!is.na(values)]
                 # 确保有序的水平
                 levels <- sort(unique(non_na))
                 # 转换为因子
-                coordObj@meta.data[[col]] <- factor(values, levels = levels)
+                scope_obj@meta.data[[col]] <- factor(values, levels = levels)
             }
             converted_count <- converted_count + 1
         }
     }
 
     if (verbose) {
-        message("[geneSCOPE::plotNetworkGenes] Converted ", converted_count, " columns to factor type")
-        message("[geneSCOPE::plotNetworkGenes] Already had ", already_factor, " columns as factor type")
+        message("[geneSCOPE::plotNetwork] Converted ", converted_count, " columns to factor type")
+        message("[geneSCOPE::plotNetwork] Already had ", already_factor, " columns as factor type")
     }
 
-    return(coordObj)
+    return(scope_obj)
 }
 
 #' @title 获取有效的聚类列名
 #' @description 根据网格尺寸和聚类参数模式生成有效的列名列表
-#' @param coordObj CoordObj对象
+#' @param scope_obj scope_object对象
 #' @param grid_size 网格尺寸
 #' @param include_cmh 是否包含cmh相关列
 #' @param pct_filters 百分比过滤字符串向量
-#' @return 存在于coordObj中的有效列名向量
-getValidClusterColumns <- function(coordObj,
+#' @return 存在于scope_obj中的有效列名向量
+getValidClusterColumns <- function(scope_obj,
                                    grid_size = 10,
                                    include_cmh = FALSE,
                                    pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9")) {
     # 确保meta.data存在
-    if (is.null(coordObj@meta.data) || ncol(coordObj@meta.data) == 0) {
-        stop("CoordObj中的meta.data为空")
+    if (is.null(scope_obj@meta.data) || ncol(scope_obj@meta.data) == 0) {
+        stop("scope_object中的meta.data为空")
     }
 
     # 获取所有列名
-    all_cols <- colnames(coordObj@meta.data)
+    all_cols <- colnames(scope_obj@meta.data)
 
     # 构建列名模式
     column_patterns <- c()
@@ -1547,12 +1547,12 @@ getValidClusterColumns <- function(coordObj,
 
     # 检查是否所有列都存在相同的genes
     non_na_counts <- sapply(valid_columns, function(col) {
-        sum(!is.na(coordObj@meta.data[[col]]))
+        sum(!is.na(scope_obj@meta.data[[col]]))
     })
 
     # All columns should have the same number of non-NA values, otherwise there might be issues
     if (length(unique(non_na_counts)) > 1) {
-        message("[geneSCOPE::plotNetworkGenes] !!! Warning: Different clustering results contain different numbers of genes, may cause comparison issues !!!")
+        message("[geneSCOPE::plotNetwork] !!! Warning: Different clustering results contain different numbers of genes, may cause comparison issues !!!")
     }
 
     return(valid_columns)
@@ -1560,14 +1560,14 @@ getValidClusterColumns <- function(coordObj,
 
 #' @title 执行健壮的聚类比较
 #' @description 统一数据类型并执行聚类比较
-#' @param coordObj CoordObj对象
+#' @param scope_obj scope_object对象
 #' @param grid_size 网格尺寸
 #' @param include_cmh 是否包含cmh相关列
 #' @param unify_types 是否先统一数据类型
 #' @param pct_filters 百分比过滤字符串向量
 #' @param ... 传递给plotClusterComparison的其他参数
 #' @return plotClusterComparison的返回值
-robustClusterCompare <- function(coordObj,
+robustClusterCompare <- function(scope_obj,
                                  grid_size = 10,
                                  include_cmh = FALSE,
                                  unify_types = TRUE,
@@ -1575,23 +1575,22 @@ robustClusterCompare <- function(coordObj,
                                  ...) {
     # 首先统一数据类型（如果需要）
     if (unify_types) {
-        coordObj <- unifyClusteringTypes(coordObj, grid_sizes = grid_size)
+        scope_obj <- unifyClusteringTypes(scope_obj, grid_sizes = grid_size)
     }
 
     # 获取有效的列名
-    valid_columns <- getValidClusterColumns(coordObj, grid_size, include_cmh, pct_filters)
+    valid_columns <- getValidClusterColumns(scope_obj, grid_size, include_cmh, pct_filters)
 
     if (length(valid_columns) == 0) {
         stop("找不到有效的聚类列，请检查网格尺寸和meta.data")
     }
 
-    message("[geneSCOPE::plotNetworkGenes] Using ", length(valid_columns), " valid clustering columns for comparison")
+    message("[geneSCOPE::plotNetwork] Using ", length(valid_columns), " valid clustering columns for comparison")
 
     # 执行聚类比较
     result <- plotClusterComparison(
-        coordObj = coordObj,
+        scope_obj = scope_obj,
         method_cols = valid_columns,
-        
     )
 
     return(result)
@@ -1599,18 +1598,18 @@ robustClusterCompare <- function(coordObj,
 
 #' @title 自动列出现有聚类列
 #' @description 基于既有 meta.data 列名与给定网格尺寸/百分位模式返回真实存在的列
-#' @param coordObj CoordObj
+#' @param scope_obj scope_object
 #' @param grid_sizes 整数向量 (例如 c(10,30,55))
 #' @param pct_filters 百分位标签 (需与 add / clusterGenes 生成规则一致)
 #' @param include_cmh 是否包含 *_cmh 变体（仅当列真实存在才返回，不会产生警告）
 #' @return data.frame(columns, grid_size, pct, variant)
 #' @export
-autoListClusterCols <- function(coordObj,
+autoListClusterCols <- function(scope_obj,
                                 grid_sizes = c(10, 30, 55),
                                 pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9"),
                                 include_cmh = TRUE) {
-    stopifnot(!is.null(coordObj@meta.data))
-    cols <- colnames(coordObj@meta.data)
+    stopifnot(!is.null(scope_obj@meta.data))
+    cols <- colnames(scope_obj@meta.data)
     out <- list()
     for (g in grid_sizes) {
         for (pct in pct_filters) {
@@ -1652,23 +1651,23 @@ autoListClusterCols <- function(coordObj,
 }
 
 #' @title 批量绘制网络与树形网络
-#' @description 针对若干聚类结果列批量调用 plotNetworkGenes 与 plotDendroNetwork
-#' @param coordObj CoordObj
+#' @description Batch call plotNetwork and plotDendroNetwork for multiple clustering results
+#' @param scope_obj scope_object
 #' @param cluster_columns 需要绘图的聚类列（默认自动探测）
 #' @param grid_size_col 是否根据列名自动解析 grid (TRUE)
 #' @param output_dir 根输出目录（NULL 则不保存，仅返回列表）
 #' @param width,height,dpi 保存参数
-#' @param ... 传递给 plotNetworkGenes 的其他参数（如 fdr_source / FDR_max 等）
+#' @param ... Parameters passed to plotNetwork (such as fdr_source / FDR_max etc.)
 #' @return 命名列表：每列含 list(network=ggplot, dendro=list(plot=..., graph=...))
 #' @export
-batchPlotGeneNetworks <- function(coordObj,
+batchPlotGeneNetworks <- function(scope_obj,
                                   cluster_columns = NULL,
                                   grid_sizes = c(10, 30, 55),
                                   output_dir = NULL,
                                   width = 12, height = 12, dpi = 300,
                                   ...) {
     if (is.null(cluster_columns)) {
-        cc_df <- autoListClusterCols(coordObj, grid_sizes = grid_sizes, include_cmh = TRUE)
+        cc_df <- autoListClusterCols(scope_obj, grid_sizes = grid_sizes, include_cmh = TRUE)
         cluster_columns <- cc_df$column
     }
     if (!length(cluster_columns)) stop("未找到可用聚类列")
@@ -1678,31 +1677,30 @@ batchPlotGeneNetworks <- function(coordObj,
     for (col in cluster_columns) {
         # 解析 grid 尺寸
         gsize <- sub("^.*_grid([0-9]+).*", "\\1", col)
-        grid_name <- paste0("grid_lenGrid", gsize)
-        if (!(grid_name %in% names(coordObj@grid))) {
-            message("[geneSCOPE::plotNetworkGenes] Skipping ", col, " (missing grid layer ", grid_name, ")")
+        grid_name <- paste0("grid", gsize)
+        if (!(grid_name %in% names(scope_obj@grid))) {
+            message("[geneSCOPE::plotNetwork] Skipping ", col, " (missing grid layer ", grid_name, ")")
             next
         }
         # At least two non-NA values
-        non_na <- sum(!is.na(coordObj@meta.data[[col]]))
+        non_na <- sum(!is.na(scope_obj@meta.data[[col]]))
         if (non_na < 2) {
-            message("[geneSCOPE::plotNetworkGenes] Skipping ", col, " (non-NA genes < 2)")
+            message("[geneSCOPE::plotNetwork] Skipping ", col, " (non-NA genes < 2)")
             next
         }
-        message("[geneSCOPE::plotNetworkGenes] Plotting: ", col, " / grid=", grid_name, " (non-NA=", non_na, ")")
+        message("[geneSCOPE::plotNetwork] Plotting: ", col, " / grid=", grid_name, " (non-NA=", non_na, ")")
         title_net <- paste0("Network - ", col, " (grid ", gsize, ")")
         p_net <- tryCatch(
-            plotNetworkGenes(
-                coordObj = coordObj,
+            plotNetwork(
+                scope_obj = scope_obj,
                 grid_name = grid_name,
                 cluster_vec = col,
                 use_consensus_graph = TRUE, # 使用共识图
                 graph_slot_name = "g_consensus",
                 title = title_net,
-                
             ),
             error = function(e) {
-                message("[geneSCOPE::plotNetworkGenes] !!! Warning: plotNetworkGenes failed: ", col, " : ", e$message, " !!!")
+                message("[geneSCOPE::plotNetwork] !!! Warning: plotNetwork failed: ", col, " : ", e$message, " !!!")
                 NULL
             }
         )
@@ -1710,16 +1708,16 @@ batchPlotGeneNetworks <- function(coordObj,
         title_den <- paste0("Dendro Network - ", col, " (grid ", gsize, ")")
         p_den <- tryCatch(
             plotDendroNetwork(
-                coordObj = coordObj,
+                scope_obj = scope_obj,
                 grid_name = grid_name,
                 cluster_vec = col,
                 graph_slot_name = "g_consensus",
-                IDelta_col_name = paste0("grid_lenGrid", gsize, "_iDelta_raw"),
+                IDelta_col_name = paste0("grid", gsize, "_iDelta_raw"),
                 title = title_den,
                 show_sign = TRUE
             ),
             error = function(e) {
-                message("[geneSCOPE::plotNetworkGenes] !!! Warning: plotDendroNetwork failed: ", col, " : ", e$message, " !!!")
+                message("[geneSCOPE::plotNetwork] !!! Warning: plotDendroNetwork failed: ", col, " : ", e$message, " !!!")
                 NULL
             }
         )

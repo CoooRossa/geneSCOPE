@@ -5,7 +5,7 @@
 \title{Plot Dendrogram-style Network Layout}
 \usage{
 plotDendroNetwork(
-  coordObj,
+  scope_obj,
   grid_name = NULL,
   lee_stats_layer = "LeeStats_Xz",
   gene_subset = NULL,
@@ -40,7 +40,7 @@ plotDendroNetwork(
 )
 }
 \arguments{
-\item{coordObj}{A \code{CoordObj} containing \code{@grid} and Lee's
+\item{scope_obj}{A \code{scope_object} containing \code{@grid} and Lee's
 statistics.}
 
 \item{grid_name}{Character. Grid sub-layer to plot. Defaults to the

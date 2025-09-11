@@ -31,7 +31,7 @@ test_that("fixRNG function sets reproducible state", {
 # Test that critical functions exist and are exported
 test_that("Core functions are properly exported", {
     core_functions <- c(
-        "createCoordObj", "computeSpatialWeights",
+        "createSCOPE", "computeWeights",
         "addLeeStats", "detectOS", "fixRNG"
     )
 

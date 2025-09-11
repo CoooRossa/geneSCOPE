@@ -5,7 +5,7 @@
 \title{批量绘制网络与树形网络}
 \usage{
 batchPlotGeneNetworks(
-  coordObj,
+  scope_obj,
   cluster_columns = NULL,
   grid_sizes = c(10, 30, 55),
   output_dir = NULL,
@@ -16,7 +16,7 @@ batchPlotGeneNetworks(
 )
 }
 \arguments{
-\item{coordObj}{CoordObj}
+\item{scope_obj}{scope_object}
 
 \item{cluster_columns}{需要绘图的聚类列（默认自动探测）}
 

@@ -291,7 +291,7 @@ Rcpp::List loess_residual_bootstrap(const arma::vec &x,
             vec fit_b = local_loess(x, yb, grid, span, deg, k_max);
             if (keep_boot || adjust_mode == 1 || ci_type > 0)
             {
-                // 不同 b 写不同列，无数据竞争
+                // Different b writes different columns, no data race
                 boot.col(b) = fit_b;
             }
         }
@@ -354,7 +354,7 @@ Rcpp::List loess_residual_bootstrap(const arma::vec &x,
     // Adjust mode (analytic scaling placeholder – here no extra scaling, kept for interface)
     if (adjust_mode == 1 && boot.n_elem)
     {
-        // 用户后续仍可在 R 端使用 lo/hi；此处保留接口不改算法
+        // Users can still use lo/hi on R side; interface preserved without algorithm changes
     }
 
     // Residual MAD (robust scale)

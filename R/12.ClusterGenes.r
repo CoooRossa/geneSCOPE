@@ -1,8 +1,8 @@
-#' @title Gene Clustering (results written to coordObj@meta.data)
-#' @description Based on Lee's L statistics for filtering, graph construction, multiple community detection and optional consensus, output cluster numbers to coordObj@meta.data.
+#' @title Gene Clustering (results written to scope_obj@meta.data)
+#' @description Based on Lee's L statistics for filtering, graph construction, multiple community detection and optional consensus, output cluster numbers to scope_obj@meta.data.
 #' @export
 clusterGenes <- function(
-    coordObj,
+    scope_obj,
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
     L_min = 0,
@@ -31,16 +31,16 @@ clusterGenes <- function(
     CI_rule <- match.arg(CI_rule)
 
     ## 1. Select grid layer
-    g_layer <- .selectGridLayer(coordObj, grid_name)
-    gname <- names(coordObj@grid)[vapply(coordObj@grid, identical, logical(1), g_layer)]
-    .checkGridContent(coordObj, gname)
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    gname <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+    .checkGridContent(scope_obj, gname)
 
     ## 2. Read statistics
-    if (is.null(coordObj@stats[[gname]]) ||
-        is.null(coordObj@stats[[gname]][[lee_stats_layer]])) {
+    if (is.null(scope_obj@stats[[gname]]) ||
+        is.null(scope_obj@stats[[gname]][[lee_stats_layer]])) {
         stop("Statistics layer missing: ", lee_stats_layer)
     }
-    leeStat <- coordObj@stats[[gname]][[lee_stats_layer]]
+    leeStat <- scope_obj@stats[[gname]][[lee_stats_layer]]
     L_raw <- leeStat$L
     if (is.null(L_raw)) stop("LeeStats layer missing L matrix")
     genes_all <- rownames(L_raw)
@@ -74,7 +74,7 @@ clusterGenes <- function(
         if (anyNA(c(xp, lo, hi))) stop("LR curve contains NA")
         f_lo <- approxfun(xp, lo, rule = 2)
         f_hi <- approxfun(xp, hi, rule = 2)
-        rMat <- .getPearsonMatrix(coordObj, grid_name = gname, level = "cell")
+        rMat <- .getPearsonMatrix(scope_obj, grid_name = gname, level = "cell")
         rMat <- as.matrix(rMat[genes_all, genes_all, drop = FALSE])
         mask <- if (CI_rule == "remove_within") (L_raw <= f_hi(rMat)) else (L_raw < f_lo(rMat) | L_raw > f_hi(rMat))
         A[mask] <- 0
@@ -267,23 +267,23 @@ clusterGenes <- function(
         cluster_name <- sprintf("modL%.2f", L_min)
     }
     # Ensure meta.data exists and contains all gene rows
-    if (is.null(coordObj@meta.data)) {
-        coordObj@meta.data <- data.frame(row.names = genes_all)
+    if (is.null(scope_obj@meta.data)) {
+        scope_obj@meta.data <- data.frame(row.names = genes_all)
     } else {
-        miss_rows <- setdiff(genes_all, rownames(coordObj@meta.data))
+        miss_rows <- setdiff(genes_all, rownames(scope_obj@meta.data))
         if (length(miss_rows)) {
-            coordObj@meta.data <- rbind(
-                coordObj@meta.data,
+            scope_obj@meta.data <- rbind(
+                scope_obj@meta.data,
                 data.frame(row.names = miss_rows)
             )
         }
     }
     # First set entire column to NA, ensuring column exists
-    coordObj@meta.data[genes_all, cluster_name] <- NA_integer_
-    coordObj@meta.data[kept_genes, cluster_name] <- as.integer(memb_final[kept_genes])
+    scope_obj@meta.data[genes_all, cluster_name] <- NA_integer_
+    scope_obj@meta.data[kept_genes, cluster_name] <- as.integer(memb_final[kept_genes])
 
     if (verbose) {
-        nz <- sum(!is.na(coordObj@meta.data[genes_all, cluster_name]))
+        nz <- sum(!is.na(scope_obj@meta.data[genes_all, cluster_name]))
         message(
             "[geneSCOPE::clusterGenes] Written clustering column '", cluster_name, "': ",
             nz, "/", length(genes_all), " genes (",
@@ -292,11 +292,11 @@ clusterGenes <- function(
     }
 
     ## 13. Save consensus graph
-    if (is.null(coordObj@stats[[gname]][[lee_stats_layer]])) {
-        coordObj@stats[[gname]][[lee_stats_layer]] <- list()
+    if (is.null(scope_obj@stats[[gname]][[lee_stats_layer]])) {
+        scope_obj@stats[[gname]][[lee_stats_layer]] <- list()
     }
-    coordObj@stats[[gname]][[lee_stats_layer]][[graph_slot_name]] <- g_cons
+    scope_obj@stats[[gname]][[lee_stats_layer]][[graph_slot_name]] <- g_cons
 
     ## 14. Return (explicit return to avoid upper layer loss)
-    coordObj
+    scope_obj
 }

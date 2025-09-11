@@ -5,7 +5,7 @@
 \title{Compare cluster assignments produced by multiple CI³ parameter sets}
 \usage{
 plotClusterComparison(
-  coordObj,
+  scope_obj,
   method_cols,
   method_labels = method_cols,
   point_size = 3,
@@ -13,7 +13,7 @@ plotClusterComparison(
 )
 }
 \arguments{
-\item{coordObj}{A \code{CoordObj} whose \code{@meta.data} contains the
+\item{scope_obj}{A \code{scope_object} whose \code{@meta.data} contains the
 membership columns listed in \code{method_cols}.}
 
 \item{method_cols}{Character vector of column names, ordered from most
@@ -41,14 +41,14 @@ A \code{ggplot} object invisibly.
 \description{
 Generates a dot plot that juxtaposes gene–cluster memberships obtained
 under different CI³ thresholds or weighting options.  The function takes a
-set of membership columns already stored in \code{coordObj@meta.data},
+set of membership columns already stored in \code{scope_obj@meta.data},
 reshapes them into long format, applies an adaptive discrete palette, and
 saves the figure to disk.
 }
 \examples{
 \dontrun{
 p <- plotClusterComparison(
-    coordObj,
+    scope_obj,
     method_cols = c(
         "All_res0.1_grid50",
         "q80_res0.1_grid50",

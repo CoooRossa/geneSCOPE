@@ -4,10 +4,10 @@
 \alias{selectGridLayer}
 \title{Select Grid Layer}
 \usage{
-selectGridLayer(coordObj, grid_name = NULL)
+selectGridLayer(scope_obj, grid_name = NULL)
 }
 \arguments{
-\item{coordObj}{A CoordObj}
+\item{scope_obj}{A scope_object}
 
 \item{grid_name}{Optional grid layer name}
 }
@@ -15,6 +15,6 @@ selectGridLayer(coordObj, grid_name = NULL)
 The selected grid layer
 }
 \description{
-Helper function to select a grid layer from coordObj
+Helper function to select a grid layer from scope_obj
 }
 \keyword{internal}

@@ -3,8 +3,8 @@
 #'   High-level wrapper that extracts expression data from the specified level
 #'   and layer, applies column centering, and computes the Pearson correlation
 #'   matrix using the C++ backend \code{pearson_block_cpp()}. The result is
-#'   stored in the coordObj and the modified object is returned.
-#' @param coordObj A \code{CoordObj} with populated \code{@grid} or \code{@cells}.
+#'   stored in the scope_obj and the modified object is returned.
+#' @param scope_obj A \code{scope_object} with populated \code{@grid} or \code{@cells}.
 #' @param level Character. \code{"grid"} or \code{"cell"}.
 #' @param grid_name Character (for grid level). Grid sub-layer name.
 #' @param layer Character. Layer name to extract.
@@ -23,31 +23,31 @@
 #' @param backing_path Character. Directory for temporary files (default tempdir()).
 #' @param correation_slot_name Character. Name of the slot to store correlation matrix (default based on level and layer).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
-#' @return The modified \code{CoordObj} (invisibly).
+#' @return The modified \code{scope_object} (invisibly).
 #' @importFrom Matrix t
 #' @export
-geneCorrelation <- function(coordObj,
-                            level = c("cell", "grid"),
-                            layer = "logCPM",
-                            method = c("pearson", "spearman", "kendall"),
-                            blocksize = 2000,
-                            ncores = 16,
-                            chunk_size = 1000,
-                            memory_limit_gb = 16,
-                            store_layer = "pearson_cor",
-                            compute_fdr = TRUE,
-                            fdr_method = "BH",
-                            verbose = TRUE) {
+computeCorrelation <- function(scope_obj,
+                               level = c("cell", "grid"),
+                               layer = "logCPM",
+                               method = c("pearson", "spearman", "kendall"),
+                               blocksize = 2000,
+                               ncores = 16,
+                               chunk_size = 1000,
+                               memory_limit_gb = 16,
+                               store_layer = "pearson_cor",
+                               compute_fdr = TRUE,
+                               fdr_method = "BH",
+                               verbose = TRUE) {
   level <- match.arg(level)
   method <- match.arg(method)
 
   ## ---- Simple thread count control --------------------------------
-  if (verbose) message("[geneSCOPE::geneCorrelation] Configuring thread settings...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Configuring thread settings...")
   # Get system information
   max_cores <- parallel::detectCores()
   if (is.na(max_cores) || max_cores <= 0) {
     max_cores <- 1
-    if (verbose) message("[geneSCOPE::geneCorrelation] !!! Warning: Could not detect cores, using single core !!!")
+    if (verbose) message("[geneSCOPE::computeCorrelation] !!! Warning: Could not detect cores, using single core !!!")
   }
 
   # Simple safety limit
@@ -57,7 +57,7 @@ geneCorrelation <- function(coordObj,
   }
 
   if (ncores_safe < ncores && verbose) {
-    message("[geneSCOPE::geneCorrelation] Reduced ncores from ", ncores, " to ", ncores_safe, " for safety")
+    message("[geneSCOPE::computeCorrelation] Reduced ncores from ", ncores, " to ", ncores_safe, " for safety")
   }
 
   ## ---- Set BLAS to single thread to avoid conflicts ----------------------
@@ -87,31 +87,31 @@ geneCorrelation <- function(coordObj,
   })
 
   ## ---- Get expression matrix ------------------------------------
-  if (verbose) message("[geneSCOPE::geneCorrelation] Loading expression matrix from level: ", level)
+  if (verbose) message("[geneSCOPE::computeCorrelation] Loading expression matrix from level: ", level)
   if (level == "cell") {
-    if (is.null(coordObj@cells) || is.null(coordObj@cells[[layer]])) {
+    if (is.null(scope_obj@cells) || is.null(scope_obj@cells[[layer]])) {
       stop("Cell layer '", layer, "' not found in @cells")
     }
-    expr_mat <- coordObj@cells[[layer]]
+    expr_mat <- scope_obj@cells[[layer]]
   } else {
     stop("Grid level correlation not yet implemented")
   }
 
   if (!inherits(expr_mat, "dgCMatrix")) {
-    message("[geneSCOPE::geneCorrelation] Converting to sparse matrix...")
+    message("[geneSCOPE::computeCorrelation] Converting to sparse matrix...")
     expr_mat <- as(expr_mat, "dgCMatrix")
   }
 
   n_genes <- nrow(expr_mat)
   n_cells <- ncol(expr_mat)
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Data dimensions: ", n_genes, " genes × ", n_cells, " cells")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Data dimensions: ", n_genes, " genes × ", n_cells, " cells")
 
   ## ---- Memory check and chunking strategy -------------------------------
   # Estimate correlation matrix size (n_genes × n_genes × 8 bytes)
   cor_matrix_gb <- (n_genes^2 * 8) / (1024^3)
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Estimated correlation matrix size: ", round(cor_matrix_gb, 2), " GB")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Estimated correlation matrix size: ", round(cor_matrix_gb, 2), " GB")
 
   if (cor_matrix_gb > memory_limit_gb) {
     stop(
@@ -121,22 +121,22 @@ geneCorrelation <- function(coordObj,
   }
 
   ## ---- Data preprocessing --------------------------------------
-  if (verbose) message("[geneSCOPE::geneCorrelation] Preprocessing expression matrix...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Preprocessing expression matrix...")
 
   # Transpose matrix to cells × genes (pearson_cor expects this)
   expr_dense <- as.matrix(Matrix::t(expr_mat))
 
   # Center data (pearson_cor expects centered data)
-  if (verbose) message("[geneSCOPE::geneCorrelation] Centering data...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Centering data...")
   expr_centered <- scale(expr_dense, center = TRUE, scale = FALSE)
 
   # Remove NaN/Inf
   expr_centered[!is.finite(expr_centered)] <- 0
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Data preprocessing completed")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Data preprocessing completed")
 
   ## ---- Call C++ correlation function --------------------------------
-  if (verbose) message("[geneSCOPE::geneCorrelation] Starting correlation matrix computation (using ", ncores_safe, " threads)...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Starting correlation matrix computation (using ", ncores_safe, " threads)...")
 
   start_time <- Sys.time()
 
@@ -151,7 +151,7 @@ geneCorrelation <- function(coordObj,
     },
     error = function(e) {
       # If error, try single thread
-      message("[geneSCOPE::geneCorrelation] !!! Warning: Multithreaded computation failed, trying single thread: ", e$message, " !!!")
+      message("[geneSCOPE::computeCorrelation] !!! Warning: Multithreaded computation failed, trying single thread: ", e$message, " !!!")
       pearson_cor(
         X = expr_centered,
         bs = blocksize,
@@ -163,12 +163,12 @@ geneCorrelation <- function(coordObj,
   end_time <- Sys.time()
   elapsed <- as.numeric(difftime(end_time, start_time, units = "mins"))
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Correlation matrix computation completed, time elapsed: ", round(elapsed, 2), " minutes")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Correlation matrix computation completed, time elapsed: ", round(elapsed, 2), " minutes")
 
   ## ---- Compute FDR (if needed) ----------------------------------
   fdr_matrix <- NULL
   if (compute_fdr) {
-    if (verbose) message("[geneSCOPE::geneCorrelation] Computing FDR...")
+    if (verbose) message("[geneSCOPE::computeCorrelation] Computing FDR...")
 
     # Avoid large conversion from sparse to dense matrix
     # Directly extract upper triangle values from correlation matrix, avoid as.vector()
@@ -184,7 +184,7 @@ geneCorrelation <- function(coordObj,
     valid_indices <- upper_indices[valid_mask, , drop = FALSE]
 
     if (length(cor_values_clean) == 0) {
-      message("[geneSCOPE::geneCorrelation] !!! Warning: All correlation coefficients are NaN or Inf, cannot compute FDR !!!")
+      message("[geneSCOPE::computeCorrelation] !!! Warning: All correlation coefficients are NaN or Inf, cannot compute FDR !!!")
       fdr_matrix <- matrix(1, nrow = nrow(cor_matrix), ncol = ncol(cor_matrix))
     } else {
       # Compute two-tailed p-values (only for valid values)
@@ -214,10 +214,10 @@ geneCorrelation <- function(coordObj,
         rownames(fdr_matrix) <- rownames(cor_matrix)
         colnames(fdr_matrix) <- colnames(cor_matrix)
 
-        if (verbose) message("[geneSCOPE::geneCorrelation] FDR computation completed, using method: ", fdr_method)
-        if (verbose) message("[geneSCOPE::geneCorrelation] Valid correlation coefficients: ", length(cor_values_clean), " / ", length(cor_values))
+        if (verbose) message("[geneSCOPE::computeCorrelation] FDR computation completed, using method: ", fdr_method)
+        if (verbose) message("[geneSCOPE::computeCorrelation] Valid correlation coefficients: ", length(cor_values_clean), " / ", length(cor_values))
       } else {
-        message("[geneSCOPE::geneCorrelation] !!! Warning: Insufficient sample size, cannot compute FDR !!!")
+        message("[geneSCOPE::computeCorrelation] !!! Warning: Insufficient sample size, cannot compute FDR !!!")
         fdr_matrix <- matrix(1, nrow = nrow(cor_matrix), ncol = ncol(cor_matrix))
       }
     }
@@ -229,17 +229,17 @@ geneCorrelation <- function(coordObj,
   colnames(cor_matrix) <- gene_names
 
   ## ---- Store results ----------------------------------------
-  coordObj@cells[[store_layer]] <- cor_matrix
+  scope_obj@cells[[store_layer]] <- cor_matrix
 
   if (!is.null(fdr_matrix)) {
     fdr_layer_name <- paste0(store_layer, "_FDR")
-    coordObj@cells[[fdr_layer_name]] <- fdr_matrix
-    if (verbose) message("[geneSCOPE::geneCorrelation] FDR matrix stored in @cells$", fdr_layer_name)
+    scope_obj@cells[[fdr_layer_name]] <- fdr_matrix
+    if (verbose) message("[geneSCOPE::computeCorrelation] FDR matrix stored in @cells$", fdr_layer_name)
   }
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Correlation matrix stored in @cells$", store_layer)
+  if (verbose) message("[geneSCOPE::computeCorrelation] Correlation matrix stored in @cells$", store_layer)
 
-  invisible(coordObj)
+  invisible(scope_obj)
 }
 
 #' @title Use bigmemory for chunked correlation computation
@@ -349,9 +349,9 @@ geneCorrelation <- function(coordObj,
   # Automatically clean up at the end of the R session (as a backup)
   reg.finalizer(environment(), function(e) cleanup_files(), onexit = TRUE)
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Creating file-backed correlation matrix (", round(result_size_gb, 1), "GB)...")
-  if (verbose) message("[geneSCOPE::geneCorrelation] Files: ", basename(bm_file), " & ", basename(bm_desc))
-  if (verbose) message("[geneSCOPE::geneCorrelation] This may take several hours for very large matrices...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Creating file-backed correlation matrix (", round(result_size_gb, 1), "GB)...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Files: ", basename(bm_file), " & ", basename(bm_desc))
+  if (verbose) message("[geneSCOPE::computeCorrelation] This may take several hours for very large matrices...")
 
   # Use tryCatch to ensure files are cleaned up on error
   cor_bm <- tryCatch(
@@ -375,26 +375,26 @@ geneCorrelation <- function(coordObj,
   )
 
   # Set diagonal to 1
-  if (verbose) message("[geneSCOPE::geneCorrelation] Initializing diagonal elements...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Initializing diagonal elements...")
   for (i in seq_len(n_genes)) {
     cor_bm[i, i] <- 1
   }
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Computing correlations in chunks...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Computing correlations in chunks...")
 
   # Use smaller chunk size to avoid memory issues
   file_chunk_size <- min(chunk_size, 50)
 
   # Preprocessing: convert to dense matrix and center
   if (inherits(mat, "dgCMatrix")) {
-    if (verbose) message("[geneSCOPE::geneCorrelation] Converting sparse to dense matrix in chunks...")
+    if (verbose) message("[geneSCOPE::computeCorrelation] Converting sparse to dense matrix in chunks...")
     mat_dense <- .sparseToDenseChunked(mat, file_chunk_size * 4)
   } else {
     mat_dense <- as.matrix(mat)
   }
 
   # Column centering
-  if (verbose) message("[geneSCOPE::geneCorrelation] Column centering...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Column centering...")
   mat_centered <- scale(mat_dense, center = TRUE, scale = FALSE)
   mat_centered[is.na(mat_centered)] <- 0
 
@@ -402,7 +402,7 @@ geneCorrelation <- function(coordObj,
   total_blocks <- ceiling(n_genes / file_chunk_size)
   current_block <- 0
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Processing ", total_blocks^2, " correlation blocks...")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Processing ", total_blocks^2, " correlation blocks...")
 
   # Add progress tracking
   progress_interval <- max(1, floor(total_blocks^2 / 20)) # 5% interval reporting
@@ -416,7 +416,7 @@ geneCorrelation <- function(coordObj,
       current_block <- current_block + 1
       if (current_block %% progress_interval == 0) {
         percent_done <- round(100 * current_block / total_blocks^2, 1)
-        if (verbose) message("[geneSCOPE::geneCorrelation]  Progress: ", percent_done, "% (", current_block, "/", total_blocks^2, " blocks)")
+        if (verbose) message("[geneSCOPE::computeCorrelation]  Progress: ", percent_done, "% (", current_block, "/", total_blocks^2, " blocks)")
       }
 
       if (j_start < i_start) next # Only compute upper triangle
@@ -470,11 +470,11 @@ geneCorrelation <- function(coordObj,
     }
   }
 
-  if (verbose) message("[geneSCOPE::geneCorrelation] Correlation computation completed. Result stored in file-backed matrix.")
-  if (verbose) message("[geneSCOPE::geneCorrelation] File locations:")
-  if (verbose) message("[geneSCOPE::geneCorrelation]  Data: ", bm_file)
-  if (verbose) message("[geneSCOPE::geneCorrelation]  Descriptor: ", bm_desc)
-  if (verbose) message("[geneSCOPE::geneCorrelation] Note: These files will be automatically cleaned up when R session ends.")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Correlation computation completed. Result stored in file-backed matrix.")
+  if (verbose) message("[geneSCOPE::computeCorrelation] File locations:")
+  if (verbose) message("[geneSCOPE::computeCorrelation]  Data: ", bm_file)
+  if (verbose) message("[geneSCOPE::computeCorrelation]  Descriptor: ", bm_desc)
+  if (verbose) message("[geneSCOPE::computeCorrelation] Note: These files will be automatically cleaned up when R session ends.")
 
   # Add cleanup information to return object
   attr(cor_bm, "cleanup_function") <- cleanup_files
@@ -559,7 +559,7 @@ geneCorrelation <- function(coordObj,
     return(colnames(mat))
   }
 
-  message("[geneSCOPE::geneCorrelation] Selecting top ", max_genes, " genes by ", method, "...")
+  message("[geneSCOPE::computeCorrelation] Selecting top ", max_genes, " genes by ", method, "...")
 
   if (method == "variance") {
     # Compute gene variance

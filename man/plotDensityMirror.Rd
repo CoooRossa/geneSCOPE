@@ -5,7 +5,7 @@
 \title{Mirror Plot of Two Gene Densities Across Grids}
 \usage{
 plotDensityMirror(
-  coord_obj,
+  scope_obj,
   layer_name,
   gene1,
   gene2,
@@ -14,7 +14,7 @@ plotDensityMirror(
 )
 }
 \arguments{
-\item{coord_obj}{A \code{CoordObj} containing a \code{@grid} slot that
+\item{scope_obj}{A \code{scope_object} containing a \code{@grid} slot that
 includes \code{densityDF}.}
 
 \item{layer_name}{Character. The grid sub-layer to query.}

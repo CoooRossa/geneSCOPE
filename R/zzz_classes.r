@@ -1,7 +1,7 @@
 ## ---- S4 class & methods ----
-if (!methods::isClass("CoordObj")) {
+if (!methods::isClass("scope_object")) {
   methods::setClass(
-    "CoordObj",
+    "scope_object",
     slots = c(
       coord     = "list", # centroids, segmentation, …
       grid      = "list", # grid layers
@@ -13,9 +13,9 @@ if (!methods::isClass("CoordObj")) {
   )
 }
 
-if (is.null(methods::selectMethod("initialize", "CoordObj", optional = TRUE))) {
+if (is.null(methods::selectMethod("initialize", "scope_object", optional = TRUE))) {
   methods::setMethod(
-    "initialize", "CoordObj",
+    "initialize", "scope_object",
     function(.Object,
              coord = list(),
              grid = list(),
@@ -44,9 +44,9 @@ if (is.null(methods::selectMethod("initialize", "CoordObj", optional = TRUE))) {
 
   ## concise object printout (PDF suggestion) ----
   methods::setMethod(
-    "show", "CoordObj",
+    "show", "scope_object",
     function(object) {
-      cat("CoordObj with:\n")
+      cat("scope_object with:\n")
       cat("  coord:", length(object@coord), "elements\n")
       cat("  grid:", length(object@grid), "layers\n")
       cat("  cells:", length(object@cells), "matrices\n")
@@ -58,9 +58,9 @@ if (is.null(methods::selectMethod("initialize", "CoordObj", optional = TRUE))) {
 
   ## summary() – quick overview ----
   methods::setMethod(
-    "summary", signature(object = "CoordObj"),
+    "summary", signature(object = "scope_object"),
     function(object, ...) {
-      cat("=== CoordObj Summary ===\n\n")
+      cat("=== scope_object Summary ===\n\n")
 
       # Coordinate data
       if (length(object@coord) > 0) {

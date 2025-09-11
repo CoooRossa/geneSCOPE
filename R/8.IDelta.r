@@ -1,14 +1,14 @@
-#' @title Compute Morisita's Iδ per gene and store in a CoordObj
+#' @title Compute Morisita's Iδ per gene and store in a scope_object
 #'
 #' @description
 #'   Builds a sparse gene × grid/cell count matrix, computes Morisita's
 #'   index Iδ for every gene using the parallel C++ kernel
 #'   \code{idelta_sparse_cpp()}, and writes the raw scores back to
-#'   \code{coordObj}.  The result is also copied into
-#'   \code{coordObj@meta.data} under a column named
+#'   \code{scope_obj}.  The result is also copied into
+#'   \code{scope_obj@meta.data} under a column named
 #'   \code{<grid_name>_iDelta_raw} or \code{cell_iDelta_raw}.
 #'
-#' @param coordObj  A \code{CoordObj} that already contains a populated
+#' @param scope_obj  A \code{scope_object} that already contains a populated
 #'                  \code{@grid} slot with \code{counts} and
 #'                  \code{grid_info}, or \code{@cells} slot with count matrix.
 #' @param grid_name Character. Name of the grid sub-layer to use when
@@ -21,39 +21,39 @@
 #'                  C++ routine (default 4).
 #' @param verbose   Logical. Whether to print progress messages (default TRUE).
 #'
-#' @return The modified \code{CoordObj} is returned invisibly.
+#' @return The modified \code{scope_object} is returned invisibly.
 #'
 #' @details
 #'   When \code{level = "grid"}, only grid–gene pairs with positive molecule
 #'   counts are considered. When \code{level = "cell"}, the function uses the
-#'   count matrix from \code{coordObj@cells$counts}. In both cases, memory
+#'   count matrix from \code{scope_obj@cells$counts}. In both cases, memory
 #'   usage scales with the number of non-zero entries. Genes with fewer than
 #'   two total molecules receive \code{NaN}.
 #'
 #' @examples
 #' \dontrun{
 #' # Grid-level Iδ
-#' coord <- computeIDeltaMetrics(coord, grid_name = "25um", level = "grid", ncore = 8)
+#' coord <- computeIDelta(coord, grid_name = "25um", level = "grid", ncore = 8)
 #'
 #' # Single-cell Iδ
-#' coord <- computeIDeltaMetrics(coord, level = "cell", ncore = 8)
+#' coord <- computeIDelta(coord, level = "cell", ncore = 8)
 #' }
 #' @importFrom Matrix sparseMatrix
 #' @export
-computeIDeltaMetrics <- function(coordObj,
-                                 grid_name = NULL,
-                                 level = c("grid", "cell"),
-                                 ncore = 4,
-                                 verbose = getOption("geneSCOPE.verbose", TRUE)) {
+computeIDelta <- function(scope_obj,
+                          grid_name = NULL,
+                          level = c("grid", "cell"),
+                          ncore = 4,
+                          verbose = getOption("geneSCOPE.verbose", TRUE)) {
     level <- match.arg(level)
 
     if (level == "grid") {
-        if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Selecting grid layer and building sparse gene-by-grid matrix")
+        if (verbose) message("[geneSCOPE::computeIDelta] Selecting grid layer and building sparse gene-by-grid matrix")
         ## ---- 1. Select grid layer ---------------------------------------------------
-        g_layer <- .selectGridLayer(coordObj, grid_name)
+        g_layer <- .selectGridLayer(scope_obj, grid_name)
         # Parse actual grid_name (selectGridLayer might auto-select)
-        grid_name <- names(coordObj@grid)[
-            vapply(coordObj@grid, identical, logical(1), g_layer)
+        grid_name <- names(scope_obj@grid)[
+            vapply(scope_obj@grid, identical, logical(1), g_layer)
         ]
 
         ## ---- 2. Build gene × grid sparse matrix ------------------------------------
@@ -70,16 +70,16 @@ computeIDeltaMetrics <- function(coordObj,
         )
 
         storage_key <- grid_name
-        col_suffix <- paste0(grid_name, "_iDelta_raw")
+        col_suffix <- paste0(grid_name, "_iDelta")
     } else { # level == "cell"
-        if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Using existing gene-by-cell sparse count matrix")
+        if (verbose) message("[geneSCOPE::computeIDelta] Using existing gene-by-cell sparse count matrix")
         ## ---- 1. Check for cell count matrix ----------------------------------------
-        if (is.null(coordObj@cells) || is.null(coordObj@cells$counts)) {
-            stop("No cell count matrix found. Please run addCells() first.")
+        if (is.null(scope_obj@cells) || is.null(scope_obj@cells$counts)) {
+            stop("No cell count matrix found. Please run addSingleCells() first.")
         }
 
         ## ---- 2. Use existing gene × cell sparse matrix -----------------------------
-        Gsp <- coordObj@cells$counts # Already genes × cells
+        Gsp <- scope_obj@cells$counts # Already genes × cells
         if (!inherits(Gsp, "dgCMatrix")) {
             stop("Cell count matrix must be a dgCMatrix.")
         }
@@ -87,11 +87,11 @@ computeIDeltaMetrics <- function(coordObj,
         genes <- rownames(Gsp)
 
         storage_key <- "cell"
-        col_suffix <- "cell_iDelta_raw"
+        col_suffix <- "cell_iDelta"
     }
 
     ## ---- 3. Call C++ kernel to compute Iδ -----------------------------------------
-    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Computing Iδ for ", length(genes), " genes using ", ncore, " thread(s)")
+    if (verbose) message("[geneSCOPE::computeIDelta] Computing Iδ for ", length(genes), " genes using ", ncore, " thread(s)")
     delta_raw <- idelta_sparse_cpp(Gsp, n_threads = ncore)
     names(delta_raw) <- genes
 
@@ -99,36 +99,36 @@ computeIDeltaMetrics <- function(coordObj,
     delta_raw <- as.numeric(delta_raw)
     names(delta_raw) <- genes
 
-    ## ---- 5. Write to coordObj -----------------------------------------------------
-    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Writing Iδ results into coordObj")
+    ## ---- 5. Write to scope_obj -----------------------------------------------------
+    if (verbose) message("[geneSCOPE::computeIDelta] Writing Iδ results into scope_obj")
     # 5a. @stats new location
-    if (is.null(coordObj@stats)) coordObj@stats <- list()
-    if (is.null(coordObj@stats[[storage_key]])) {
-        coordObj@stats[[storage_key]] <- list()
+    if (is.null(scope_obj@stats)) scope_obj@stats <- list()
+    if (is.null(scope_obj@stats[[storage_key]])) {
+        scope_obj@stats[[storage_key]] <- list()
     }
-    coordObj@stats[[storage_key]]$iDeltaStats <- list(
+    scope_obj@stats[[storage_key]]$iDeltaStats <- list(
         genes      = genes,
         delta_raw  = delta_raw, # Ensure this is a numeric vector
         level      = level
     )
 
     # 5b. @meta.data maintain old behavior (column name based on level)
-    if (is.null(coordObj@meta.data)) {
-        coordObj@meta.data <- data.frame(row.names = genes)
+    if (is.null(scope_obj@meta.data)) {
+        scope_obj@meta.data <- data.frame(row.names = genes)
     }
 
     # Ensure all genes have rows in meta.data
-    missing_genes <- setdiff(genes, rownames(coordObj@meta.data))
+    missing_genes <- setdiff(genes, rownames(scope_obj@meta.data))
     if (length(missing_genes) > 0) {
         new_rows <- data.frame(row.names = missing_genes)
-        coordObj@meta.data <- rbind(coordObj@meta.data, new_rows)
+        scope_obj@meta.data <- rbind(scope_obj@meta.data, new_rows)
     }
 
     # Assign scalar values (not matrix) to each gene
-    coordObj@meta.data[genes, col_suffix] <- delta_raw[genes]
+    scope_obj@meta.data[genes, col_suffix] <- delta_raw[genes]
 
-    if (verbose) message("[geneSCOPE::computeIDeltaMetrics] Iδ computation completed")
-    invisible(coordObj)
+    if (verbose) message("[geneSCOPE::computeIDelta] Iδ computation completed")
+    invisible(scope_obj)
 }
 
 
@@ -144,7 +144,7 @@ computeIDeltaMetrics <- function(coordObj,
 #'   down-sampled, re-ordered to balance facet rows, and coloured by a custom
 #'   palette.
 #'
-#' @param coordObj        A \code{CoordObj} containing \code{@grid} and
+#' @param scope_obj        A \code{scope_object} containing \code{@grid} and
 #'                        \code{@meta.data}.
 #' @param grid_name       Character. Grid sub-layer name. If \code{NULL} and
 #'                        only one layer exists, that layer is used.
@@ -169,8 +169,8 @@ computeIDeltaMetrics <- function(coordObj,
 #' @importFrom ggrepel geom_text_repel
 #' @importFrom dplyr group_by slice_max ungroup filter arrange desc mutate
 #' @export
-plotIDeltaByCluster <- function(
-    coordObj,
+plotIDelta <- function(
+    scope_obj,
     grid_name,
     cluster_col,
     suffix = c("raw", "nor"),
@@ -183,11 +183,11 @@ plotIDeltaByCluster <- function(
     subCluster = NULL) {
     suffix <- match.arg(suffix)
     meta_col <- paste0(grid_name, "_iDelta_", suffix)
-    if (!meta_col %in% colnames(coordObj@meta.data)) {
+    if (!meta_col %in% colnames(scope_obj@meta.data)) {
         stop("Cannot find Iδ values: meta.data column '", meta_col, "' is missing.")
     }
 
-    meta <- coordObj@meta.data
+    meta <- scope_obj@meta.data
     genes <- rownames(meta)
     df <- data.frame(
         gene = genes,
