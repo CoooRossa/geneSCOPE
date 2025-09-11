@@ -98,8 +98,8 @@ createSCOPE <- function(xenium_dir,
         mem_total <- grep("MemTotal", mem_info, value = TRUE)
         mem_kb <- as.numeric(gsub("[^0-9]", "", mem_total))
         mem_gb <- mem_kb / 1024 / 1024
-        # Add bounds checking to catch unrealistic values
-        if (mem_gb > 1000) {
+        # Add bounds checking to catch unrealistic values - raised threshold for HPC systems
+        if (mem_gb > 50000) {
           warning("Detected unusually high memory: ", round(mem_gb, 1), "GB. This may indicate a parsing error.")
         }
         mem_gb
@@ -113,33 +113,53 @@ createSCOPE <- function(xenium_dir,
     error = function(e) 32
   )
 
-  # Set thread limits based on memory and system type
-  mem_based_limit <- switch(cut(sys_mem_gb, breaks = c(0, 8, 32, 64, 128, Inf), labels = FALSE),
-    1, # 0-8GB: conservative
-    min(4, max_cores - 1), # 8-32GB
-    min(8, max_cores - 1), # 32-64GB
-    min(12, max_cores - 1), # 64-128GB
-    min(16, max_cores - 1) # 128GB+
-  )
+  # Set thread limits based on memory and system type (HPC-optimized)
+  mem_based_limit <- if (sys_mem_gb > 500) {
+    # HPC environment with high memory - use aggressive scaling
+    min(ncores, max_cores - 2)
+  } else {
+    switch(cut(sys_mem_gb, breaks = c(0, 8, 32, 64, 128, Inf), labels = FALSE),
+      1, # 0-8GB: conservative
+      min(4, max_cores - 1), # 8-32GB
+      min(8, max_cores - 1), # 32-64GB
+      min(16, max_cores - 1), # 64-128GB
+      min(ncores, max_cores - 2) # 128GB+ (typically HPC)
+    )
+  }
 
   platform_limit <- switch(os_type,
     windows = min(8, max_cores - 1),
     macos = min(12, max_cores - 1),
-    linux = min(16, max_cores - 1)
+    linux = if (sys_mem_gb > 100) {
+      # HPC Linux environment - much more aggressive scaling
+      min(ncores, max_cores - 2)
+    } else {
+      min(32, max_cores - 1)
+    }
   )
 
-  # Progressively validate thread count feasibility
+  # Progressively validate thread count feasibility (HPC-optimized)
   test_cores <- min(ncores, mem_based_limit, platform_limit)
   ncores_safe <- 1
 
-  for (test_nc in seq(test_cores, 1, by = -2)) {
+  # For HPC environments, use more aggressive testing
+  test_step <- if (sys_mem_gb > 100 || max_cores > 32) 8 else 2
+  
+  for (test_nc in seq(test_cores, 1, by = -test_step)) {
     tryCatch(
       {
-        # Simple parallel test
+        # Simplified parallel test for HPC
         if (test_nc > 1) {
-          cl <- parallel::makeCluster(min(test_nc, 4))
-          parallel::clusterEvalQ(cl, 1 + 1)
-          parallel::stopCluster(cl)
+          if (sys_mem_gb > 100) {
+            # In HPC environments with >100GB RAM, trust the system more
+            ncores_safe <- test_nc
+            break
+          } else {
+            # Standard test for smaller systems
+            cl <- parallel::makeCluster(min(test_nc, 4))
+            parallel::clusterEvalQ(cl, 1 + 1)
+            parallel::stopCluster(cl)
+          }
         }
         ncores_safe <- test_nc
         break
