@@ -3,9 +3,6 @@
 \name{morisita_horn_sparse}
 \alias{morisita_horn_sparse}
 \title{Optimised sparse Morisita–Horn similarity}
-\usage{
-morisita_horn_sparse(G, edges, use_chao = TRUE, nthreads = 1L)
-}
 \arguments{
 \item{G}{\code{dgCMatrix}.  Sparse matrix of counts (genes × grids).}
 
@@ -40,7 +37,7 @@ so that the maximum is close to 1.
 }
 \examples{
 \dontrun{
-  sim <- morisita_horn_sparse(G, edges, use_chao = TRUE, nthreads = 4)
+  sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
   summary(sim)
 }
 }

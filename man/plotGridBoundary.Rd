@@ -18,7 +18,7 @@ plotGridBoundary(
 e.g. produced by the STUtility pipeline.}
 
 \item{grid_name}{Character. The name of the grid layer to plot, e.g.
-"grid_grid_length31". Must exist inside \code{scope_obj@grid}.}
+"grid31". Must exist inside \code{scope_obj@grid}.}
 
 \item{colour}{Border colour for grid rectangles. Default "black".}
 
@@ -38,6 +38,6 @@ of the original coordinates (no stretching or squeezing), following the
 same padding logic used in \code{plotDensity()}.
 }
 \examples{
-p <- plotGridBoundary(P5.coord, "grid_grid_length31")
+p <- plotGridBoundary(P5.coord, "grid31")
 plot(p)
 }

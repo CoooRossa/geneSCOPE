@@ -17,7 +17,7 @@ computeDensity(
 )
 }
 \arguments{
-\item{scope_obj}{A \code{scope_object} produced by \code{createSCOPE()}.}
+\item{scope_obj}{A \code{scope_object} produced by \code{createscope_object()}.}
 
 \item{grid_name}{Character (optional). Target grid sub-layer; if
 \code{NULL} and only one grid layer exists, that one

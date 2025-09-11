@@ -2,7 +2,7 @@
 % Please edit documentation in R/15.DendroSubcluster.r
 \name{plotDendroNetworkWithBranches}
 \alias{plotDendroNetworkWithBranches}
-\title{基于树形网络的分支子聚类可视化}
+\title{Dendrogram-based Branch Subclustering Visualization}
 \usage{
 plotDendroNetworkWithBranches(
   scope_obj,
@@ -108,49 +108,50 @@ to retain between clusters (default 1).}
 \item{tree_mode}{Character. Tree layout style: \code{"rooted"},
 \code{"radial"}, or \code{"forest"} (default "rooted").}
 
-\item{enable_subbranch}{是否启用分支子聚类细分 (默认 TRUE)}
+\item{enable_subbranch}{Whether to enable branch subclustering refinement (default TRUE)}
 
-\item{cluster_id}{可选字符向量：只对子聚类拆分的簇；NULL=全部}
+\item{cluster_id}{Optional character vector: clusters to subcluster split only; NULL=all}
 
-\item{include_root}{关节点法是否把关节点包含进每个分支}
+\item{include_root}{Whether articulation point method includes articulation points in each branch}
 
-\item{max_subclusters}{每簇最多保留子聚类数 (按规模贪心去重)}
+\item{max_subclusters}{Maximum number of subclusters to retain per cluster (greedy deduplication by size)}
 
-\item{fallback_community}{关节点无结果时是否回退社区}
+\item{fallback_community}{Whether to fall back to community detection when articulation points yield no results}
 
-\item{min_sub_size}{社区回退时子聚类最小规模}
+\item{min_sub_size}{Minimum size threshold for subclusters in community fallback mode}
 
-\item{community_method}{社区算法优先顺序}
+\item{community_method}{Priority order of community detection algorithms}
 
-\item{subbranch_palette}{子聚类调色板：第1色=剩余/未细分，其余循环分配给子聚类}
+\item{subbranch_palette}{Subcluster color palette: 1st color = remaining/unrefined, others cycle for subclusters}
 
-\item{downstream_min_size}{下游子树判定规模阈值（NULL=自适应）}
+\item{downstream_min_size}{Downstream subtree size threshold (NULL = adaptive)}
 
-\item{force_split}{原社区拆分失败时是否尝试放宽接受条件}
+\item{force_split}{Whether to attempt relaxed acceptance conditions when original community split fails}
 
-\item{main_fraction_cap}{最大社区占比阈值（超过也允许保留其余小社区）}
+\item{main_fraction_cap}{Maximum community proportion threshold (allows retention of smaller communities even when exceeded)}
 
-\item{core_periph}{允许核心-边缘拆分}
+\item{core_periph}{Allow core-periphery splitting}
 
-\item{core_degree_quantile}{核心度阈值分位}
+\item{core_degree_quantile}{Core degree threshold quantile}
 
-\item{core_min_fraction}{核心最小占比}
+\item{core_min_fraction}{Minimum core fraction}
 
-\item{degree_gini_threshold}{触发核心-边缘拆分的度Gini阈值}
+\item{degree_gini_threshold}{Degree Gini threshold that triggers core-periphery splitting}
 }
 \value{
 list(plot, graph, subclusters, subcluster_df, cluster_df, method_subcluster,
 base_network, branch_network, params)
 }
 \description{
-调用已有 \code{plotDendroNetwork()} 构建树状/骨架网络后，对指定簇(或全部簇)执行
-“关节点分支”子聚类细分；若无候选且设置 \code{fallback_community=TRUE}，
-回退 Louvain/Leiden 社区拆分。输出带子聚类着色的新网络图。
+Calls existing \code{plotDendroNetwork()} to build tree/skeleton network, then performs
+"articulation point branching" subclustering refinement on specified clusters (or all clusters);
+if no candidates and \code{fallback_community=TRUE} is set,
+falls back to Louvain/Leiden community splitting. Outputs new network plot with subcluster coloring.
 }
 \examples{
 \dontrun{
 p <- plotDendroNetworkWithBranches(scope_obj,
-    grid_name = "grid_grid_length30",
+    grid_name = "grid30",
     cluster_vec = "modL0.15",
     enable_subbranch = TRUE
 )

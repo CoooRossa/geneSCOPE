@@ -39,5 +39,5 @@ annotates the largest positive and negative L–rplotLvsR differences
 (\code{Delta}).
 }
 \seealso{
-\code{\link{getTopDeltaL}}
+\code{\link{getTopLvsR}}
 }

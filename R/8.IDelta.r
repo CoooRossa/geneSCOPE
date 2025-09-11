@@ -136,7 +136,7 @@ computeIDelta <- function(scope_obj,
 
 
 
-#' @title Plot Morisita Iδ per cluster
+#' @title Plot Morisita Iδ peRr cluster
 #'
 #' @description
 #'   Creates a faceted scatter-line plot showing Morisita's Iδ values for the

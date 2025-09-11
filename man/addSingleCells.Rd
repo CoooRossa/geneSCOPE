@@ -5,10 +5,10 @@
 \title{Add Single Cell Count Matrix}
 \usage{
 addSingleCells(
-  scope_obj, 
-  xenium_dir, 
-  filter_genes = NULL, 
-  exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"), 
+  scope_obj,
+  xenium_dir,
+  filter_genes = NULL,
+  exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
   verbose = TRUE
 )
 }
@@ -43,61 +43,16 @@ dependencies.
 \details{
 The function performs five main steps:
 \enumerate{
-  \item Reads the \strong{cell‑feature} matrix in HDF5 format produced by
-        10x Xenium, using \pkg{rhdf5} to avoid loading the full file into
-        memory.
-  \item Reconstructs the sparse count matrix as a \code{dgCMatrix} from
-        the \emph{x/i/p} components and automatically handles either
-        {genes × cells} or {cells × genes} orientations.
-  \item Filters genes by excluding those with specified prefixes
-        (\code{exclude_prefix}) and optionally keeping only genes in
-        \code{filter_genes}, similar to the filtering applied in
-        \code{\link{createSCOPE}}.
-  \item Filters and reorders columns so that their order matches the
-        centroid table (\code{scope_obj@coord$centroids$cell}), guaranteeing
-        one‑to‑one correspondence for downstream spatial analyses.
-  \item Migrates any extra attributes found on the original matrix
-        (e.g. log-CPM transforms) into the list stored in
-        \code{scope_obj@cells}.
-}
-
-Only the \pkg{Matrix}, \pkg{data.table}, and \pkg{rhdf5} packages are
-required; no Seurat or tidyverse dependencies are introduced. Memory
-footprint scales with the number of non‑zero entries, not the full matrix
-dimensions.
-}
-\examples{
-\dontrun{
-## Add the cell‑level count matrix to an existing scope_object
-scope <- createSCOPE("mouse_brain/xenium_output")
-scope <- addSingleCells(scope, "mouse_brain/xenium_output")
-
-## With custom gene filtering
-scope <- addSingleCells(scope, "mouse_brain/xenium_output",
-  filter_genes = c("Gene1", "Gene2", "Gene3"),
-  exclude_prefix = c("Unassigned", "NegControl")
-)
-}
-}
-\description{
-Read the Xenium \strong{cell-feature sparse matrix} (either HDF5 or
-Matrix-Market format), keep only the cells that appear in
-\code{scope_obj@coord$centroids$cell}, preserve that order, and store the
-result in the new \code{@cells} slot.
-
-The function relies only on \strong{Matrix}, \strong{data.table}, and
-\strong{rhdf5} (or \strong{hdf5r})—no Seurat, tidyverse, or other heavy
-dependencies.
-}
-\details{
-The function performs four main steps:
-\enumerate{
 \item Reads the \strong{cell‑feature} matrix in HDF5 format produced by
 10x Xenium, using \pkg{rhdf5} to avoid loading the full file into
 memory.
 \item Reconstructs the sparse count matrix as a \code{dgCMatrix} from
 the \emph{x/i/p} components and automatically handles either
 {genes × cells} or {cells × genes} orientations.
+\item Filters genes by excluding those with specified prefixes
+(\code{exclude_prefix}) and optionally keeping only genes in
+\code{filter_genes}, similar to the filtering applied in
+\code{\link{createSCOPE}}.
 \item Filters and reorders columns so that their order matches the
 centroid table (\code{scope_obj@coord$centroids$cell}), guaranteeing
 one‑to‑one correspondence for downstream spatial analyses.
@@ -116,5 +71,11 @@ dimensions.
 ## Add the cell‑level count matrix to an existing scope_object
 coord <- createSCOPE("mouse_brain/xenium_output")
 coord <- addSingleCells(coord, "mouse_brain/xenium_output")
+
+## With custom gene filtering
+coord <- addSingleCells(coord, "mouse_brain/xenium_output",
+  filter_genes = c("Gene1", "Gene2", "Gene3"),
+  exclude_prefix = c("Unassigned", "NegControl")
+)
 }
 }

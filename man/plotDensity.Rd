@@ -31,7 +31,7 @@ plotDensity(
 \arguments{
 \item{scope_obj}{A \code{scope_object}.}
 
-\item{grid_name}{Name of the grid layer to plot (e.g. "grid_grid_length50").}
+\item{grid_name}{Name of the grid layer to plot (e.g. "grid50").}
 
 \item{density1_name, density2_name}{Column names to plot.}
 
@@ -65,13 +65,5 @@ plotDensity(
 A \code{ggplot} object.
 }
 \description{
-Draws one (or two) continuous heatmaps for density columns previously
-created by \code{computeDensity()}.
-this function first looks there but will fall back to the legacy
-\code{scope_obj@grid[[grid_name]]$densityDF} if necessary.
-All other functionality (dual-scale heatmap, segmentation overlay,
-square aspect, grid lines, scale bar) is preserved.
-}
-\details{
 4.PlotDensity.r (2025-01-06 rev)
 }

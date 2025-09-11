@@ -24,7 +24,7 @@ batchPlotGeneNetworks(
 
 \item{width, height, dpi}{保存参数}
 
-\item{...}{传递给 plotNetworkGenes 的其他参数（如 fdr_source / FDR_max 等）}
+\item{...}{Parameters passed to plotNetwork (such as fdr_source / FDR_max etc.)}
 
 \item{grid_size_col}{是否根据列名自动解析 grid (TRUE)}
 }
@@ -32,5 +32,5 @@ batchPlotGeneNetworks(
 命名列表：每列含 list(network=ggplot, dendro=list(plot=..., graph=...))
 }
 \description{
-针对若干聚类结果列批量调用 plotNetworkGenes 与 plotDendroNetwork
+Batch call plotNetwork and plotDendroNetwork for multiple clustering results
 }

@@ -250,6 +250,7 @@ loess_residual_bootstrap <- function(x, y, strat, grid, B = 1000L, span = 0.45, 
 #'   sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
 #'   summary(sim)
 #' }
+#' @name morisita_horn_sparse
 NULL
 
 morisita_horn_sparse <- function(G, edges, use_chao = TRUE, nthreads = 1L) {
