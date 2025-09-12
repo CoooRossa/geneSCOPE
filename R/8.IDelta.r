@@ -173,7 +173,6 @@ plotIDelta <- function(
     scope_obj,
     grid_name,
     cluster_col,
-    suffix = c("raw", "nor"),
     top_n = NULL,
     min_genes = 1,
     nrow = 1,
@@ -181,8 +180,7 @@ plotIDelta <- function(
     line_size = 0.5,
     label_size = 2, # default reduced to 2
     subCluster = NULL) {
-    suffix <- match.arg(suffix)
-    meta_col <- paste0(grid_name, "_iDelta_", suffix)
+    meta_col <- paste0(grid_name, "_iDelta")
     if (!meta_col %in% colnames(scope_obj@meta.data)) {
         stop("Cannot find Iδ values: meta.data column '", meta_col, "' is missing.")
     }
