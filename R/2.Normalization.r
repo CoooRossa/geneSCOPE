@@ -1,5 +1,5 @@
 #' 2.Normalization.r (2025-06-27)
-#' @title normalizeMoleculePerGrid - Row normalization + Column Z-score (legacy numeric compatibility, memory-efficient compromise)
+#' @title normalizeMoleculesInGrid - Row normalization + Column Z-score (legacy numeric compatibility, memory-efficient compromise)
 #' @description
 #'   Generates a "grid × gene" matrix → row normalization → **dense conversion**; reproduces legacy results exactly using \code{base::scale()} with sample SD. If the matrix element count exceeds \code{mem_dense_limit} it is still coerced to dense (with a warning).
 #' @param scope_obj A \code{scope_object} that already contains a grid layer.
@@ -27,7 +27,7 @@
 #' @examples
 #' \dontrun{
 #' ## Compute Z-score expression for 25 µm grid, retaining empty grids
-#' P5.coord <- normalizeMoleculePerGrid(
+#' P5.coord <- normalizeMoleculesInGrid(
 #'   P5.coord,
 #'   grid_name       = "25um",
 #'   keep_zero_grids = TRUE,
@@ -37,7 +37,7 @@
 #' @importFrom Matrix sparseMatrix rowSums
 #' @importFrom data.table as.data.table
 #' @export
-normalizeMoleculePerGrid <- function(scope_obj,
+normalizeMoleculesInGrid <- function(scope_obj,
                                      grid_name = NULL,
                                      keep_zero_grids = FALSE,
                                      row_norm = TRUE,
@@ -46,7 +46,7 @@ normalizeMoleculePerGrid <- function(scope_obj,
                                      mem_dense_limit = 2e11,
                                      verbose = TRUE) {
   ## ---- 0. Layer check -------------------------------------------------
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Starting normalization process...")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Starting normalization process...")
 
   stopifnot(!is.null(scope_obj@grid))
   grid_layer_name <- if (is.null(grid_name)) {
@@ -60,13 +60,13 @@ normalizeMoleculePerGrid <- function(scope_obj,
     as.character(grid_name)
   }
 
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Processing grid layer: ", grid_layer_name)
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Processing grid layer: ", grid_layer_name)
 
   g <- scope_obj@grid[[grid_layer_name]]
   stopifnot(all(c("counts", "grid_info") %in% names(g)))
 
   ## ---- 1. Sparse counts → dgCMatrix ----------------------------------
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Building sparse count matrix...")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Building sparse count matrix...")
   dt <- data.table::as.data.table(g$counts)
 
   grids <- if (keep_zero_grids) {
@@ -76,7 +76,7 @@ normalizeMoleculePerGrid <- function(scope_obj,
   }
   genes <- sort(unique(dt$gene))
 
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Matrix dimensions: ", length(grids), " grids × ", length(genes), " genes")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Matrix dimensions: ", length(grids), " grids × ", length(genes), " genes")
 
   X <- Matrix::sparseMatrix(
     i = match(dt$grid_id, grids),
@@ -88,7 +88,7 @@ normalizeMoleculePerGrid <- function(scope_obj,
 
   ## ---- 2. Row normalization ------------------------------------------
   if (row_norm) {
-    if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Applying row normalization...")
+    if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Applying row normalization...")
     lib <- Matrix::rowSums(X)
     lib[lib == 0] <- 1
     X@x <- X@x / lib[X@i + 1L]
@@ -96,7 +96,7 @@ normalizeMoleculePerGrid <- function(scope_obj,
 
   ## ---- 3. Dense center + sample SD -----------------------------------
   elems <- prod(dim(X))
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Converting to dense matrix for standardization...")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Converting to dense matrix for standardization...")
   if (elems > mem_dense_limit) {
     warning(
       "Matrix size ", format(elems, scientific = FALSE),
@@ -105,14 +105,14 @@ normalizeMoleculePerGrid <- function(scope_obj,
   }
 
   Xd <- as.matrix(X) # Dense copy
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Applying column-wise standardization...")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Applying column-wise standardization...")
   Xd <- scale(Xd, center = TRUE, scale = TRUE) # base::scale → sample SD
 
   Xd[is.na(Xd)] <- 0 # Constant columns NA → 0
 
   ## ---- 4. Zero near-variance columns as requested --------------------
   if (zero_var_to_zero) {
-    if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Processing zero-variance columns...")
+    if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Processing zero-variance columns...")
     csd <- attr(Xd, "scaled:scale")
     if (is.null(csd)) { # R 4.4 scale() no longer attaches attributes, can re-compute
       csd <- apply(Xd, 2, sd)
@@ -124,7 +124,7 @@ normalizeMoleculePerGrid <- function(scope_obj,
   g$Xz <- Xd
   scope_obj@grid[[grid_layer_name]] <- g
 
-  if (verbose) message("[geneSCOPE::normalizeMoleculePerGrid] Normalization completed, Xz layer stored")
+  if (verbose) message("[geneSCOPE::normalizeMoleculesInGrid] Normalization completed, Xz layer stored")
 
   invisible(scope_obj)
 }

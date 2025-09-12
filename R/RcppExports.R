@@ -54,9 +54,9 @@ grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' nb  <- grid_nb_omp(512, 512, queen = FALSE)
-#' W   <- listw_B_omp(nb)
-#' Matrix::nnzero(W) / length(nb)  # average degree
+#' nb <- grid_nb_omp(512, 512, queen = FALSE)
+#' W <- listw_B_omp(nb)
+#' Matrix::nnzero(W) / length(nb) # average degree
 #' }
 listw_B_omp <- function(nb) {
     .Call(`_geneSCOPE_listw_B_omp`, nb)
@@ -247,8 +247,8 @@ loess_residual_bootstrap <- function(x, y, strat, grid, B = 1000L, span = 0.45, 
 #'
 #' @examples
 #' \dontrun{
-#'   sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
-#'   summary(sim)
+#' sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
+#' summary(sim)
 #' }
 #' @name morisita_horn_sparse
 NULL
@@ -359,4 +359,3 @@ delta_lr_perm_csr_block <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat,
 test_64bit_support <- function() {
     .Call(`_geneSCOPE_test_64bit_support`)
 }
-
