@@ -3,8 +3,7 @@
 #'
 #' @param scope_obj  A \code{scope_object}.
 #' @param grid_name Name of the grid layer to plot (e.g. "grid50").
-#' @param d            legend.key.width = unit(0.4, "cm"), # legend key width
-            legend.key.height = unit(0.15, "cm"), # legend key heightsity1_name,density2_name Column names to plot.
+#' @param density1_name,density2_name Column names to plot.
 #' @param palette1,palette2 Color palettes for density1 and density2.
 #' @param alpha1,alpha2 Alpha transparency for density layers.
 #' @param seg_type Segmentation overlay type: "cell", "nucleus", or "both".
