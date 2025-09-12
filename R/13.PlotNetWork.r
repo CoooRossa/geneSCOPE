@@ -300,16 +300,16 @@ plotNetwork <- function(
         g <- igraph::subgraph.edges(g, keep_e, delete.vertices = TRUE)
     }
 
-    ## ===== 5. 节点颜色 / 聚类标签 =====
+    ## ===== 5. Node color / cluster labels =====
     Vnames <- igraph::V(g)$name
     deg_vec <- igraph::degree(g)
 
-    ## ① 由 cluster_vec 或 meta.data 派生 clu 向量
+    ## ① Derive clu vector from cluster_vec or meta.data
     clu <- setNames(rep(NA_character_, length(Vnames)), Vnames)
     is_factor_input <- FALSE
     factor_levels <- NULL
 
-    ## helper – 从 meta.data 拿列
+    ## helper – extract column from meta.data
     get_meta_cluster <- function(col) {
         if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
             stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
@@ -320,14 +320,14 @@ plotNetwork <- function(
     }
 
     if (!is.null(cluster_vec)) {
-        if (length(cluster_vec) > 1) { # 手动向量
+        if (length(cluster_vec) > 1) { # manual vector
             if (is.factor(cluster_vec)) {
                 is_factor_input <- TRUE
                 factor_levels <- levels(cluster_vec)
             }
             tmp <- as.character(cluster_vec[Vnames])
             clu[!is.na(tmp)] <- tmp[!is.na(tmp)]
-        } else { # 给列名
+        } else { # column name
             meta_clu <- get_meta_cluster(cluster_vec)
             if (is.factor(meta_clu)) {
                 is_factor_input <- TRUE
@@ -483,7 +483,8 @@ plotNetwork <- function(
         ) +
         scale_size_continuous(
             name = "Node size",
-            range = c(vertex_size / 2, vertex_size * 1.5)
+            range = c(vertex_size / 2, vertex_size * 1.5),
+            guide = guide_legend(override.aes = list(shape = 19))
         ) +
         scale_fill_identity(
             name = "Cluster",
@@ -852,7 +853,7 @@ plotDendroNetwork <- function(
     is_factor_input <- FALSE
     factor_levels <- NULL
 
-    ## helper – 从 meta.data 拿列
+    ## helper – extract column from meta.data
     get_meta_cluster <- function(col) {
         if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
             stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
@@ -863,14 +864,14 @@ plotDendroNetwork <- function(
     }
 
     if (!is.null(cluster_vec)) {
-        if (length(cluster_vec) > 1) { # 手动向量
+        if (length(cluster_vec) > 1) { # manual vector
             if (is.factor(cluster_vec)) {
                 is_factor_input <- TRUE
                 factor_levels <- levels(cluster_vec)
             }
             tmp <- as.character(cluster_vec[Vnames])
             clu[!is.na(tmp)] <- tmp[!is.na(tmp)]
-        } else { # 给列名
+        } else { # column name
             meta_clu <- get_meta_cluster(cluster_vec)
             if (is.factor(meta_clu)) {
                 is_factor_input <- TRUE
@@ -1017,7 +1018,8 @@ plotDendroNetwork <- function(
         ) +
         scale_size_continuous(
             name = "Node size",
-            range = c(vertex_size / 2, vertex_size * 1.5)
+            range = c(vertex_size / 2, vertex_size * 1.5),
+            guide = guide_legend(override.aes = list(shape = 19))
         ) +
         scale_fill_identity(
             name = "Cluster",
