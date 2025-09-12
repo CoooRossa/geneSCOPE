@@ -144,7 +144,7 @@ createSCOPE <- function(xenium_dir,
 
   # For HPC environments, use more aggressive testing
   test_step <- if (sys_mem_gb > 100 || max_cores > 32) 8 else 2
-  
+
   for (test_nc in seq(test_cores, 1, by = -test_step)) {
     tryCatch(
       {
@@ -799,6 +799,7 @@ createSCOPE <- function(xenium_dir,
 #'        directory that holds \file{cell_feature_matrix.h5}; must exist.
 #' @param filter_genes Character vector or NULL. Gene names to include (default NULL keeps all).
 #' @param exclude_prefix Character vector. Prefixes to exclude when filtering genes (default c("Unassigned", "NegControl", "Background", "DeprecatedCodeword")).
+#' @param filter_barcodes Logical. Whether to filter cells to match barcodes in scope_obj (default TRUE). When FALSE, all cells from the HDF5 matrix are included.
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @return The same object (modified in place) now carrying a
 #'         \code{dgCMatrix} in \code{@cells}.
@@ -815,9 +816,10 @@ createSCOPE <- function(xenium_dir,
 #'         (\code{exclude_prefix}) and optionally keeping only genes in
 #'         \code{filter_genes}, similar to the filtering applied in
 #'         \code{\link{createSCOPE}}.
-#'   \item Filters and reorders columns so that their order matches the
-#'         centroid table (\code{scope_obj@coord$centroids$cell}), guaranteeing
-#'         one‑to‑one correspondence for downstream spatial analyses.
+#'   \item Conditionally filters and reorders columns based on \code{filter_barcodes}:
+#'         when \code{TRUE} (default), columns are filtered and reordered to match
+#'         the centroid table (\code{scope_obj@coord$centroids$cell}) for spatial
+#'         analyses; when \code{FALSE}, all cells from the HDF5 matrix are retained.
 #'   \item Migrates any extra attributes found on the original matrix
 #'         (e.g. log-CPM transforms) into the list stored in
 #'         \code{scope_obj@cells}.
@@ -841,11 +843,17 @@ createSCOPE <- function(xenium_dir,
 #'   filter_genes = c("Gene1", "Gene2", "Gene3"),
 #'   exclude_prefix = c("Unassigned", "NegControl")
 #' )
+#'
+#' ## Include all cells from HDF5 matrix (skip barcode filtering)
+#' coord <- addSingleCells(coord, "mouse_brain/xenium_output",
+#'   filter_barcodes = FALSE
+#' )
 #' }
 #' @export
 addSingleCells <- function(scope_obj, xenium_dir,
                            filter_genes = NULL,
                            exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
+                           filter_barcodes = TRUE,
                            verbose = TRUE) {
   stopifnot(inherits(scope_obj, "scope_object"), dir.exists(xenium_dir))
 
@@ -871,12 +879,16 @@ addSingleCells <- function(scope_obj, xenium_dir,
   }
 
   ## ------------------------------------------------------------------ 1
-  keep_cells_target <- scope_obj@coord$centroids$cell
-  if (!length(keep_cells_target)) {
-    stop("scope_obj@coord$centroids is empty, cannot determine cells to keep.")
-  }
+  if (filter_barcodes) {
+    keep_cells_target <- scope_obj@coord$centroids$cell
+    if (!length(keep_cells_target)) {
+      stop("scope_obj@coord$centroids is empty, cannot determine cells to keep.")
+    }
 
-  if (verbose) message("[geneSCOPE::addSingleCells]  Target cells: ", length(keep_cells_target))
+    if (verbose) message("[geneSCOPE::addSingleCells]  Target cells: ", length(keep_cells_target))
+  } else {
+    if (verbose) message("[geneSCOPE::addSingleCells]  Barcode filtering disabled - will include all cells from HDF5")
+  }
 
   ## ------------------------------------------------------------------ 2
   h5_file <- file.path(xenium_dir, "cell_feature_matrix.h5")
@@ -1006,14 +1018,20 @@ addSingleCells <- function(scope_obj, xenium_dir,
   }
 
   ## ------------------------------------------------------------------ 3
-  keep_cells <- keep_cells_target[keep_cells_target %in% colnames(counts_raw)]
-  if (!length(keep_cells)) {
-    stop("Centroid cell IDs do not overlap with H5 data.")
+  if (filter_barcodes) {
+    keep_cells <- keep_cells_target[keep_cells_target %in% colnames(counts_raw)]
+    if (!length(keep_cells)) {
+      stop("Centroid cell IDs do not overlap with H5 data.")
+    }
+
+    if (verbose) message("[geneSCOPE::addSingleCells]  Cell overlap: ", length(keep_cells), "/", length(keep_cells_target))
+
+    counts <- counts_raw[, keep_cells, drop = FALSE]
+  } else {
+    # Keep all cells from the HDF5 matrix
+    counts <- counts_raw
+    if (verbose) message("[geneSCOPE::addSingleCells]  Keeping all ", ncol(counts), " cells from HDF5 matrix")
   }
-
-  if (verbose) message("[geneSCOPE::addSingleCells]  Cell overlap: ", length(keep_cells), "/", length(keep_cells_target))
-
-  counts <- counts_raw[, keep_cells, drop = FALSE]
 
   ## ------------------------------------------------------------------ 4
   scope_obj@cells <- list(counts = counts)
