@@ -129,19 +129,19 @@ plotNetwork <- function(
         lee_layer = lee_stats_layer
     ) # Only extract aligned L
 
-    ## ===== 2. 基因子集 =====
+    ## ===== 2. Gene subset =====
     all_genes <- rownames(Lmat)
     if (is.null(gene_subset)) {
         keep_genes <- all_genes
     } else if (is.character(gene_subset)) {
-        ## (A) 直接给定基因向量
+        ## (A) Directly provide gene vector
         keep_genes <- intersect(
             all_genes,
             .getGeneSubset(scope_obj, genes = gene_subset)
         )
     } else if (is.list(gene_subset) &&
         all(c("cluster_col", "cluster_num") %in% names(gene_subset))) {
-        ## (B) 用聚类列 + 编号语法：gene_subset = list(cluster_col = "..", cluster_num = ..)
+        ## (B) Use cluster column + number syntax: gene_subset = list(cluster_col = "..", cluster_num = ..)
         keep_genes <- intersect(
             all_genes,
             .getGeneSubset(scope_obj,
@@ -1436,7 +1436,7 @@ plotClusterComparison <- function(scope_obj,
             legend.position = "none"
         )
 
-    invisible(p)
+    p
 }
 #' @title 统一聚类结果数据类型
 #' @description 将scope_object中指定的聚类结果列统一转换为因子类型

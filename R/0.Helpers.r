@@ -410,48 +410,48 @@
     pmin <- .parse_q(pct_min)
     pmax <- .parse_q(pct_max)
     if (pmin > pmax) stop("pct_min > pct_max")
-    
+
     vec <- as.vector(mat)
-    
+
     # Separate positive and negative values for independent filtering
     pos_mask <- vec >= 0
     neg_mask <- vec < 0
-    
+
     # Initialize result matrix
-    result_mat <- mat * 0  # Zero matrix with same structure
-    
+    result_mat <- mat * 0 # Zero matrix with same structure
+
     # Handle positive values (>= 0)
     if (any(pos_mask, na.rm = TRUE)) {
         pos_vec <- vec[pos_mask]
         pos_thrL <- as.numeric(stats::quantile(pos_vec, pmin, na.rm = TRUE))
         pos_thrU <- as.numeric(stats::quantile(pos_vec, pmax, na.rm = TRUE))
-        
+
         # Keep positive values within quantile range
         pos_keep <- pos_mask & (vec >= pos_thrL & vec <= pos_thrU)
         result_mat[pos_keep] <- mat[pos_keep]
     }
-    
+
     # Handle negative values (< 0) by their absolute values
     if (any(neg_mask, na.rm = TRUE)) {
-        neg_vec <- abs(vec[neg_mask])  # Use absolute values for quantile calculation
+        neg_vec <- abs(vec[neg_mask]) # Use absolute values for quantile calculation
         neg_thrL <- as.numeric(stats::quantile(neg_vec, pmin, na.rm = TRUE))
         neg_thrU <- as.numeric(stats::quantile(neg_vec, pmax, na.rm = TRUE))
-        
+
         # Keep negative values whose absolute values are within quantile range
         neg_keep <- neg_mask & (abs(vec) >= neg_thrL & abs(vec) <= neg_thrU)
         result_mat[neg_keep] <- mat[neg_keep]
     }
-    
+
     Matrix::drop0(result_mat)
 }
 
 #' @noRd
 .assign_block_id <- function(grid_info, block_side = 8) {
-  # gx / gy start at 1
-  bx <- (grid_info$gx - 1L) %/% block_side
-  by <- (grid_info$gy - 1L) %/% block_side
-  # merge into a single integer id
-  max_by <- max(by)
-  block_id <- bx * (max_by + 1L) + by + 1L
-  block_id
+    # gx / gy start at 1
+    bx <- (grid_info$gx - 1L) %/% block_side
+    by <- (grid_info$gy - 1L) %/% block_side
+    # merge into a single integer id
+    max_by <- max(by)
+    block_id <- bx * (max_by + 1L) + by + 1L
+    block_id
 }
