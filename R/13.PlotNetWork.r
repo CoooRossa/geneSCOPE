@@ -579,8 +579,8 @@ plotDendroNetwork <- function(
     graph_slot_name = "g_consensus",
     ## ---------- Cluster labels ----------
     cluster_vec = NULL,
-    ## ---------- Δ-PageRank options ----------
-    IDelta_col_name = NULL, # New option; NULL disables Δ-PageRank
+    ## ---------- Iδ-PageRank options ----------
+    IDelta_col_name = NULL, # New option; NULL disables Iδ-PageRank
     damping = 0.85,
     weight_low_cut = 0,
     ## ---------- Tree construction ----------
@@ -644,7 +644,7 @@ plotDendroNetwork <- function(
     if (drop_isolated) g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
     if (igraph::vcount(g) < 2) stop("Subgraph contains fewer than two vertices.")
 
-    ## ========= 2. Δ-PageRank reweighting =========
+    ## ========= 2. Iδ-PageRank reweighting =========
     if (!is.null(IDelta_col_name)) {
         delta <- scope_obj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
         delta[is.na(delta)] <- median(delta, na.rm = TRUE)
@@ -1426,7 +1426,7 @@ plotDendro <- function(
         igraph::E(g)$weight[is.na(igraph::E(g)$weight) | !is.finite(igraph::E(g)$weight)] <- 0
     }
 
-    ## ---------- 2. Δ-PageRank reweighting (same as plotDendroNetwork) ----------
+    ## ---------- 2. Iδ-PageRank reweighting (same as plotDendroNetwork) ----------
     pr <- NULL
     if (!is.null(IDelta_col_name)) {
         delta <- scope_obj@meta.data[igraph::V(g)$name, IDelta_col_name, drop = TRUE]
