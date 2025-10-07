@@ -257,7 +257,7 @@ clusterGenes <- function(
 
         if (verbose) {
             nz <- sum(!is.na(scope_obj@meta.data[genes_all, cluster_name]))
-            message("[geneSCOPE::clusterGenes] (step1 only) Written clustering column '", cluster_name, "': ",
+            message("[geneSCOPE::clusterGenes] (stage1 only) Written clustering column '", cluster_name, "': ",
                     nz, "/", length(genes_all), " genes (",
                     sprintf("%.1f%%", 100 * nz / length(genes_all)), ")")
         }
@@ -530,6 +530,56 @@ clusterGenes <- function(
     # Build weighted adjacency for post-corrected graph
     W <- as.matrix(igraph::as_adjacency_matrix(g1, attr = "weight", sparse = TRUE))
     rownames(W) <- colnames(W) <- kept_genes
+
+    # helper: compute cluster-level metrics
+    .cluster_metrics <- function(members, cons_mat, W_mat) {
+        cl_ids <- sort(na.omit(unique(members)))
+        res <- lapply(cl_ids, function(cid) {
+            idx <- which(members == cid)
+            n <- length(idx)
+            if (n <= 1) return(data.frame(cluster = cid, size = n, within_cons = NA_real_, conductance = NA_real_))
+            C <- as.matrix(cons_mat[idx, idx])
+            within_cons <- if (n > 1) mean(C[upper.tri(C)], na.rm = TRUE) else NA_real_
+            Win <- sum(W_mat[idx, idx]) / 2
+            Wcut <- sum(W_mat[idx, -idx, drop = FALSE])
+            conductance <- Wcut / (Wcut + Win + 1e-12)
+            data.frame(cluster = cid, size = n, within_cons = within_cons, conductance = conductance)
+        })
+        do.call(rbind, res)
+    }
+
+    # helper: gene-level metrics
+    .gene_metrics <- function(members, cons_mat, W_mat) {
+        cl_ids <- sort(na.omit(unique(members)))
+        # precompute cluster membership indices
+        idx_list <- lapply(cl_ids, function(cid) which(members == cid))
+        names(idx_list) <- cl_ids
+        n <- length(members)
+        p_in <- numeric(n); p_best_out <- numeric(n); w_in <- numeric(n)
+        for (i in seq_len(n)) {
+            cid <- members[i]
+            if (is.na(cid)) { p_in[i] <- NA; p_best_out[i] <- NA; w_in[i] <- NA; next }
+            idx <- idx_list[[as.character(cid)]]
+            idx_noi <- setdiff(idx, i)
+            if (length(idx_noi)) {
+                p_in[i] <- mean(cons_mat[i, idx_noi], na.rm = TRUE)
+                w_in[i] <- sum(W_mat[i, idx_noi])
+            } else {
+                p_in[i] <- 0; w_in[i] <- 0
+            }
+            other <- setdiff(cl_ids, cid)
+            if (length(other)) {
+                means <- vapply(other, function(cj) {
+                    jj <- idx_list[[as.character(cj)]]
+                    if (length(jj)) mean(cons_mat[i, jj], na.rm = TRUE) else 0
+                }, numeric(1))
+                p_best_out[i] <- max(means, na.rm = TRUE)
+            } else {
+                p_best_out[i] <- 0
+            }
+        }
+        data.frame(gene = kept_genes, cluster = members, p_in = p_in, p_best_out = p_best_out, w_in = w_in, stringsAsFactors = FALSE)
+    }
 
     metrics_before <- .cluster_metrics(memb_final, cons, W)
     genes_before <- .gene_metrics(memb_final, cons, W)
