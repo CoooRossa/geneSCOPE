@@ -150,18 +150,18 @@ plotNetwork <- function(
             )
         )
     } else {
-        stop("`gene_subset` 必须是字符向量或 list(cluster_col, cluster_num)")
+        stop("`gene_subset` must be a character vector or list(cluster_col, cluster_num)")
     }
     if (length(keep_genes) < 2) {
         stop("Less than two genes remain after sub‑setting.")
     }
 
-    ## ===== 3. 获取 (共识) 图或重新构图 =====
+    ## ===== 3. Retrieve consensus graph or rebuild =====
     use_consensus <- isTRUE(use_consensus_graph) &&
         !is.null(leeStat[[graph_slot_name]])
 
     if (use_consensus && isTRUE(use_FDR)) {
-        # 共识图模式通常已预先过滤，这里不给二次 FDR 筛选
+        # Consensus graphs are typically pre-filtered; skip redundant FDR filtering
         message("[geneSCOPE::plotNetwork] use_consensus_graph=TRUE ignoring FDR re-filtering (assuming graph already filtered).")
     }
 
@@ -174,19 +174,19 @@ plotNetwork <- function(
         if (igraph::ecount(g) == 0) {
             stop("Consensus graph has no edges under the chosen gene subset.")
         }
-        ## 需要时更新权重 / 符号
+        ## Update edge weights / signs when required
     } else {
-        ## ---------- 按阈值重新构图 ----------
+        ## ---------- Reconstruct graph using thresholds ----------
         idx <- match(keep_genes, rownames(Lmat))
         A <- Lmat[idx, idx, drop = FALSE]
 
-        ## (i) 先按表达占比 (pct_min) 做早期过滤
+        ## (i) Early filter by expression proportion (pct_min)
         A <- .filter_matrix_by_quantile(A, pct_min, "q100") # Fixed function name
 
-        ## (ii) 限定最大绝对值
+        ## (ii) Cap the maximum absolute value
         A[abs(A) > L_max] <- 0
 
-        ## (iii) 正/负阈值
+        ## (iii) Apply positive/negative thresholds
         L_min_neg <- if (is.null(L_min_neg)) L_min else abs(L_min_neg)
         if (weight_abs) {
             A[abs(A) < L_min] <- 0
@@ -195,7 +195,7 @@ plotNetwork <- function(
             A[A < 0 & abs(A) < L_min_neg] <- 0
         }
 
-        ## (iv) 95% 置信区间过滤
+        ## (iv) 95% confidence interval filter
         if (CI95_filter) {
             curve <- leeStat[[curve_layer]]
             if (is.null(curve)) {
@@ -204,7 +204,7 @@ plotNetwork <- function(
             f_lo <- approxfun(curve$Pear, curve$lo95, rule = 2)
             f_hi <- approxfun(curve$Pear, curve$hi95, rule = 2)
 
-            rMat <- .getPearsonMatrix(scope_obj, level = "cell") # 取单细胞 Pearson
+            rMat <- .getPearsonMatrix(scope_obj, level = "cell") # use single-cell Pearson correlations
             rMat <- rMat[keep_genes, keep_genes, drop = FALSE]
 
             mask <- if (CI_rule == "remove_within") {
@@ -221,7 +221,7 @@ plotNetwork <- function(
             A[Pmat >= p_cut | is.na(Pmat)] <- 0
         }
         if (isTRUE(use_FDR)) {
-            ## -------- 新增: FDR 矩阵选择逻辑 --------
+            ## -------- FDR matrix selection logic --------
             pref_order <- c(
                 fdr_source,
                 setdiff(
@@ -241,7 +241,7 @@ plotNetwork <- function(
             }
             if (is.null(FDR_sel)) {
                 stop(
-                    "use_FDR=TRUE 但未找到任何可用 FDR 矩阵 (期待: ",
+                    "use_FDR=TRUE but no usable FDR matrix found (expected: ",
                     paste(pref_order, collapse = ", "), ")."
                 )
             }
@@ -262,11 +262,11 @@ plotNetwork <- function(
             message(sprintf("[geneSCOPE::plotNetwork] Using FDR source '%s' (FDR_max=%.3g)", FDR_used_name, FDR_max))
         }
 
-        ## (vi) 对称化并去对角
+        ## (vi) Symmetrise and zero the diagonal
         A <- (A + t(A)) / 2
         diag(A) <- 0
 
-        ## (vii) 去掉孤立点
+        ## (vii) Drop isolated vertices
         if (drop_isolated) {
             keep <- which(rowSums(abs(A) > 0) > 0 | colSums(abs(A) > 0) > 0)
             A <- A[keep, keep, drop = FALSE]
@@ -279,11 +279,11 @@ plotNetwork <- function(
             mode = "undirected",
             weighted = TRUE, diag = FALSE
         )
-        e_idx <- igraph::as_edgelist(g, names = FALSE) # 替换 get.edgelist (弃用)
+        e_idx <- igraph::as_edgelist(g, names = FALSE) # replacement for deprecated get.edgelist
         igraph::E(g)$sign <- ifelse(A[e_idx] < 0, "neg", "pos")
     }
 
-    ## ===== 4. 权重修正 & 全局缩放 =====
+    ## ===== 4. Weight adjustment & global scaling =====
     igraph::E(g)$weight <- abs(igraph::E(g)$weight)
     bad <- which(!is.finite(igraph::E(g)$weight) | igraph::E(g)$weight <= 0)
     if (length(bad)) {
@@ -349,7 +349,7 @@ plotNetwork <- function(
 
 
 
-    ## ② 生成调色板
+    ## Step 2: generate palette
     uniq_clu <- if (is_factor_input && !is.null(factor_levels)) {
         intersect(factor_levels, unique(clu))
     } else {
@@ -373,7 +373,7 @@ plotNetwork <- function(
     }
     basecol <- setNames(palette_vals[clu], Vnames)
 
-    ## ③ 边颜色（正负 / 强度渐变）
+    ## Step 3: edge colours (sign / intensity gradient)
     e_idx <- igraph::as_edgelist(g, names = FALSE)
     w_norm <- igraph::E(g)$weight / max(igraph::E(g)$weight)
     cluster_ord <- setNames(seq_along(uniq_clu), uniq_clu)
@@ -383,11 +383,11 @@ plotNetwork <- function(
         v2 <- Vnames[e_idx[i, 2]]
         if (show_sign && igraph::E(g)$sign[i] == "neg") {
             edge_cols[i] <- "gray40"
-        } else { # 正相关用渐变
+        } else { # use gradient for positive correlations
             ref_col <- if (!is.na(clu[v1]) && !is.na(clu[v2]) && clu[v1] == clu[v2]) {
                 basecol[v1]
             } else {
-                # 以度数或 cluster 顺序来决定主色
+                # decide primary colour by degree or cluster order
                 if (deg_vec[v1] > deg_vec[v2]) {
                     basecol[v1]
                 } else if (deg_vec[v2] > deg_vec[v1]) {
@@ -418,7 +418,7 @@ plotNetwork <- function(
     igraph::E(g)$edge_col <- edge_cols
     igraph::E(g)$linetype <- if (show_sign) igraph::E(g)$sign else "solid"
 
-    ## ===== 6. ggraph 绘图 =====
+    ## ===== 6. ggraph rendering =====
     library(ggraph)
     library(ggplot2)
     library(dplyr)
@@ -438,7 +438,7 @@ plotNetwork <- function(
         NULL
     }
 
-    ## ---- 边宽 / 颜色 / 线型图层 ----
+    ## ---- edge width / colour / linetype layers ----
     p <- ggraph(lay) +
         geom_edge_link(
             aes(
@@ -463,7 +463,7 @@ plotNetwork <- function(
             }
         }
 
-    ## ---- 节点点位 / 文本 ----
+    ## ---- node points / text ----
     p <- p +
         geom_node_point(
             data = ~ dplyr::filter(.x, !hub),
@@ -512,7 +512,7 @@ plotNetwork <- function(
         ) +
         labs(title = title, caption = qc_txt)
 
-    ## (可选) 调整图例顺序
+    ## Optional legend order adjustment
     p <- p +
         guides(
             fill = guide_legend(order = 1),
@@ -567,24 +567,24 @@ plotNetwork <- function(
 #' @export
 plotDendroNetwork <- function(
     scope_obj,
-    ## ---------- 数据层 ----------
+    ## ---------- Data layers ----------
     grid_name = NULL,
     lee_stats_layer = "LeeStats_Xz",
     gene_subset = NULL,
-    ## ---------- 过滤阈值 ----------
+    ## ---------- Filtering thresholds ----------
     L_min = 0,
     drop_isolated = TRUE,
-    ## ---------- 网络来源 ----------
+    ## ---------- Network source ----------
     use_consensus_graph = TRUE,
     graph_slot_name = "g_consensus",
-    ## ---------- 聚类标签 ----------
+    ## ---------- Cluster labels ----------
     cluster_vec = NULL,
-    ## ---------- Δ-PageRank 相关 ----------
-    IDelta_col_name = NULL, # ★ 新增，NULL 表示不开启 Δ-PageRank
+    ## ---------- Δ-PageRank options ----------
+    IDelta_col_name = NULL, # New option; NULL disables Δ-PageRank
     damping = 0.85,
     weight_low_cut = 0,
-    ## ---------- 树状化 ----------
-    ## ---------- 可视化细节（其余保持不变） ----------
+    ## ---------- Tree construction ----------
+    ## ---------- Visual details (re-use defaults) ----------
     cluster_palette = c(
         "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00",
         "#FFFF33", "#A65628", "#984EA3", "#66C2A5",
@@ -608,8 +608,8 @@ plotDendroNetwork <- function(
     title = NULL,
     k_top = 1,
     tree_mode = c("rooted", "radial", "forest")) {
-    tree_layout <- TRUE # 固定为树状布局
-    ## ========= 0. 读共识图 ========
+    tree_layout <- TRUE # keep tree layout
+    ## ========= 0. Read consensus graph ========
     g_layer <- .selectGridLayer(scope_obj, grid_name)
     grid_name <- if (is.null(grid_name)) {
         names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
@@ -623,16 +623,16 @@ plotDendroNetwork <- function(
         g_layer[[lee_stats_layer]]
     }
 
-    g_raw <- leeStat[[graph_slot_name]] # 修复变量名
+    g_raw <- leeStat[[graph_slot_name]]
     if (is.null(g_raw)) {
         stop(
-            "plotDendroNetwork: 未找到共识图 graph_slot_name='", graph_slot_name,
-            "' 于 leeStat[[\"", graph_slot_name, "\"]] 中。请确认 clusterGenes 已生成并写入。"
+            "plotDendroNetwork: consensus graph '", graph_slot_name,
+            "' not found in leeStat[[\"", graph_slot_name, "\"]]; ensure clusterGenes has populated this layer."
         )
     }
     stopifnot(inherits(g_raw, "igraph"))
 
-    ## ========= 1. 子集基因 =========
+    ## ========= 1. Subset genes =========
     keep_genes <- rownames(scope_obj@meta.data)
     if (!is.null(gene_subset)) {
         keep_genes <- intersect(
@@ -642,14 +642,14 @@ plotDendroNetwork <- function(
     }
     g <- igraph::induced_subgraph(g_raw, intersect(V(g_raw)$name, keep_genes))
     if (drop_isolated) g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
-    if (igraph::vcount(g) < 2) stop("子图节点不足 2 个。")
+    if (igraph::vcount(g) < 2) stop("Subgraph contains fewer than two vertices.")
 
-    ## ========= 2. Δ-PageRank 重新加权  =========
+    ## ========= 2. Δ-PageRank reweighting =========
     if (!is.null(IDelta_col_name)) {
         delta <- scope_obj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
         delta[is.na(delta)] <- median(delta, na.rm = TRUE)
         q <- stats::quantile(delta, c(.1, .9))
-        delta <- pmax(pmin(delta, q[2]), q[1]) # 与 dendroRW 同
+        delta <- pmax(pmin(delta, q[2]), q[1]) # align with dendroRW behaviour
         pers <- exp(delta - max(delta))
         pers <- pers / sum(pers)
         pr <- igraph::page_rank(g,
@@ -664,7 +664,7 @@ plotDendroNetwork <- function(
         igraph::E(g)$weight <- w_rw
     }
 
-    ## ========= 3. 全局缩放 / L_min =========
+    ## ========= 3. Global rescaling / L_min =========
     if (!is.null(length_scale) && length_scale != 1) {
         igraph::E(g)$weight <- igraph::E(g)$weight * length_scale
     }
@@ -673,7 +673,7 @@ plotDendroNetwork <- function(
         g <- igraph::subgraph.edges(g, keep_e, delete.vertices = TRUE)
     }
 
-    ## ========= 4. 取 cluster 标签 =========
+    ## ========= 4. Retrieve cluster labels =========
     Vnames <- V(g)$name
     clu <- rep(NA_character_, length(Vnames))
     names(clu) <- Vnames
@@ -689,8 +689,8 @@ plotDendroNetwork <- function(
     Vnames <- V(g)$name
     clu <- clu[Vnames]
 
-    ## ========= 5. ★ cluster-MST → 总树 ★ =========
-    ## —— 5.1 各 cluster 内 MST ——
+    ## ========= 5. Build cluster MST backbone =========
+    ## —— 5.1 Intra-cluster MST ——
     all_edges <- igraph::as_data_frame(g, "edges")
     all_edges$key <- with(
         all_edges,
@@ -716,7 +716,7 @@ plotDendroNetwork <- function(
         keep_key <- c(keep_key, ks$key)
     }
 
-    ## —— 5.2 cluster 间 MST ——
+    ## —— 5.2 Inter-cluster MST ——
     if (length(unique(clu)) > 1) {
         ed <- all_edges
         ed$cl1 <- clu[ed$from]
@@ -732,7 +732,7 @@ plotDendroNetwork <- function(
                 agg[, c("cl1", "cl2", "weight")],
                 directed = FALSE, vertices = unique(clu)
             )
-            ## 连通分量逐个取 MST
+            ## Obtain MST for each connected component
             cmp <- igraph::components(g_clu)$membership
             for (cc in unique(cmp)) {
                 sub <- igraph::induced_subgraph(g_clu, which(cmp == cc))
@@ -745,7 +745,7 @@ plotDendroNetwork <- function(
                         paste(to, from, sep = "|")
                     )
                 )
-                # 选回原图中对应 weight 最大的一条
+                # retain the original edge with maximal weight
                 for (k in ks$key) {
                     cand <- inter[inter$pair == k, ]
                     cand <- cand[order(cand$weight, decreasing = TRUE), ]
@@ -755,16 +755,16 @@ plotDendroNetwork <- function(
         }
     }
 
-    ## —— 5.3 根据 keep_key 过滤边 ——
+    ## —— 5.3 Filter edges based on keep_key ——
     keep_eid <- which(all_edges$key %in% unique(keep_key))
     g <- igraph::subgraph.edges(g, keep_eid, delete.vertices = TRUE)
     g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
 
-    ## ============ ★ 6. tree_layout 关键步骤 ★ ==============
-    ## 为后续映射保留原始边 ID
+    ## ============ Tree-layout helper steps ==============
+    ## Retain original edge IDs for later mapping
     igraph::E(g)$eid <- seq_len(igraph::ecount(g))
 
-    ## ---- 6.1  每个 cluster 的 MST ----
+    ## ---- 6.1  Intra-cluster MST ----
     keep_eid <- integer(0)
     for (cl in unique(clu)) {
         vsub <- Vnames[clu == cl]
@@ -776,20 +776,20 @@ plotDendroNetwork <- function(
         }
     }
 
-    ## ---- 6.2  cluster 之间再做 MST（在 cluster-graph 上） ----
-    ## ---- 6.2  cluster 之间主干 + 高权重边重投影 ----
-    ## 参数:
-    ##   k_top        : 需要重投影的非树边数量上限 (可为 NULL)
-    ##   w_extra_min  : 需要重投影的非树边权重下限 (可为 NULL)
+    ## ---- 6.2  Inter-cluster MST on the cluster graph ----
+    ## ---- 6.2  Add back high-weight off-tree edges ----
+    ## Parameters:
+    ##   k_top        : maximum number of off-tree edges to reproject (may be NULL)
+    ##   w_extra_min  : minimum off-tree edge weight to reproject (may be NULL)
     if (length(unique(clu)) > 1) {
         ed_tab <- igraph::as_data_frame(g, what = "edges")
         ed_tab$eid <- igraph::E(g)$eid
         ed_tab$cl1 <- clu[ed_tab$from]
         ed_tab$cl2 <- clu[ed_tab$to]
-        inter <- ed_tab[ed_tab$cl1 != ed_tab$cl2, ] # 只看跨 cluster 边
+        inter <- ed_tab[ed_tab$cl1 != ed_tab$cl2, ] # consider only inter-cluster edges
 
         if (nrow(inter)) {
-            ## ---- 6.2a  构建 cluster-level 图并取 MST ----
+            ## ---- 6.2a  Build the cluster-level graph and take its MST ----
             inter$pair <- ifelse(inter$cl1 < inter$cl2,
                 paste(inter$cl1, inter$cl2, sep = "|"),
                 paste(inter$cl2, inter$cl1, sep = "|")
@@ -800,7 +800,7 @@ plotDendroNetwork <- function(
                 directed = FALSE, vertices = unique(clu)
             )
 
-            ## 可能不连通，逐分量取 MST
+            ## For disconnected cases, take an MST per component
             mst_clu <- igraph::mst(
                 g_clu,
                 weights = 1 / (igraph::E(g_clu)$weight + 1e-9)
@@ -815,7 +815,7 @@ plotDendroNetwork <- function(
             )
             inter_MST <- inter[inter$pair %in% keep_pairs, ]
 
-            ## ---- 6.2b  非树高权重边筛选 ----
+            ## ---- 6.2b  Identify high-weight off-tree edges ----
             extra_edges <- inter[!(inter$pair %in% keep_pairs), ]
             if (nrow(extra_edges)) {
                 if (!is.null(w_extra_min)) {
@@ -825,7 +825,7 @@ plotDendroNetwork <- function(
                     extra_edges <- extra_edges[order(extra_edges$weight, decreasing = TRUE)[seq_len(k_top)], ]
                 }
             }
-            ## ---- 6.2c  汇总需要保留的 edge ID ----
+            ## ---- 6.2c  Collect edge IDs to retain ----
             keep_eid <- c(
                 keep_eid,
                 inter_MST$eid,
@@ -835,17 +835,17 @@ plotDendroNetwork <- function(
     }
     keep_eid <- unique(keep_eid)
     g <- igraph::delete_edges(g, igraph::E(g)[!eid %in% keep_eid])
-    ## 删除完全孤立点
+    ## Remove isolated vertices that remain
     g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
-    ## ============ tree_layout 结束 ==============
-    ## —— 6.3  计算最终用于画图的跨簇边 ——
-    # 把当前 g 的所有边转成 data.frame
+    ## ============ Tree layout complete ==============
+    ## —— 6.3  Derive inter-cluster edges for plotting ——
+    # Convert the current graph into a data.frame of edges
     edf_final <- igraph::as_data_frame(g, what = "edges")
-    # 挑出 endpoints 属于不同簇的那些
+    # Keep only edges whose endpoints belong to different clusters
     cross_edges <- edf_final[clu[edf_final$from] != clu[edf_final$to], ]
 
 
-    ## ===== 7. (重新) 计算度数 / 颜色等 =====
+    ## ===== 7. Recompute degree / colours =====
     Vnames <- igraph::V(g)$name
     deg_vec <- igraph::degree(g)
 
@@ -905,7 +905,7 @@ plotDendroNetwork <- function(
     }
     basecol <- setNames(palette_vals[clu], Vnames)
 
-    ## ===== 8. 边颜色（与旧逻辑相同） =====
+    ## ===== 8. Edge colours (legacy behaviour) =====
     e_idx <- igraph::as_edgelist(g, names = FALSE)
     w_norm <- igraph::E(g)$weight / max(igraph::E(g)$weight)
     cluster_ord <- setNames(seq_along(uniq_clu), uniq_clu)
@@ -949,16 +949,16 @@ plotDendroNetwork <- function(
     igraph::E(g)$edge_col <- edge_cols
     igraph::E(g)$linetype <- if (show_sign) igraph::E(g)$sign else "solid"
 
-    ## ===== 9. ggraph 绘图 =====
+    ## ===== 9. ggraph rendering =====
     library(ggraph)
     library(ggplot2)
     library(dplyr)
     set.seed(seed)
 
-    tree_mode <- match.arg(tree_mode) # 新增参数，默认 "rooted"
+    tree_mode <- match.arg(tree_mode) # recently added parameter; default is "rooted"
 
     if (tree_mode == "rooted") {
-        root_v <- V(g)[which.max(deg_vec)] # 和之前一样
+        root_v <- V(g)[which.max(deg_vec)] # same approach as before
         lay <- create_layout(g, layout = "tree", root = root_v)
     } else if (tree_mode == "radial") {
         lay <- create_layout(g, layout = "tree", circular = TRUE)
@@ -1060,264 +1060,6 @@ plotDendroNetwork <- function(
         plot        = p
     ))
 }
-#' @title Random-walk-weighted multi-cluster dendrogram
-#'
-#' @description
-#'   Constructs a dendrogram of selected gene clusters by propagating
-#'   personalized PageRank scores over a Lee's-L consensus graph, rescaling
-#'   edge weights, transforming similarities to distances, and applying
-#'   hierarchical clustering.  The procedure highlights genes that are
-#'   highly connected within and between user-specified clusters, producing
-#'   an intuitive tree that can be plotted or further analysed.
-#'
-#' @param scope_obj        A \code{scope_object} containing \code{@grid} with a
-#'                        consensus gene–gene graph and associated metadata.
-#' @param grid_name       Character. Grid sub-layer to use; if \code{NULL}
-#'                        the first layer is chosen automatically.
-#' @param lee_stats_layer Name of the Lee's statistics layer
-#'                        (default \code{"LeeStats_Xz"}).
-#' @param graph_slot      Slot that stores the consensus graph
-#'                        (default \code{"g_consensus"}).
-#' @param cluster_name    Column in \code{meta.data} that assigns genes to
-#'                        clusters.
-#' @param cluster_ids     Character vector of cluster labels to include;
-#'                        if \code{NULL} all labels in \code{cluster_name}
-#'                        are used.
-#' @param cmh_slot        Slot containing the Morisita–Horn graph
-#'                        (default \code{"g_morisita"}).
-#' @param use_mh_avg      Logical. If \code{TRUE} average Lee's L and
-#'                        Morisita–Horn when both are present.
-#' @param IDelta_col_name Column in \code{meta.data} with Δ statistics used
-#'                        to build the personalised PageRank vector.
-#' @param linkage         Linkage method passed to \code{hclust}
-#'                        (e.g. \code{"average"}, \code{"complete"}).
-#' @param dist_mode       Either \code{"one_minus"} to use
-#'                        \eqn{1 - S / \max(S)} or \code{"inverse"} to use
-#'                        \eqn{1/(S + 1e-6)} as the distance measure.
-#' @param plot_dend       Logical. Draw the dendrogram if \code{TRUE}
-#'                        (default).
-#' @param weight_low_cut  Numeric. Edge weights at or below this value are
-#'                        set to zero after PageRank scaling.
-#' @param damping         Damping factor for personalised PageRank
-#'                        (range 0–1; default 0.85).
-#'
-#' @return Invisibly returns a list with components:
-#'   \describe{
-#'     \item{\code{dend}}{A \code{dendrogram} object.}
-#'     \item{\code{hclust}}{The underlying \code{hclust} object.}
-#'     \item{\code{dist}}{The distance matrix used for clustering.}
-#'     \item{\code{genes}}{Character vector of genes included.}
-#'     \item{\code{cluster_map}}{Named vector mapping genes to clusters.}
-#'     \item{\code{PageRank}}{PageRank scores for the included genes.}
-#'   }
-#'
-#' @details
-#'   Edge weights in the consensus graph are first re-weighted by the mean
-#'   personalised PageRank of their incident vertices, emphasising genes that
-#'   rank highly under the chosen \code{IDelta_col_name}.  Very weak edges
-#'   (\code{<= weight_low_cut}) are removed.  The remaining similarity matrix
-#'   is converted to a distance matrix according to \code{dist_mode} and fed
-#'   to \code{hclust}.  The default \code{linkage = "average"} reproduces the
-#'   legacy behaviour.  Setting \code{plot_dend = TRUE} calls the base
-#'   graphics plotting method with a descriptive title.
-#'
-#' @examples
-#' \dontrun{
-#' dend_res <- plotRWDendrogram(
-#'     scope_obj = P5.coord,
-#'     grid_name = "25um",
-#'     cluster_name = "modL0.15",
-#'     cluster_ids = c("C3", "C5", "C7"),
-#'     IDelta_col_name = "25um_iDelta_raw",
-#'     linkage = "average",
-#'     dist_mode = "one_minus",
-#'     plot_dend = TRUE
-#' )
-#' }
-#' @importFrom igraph edge_attr_names as_edgelist as_data_frame page_rank induced_subgraph ecount
-#' @importFrom stats hclust as.dendrogram quantile
-#' @importFrom graphics plot
-#' @export
-plotRWDendrogram <- function(
-    scope_obj,
-    grid_name = NULL,
-    lee_stats_layer = "LeeStats_Xz",
-    graph_slot = "g_consensus",
-    cluster_name,
-    cluster_ids = NULL,
-    cmh_slot = "g_morisita",
-    use_mh_avg = TRUE,
-    IDelta_col_name,
-    linkage = "average",
-    dist_mode = c("one_minus", "inverse"),
-    plot_dend = TRUE,
-    weight_low_cut = 0,
-    damping = 0.85) {
-    dist_mode <- match.arg(dist_mode)
-
-    ## ---------- 0. 锁定网格层 & LeeStats ----------
-    g_layer <- .selectGridLayer(scope_obj, grid_name)
-    if (is.null(grid_name)) {
-        grid_name <- names(scope_obj@grid)[
-            vapply(scope_obj@grid, identical, logical(1), g_layer)
-        ]
-    }
-
-    ## LeeStats 对象（备用）
-    leeStat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
-        !is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
-        scope_obj@stats[[grid_name]][[lee_stats_layer]]
-    } else if (!is.null(g_layer[[lee_stats_layer]])) {
-        g_layer[[lee_stats_layer]]
-    } else {
-        stop(
-            "Cannot find layer '", lee_stats_layer,
-            "' in grid '", grid_name, "'."
-        )
-    }
-
-    ## 统一用 .getLeeMatrix() 取 L，并对齐 Pearson 基因集（若存在）
-    Lmat <- .getLeeMatrix(scope_obj,
-        grid_name = grid_name,
-        lee_layer = lee_stats_layer
-    )
-
-    ## ---------- 1. 共识图 ----------
-    g <- leeStat[[graph_slot]]
-    stopifnot(inherits(g, "igraph"))
-
-    ## 用 Lmat 重写 / 补全边权（Lee’s L 绝对值 → 正值）
-    ed_l <- igraph::as_edgelist(g, names = TRUE)
-    w_lmat <- mapply(function(a, b) abs(Lmat[a, b]),
-        ed_l[, 1], ed_l[, 2],
-        USE.NAMES = FALSE
-    )
-
-    ## 若 Lmat 没含此边（NA），保留原权或置 0
-    if (!"weight" %in% igraph::edge_attr_names(g)) {
-        igraph::E(g)$weight <- w_lmat
-    } else {
-        w_now <- igraph::E(g)$weight
-        w_now[is.na(w_now) | w_now <= 0] <- w_lmat[is.na(w_now) | w_now <= 0]
-        igraph::E(g)$weight <- w_now
-    }
-
-    ## ---------- 2. 解析聚类 ----------
-    memb <- scope_obj@meta.data[[cluster_name]]
-    memb <- if (is.factor(memb)) as.character(memb) else memb
-    if (is.null(cluster_ids)) cluster_ids <- sort(unique(na.omit(memb)))
-    cluster_ids <- as.character(cluster_ids)
-
-    gene_all <- rownames(scope_obj@meta.data)[memb %in% cluster_ids]
-    if (length(gene_all) < 2) {
-        stop("Need at least two genes in the selected clusters.")
-    }
-
-    ## ---------- 3. 若仍缺权重则构造 ----------
-    if (max(igraph::E(g)$weight, na.rm = TRUE) <= 1) {
-        L_vals <- pmax(igraph::E(g)$weight, 0)
-        w_L <- log1p(L_vals)
-
-        cmh_vals <- if ("CMH" %in% igraph::edge_attr_names(g)) {
-            igraph::E(g)$CMH
-        } else if (!is.null(leeStat[[cmh_slot]])) {
-            g_cmh <- leeStat[[cmh_slot]]
-            ed_c <- igraph::as_data_frame(g_cmh, "edges")
-            key_c <- paste(pmin(ed_c$from, ed_c$to),
-                pmax(ed_c$from, ed_c$to),
-                sep = "|"
-            )
-            cmh_map <- setNames(ed_c$CMH, key_c)
-            key_now <- paste(pmin(ed_l[, 1], ed_l[, 2]),
-                pmax(ed_l[, 1], ed_l[, 2]),
-                sep = "|"
-            )
-            cmh_map[key_now]
-        } else {
-            1
-        }
-
-        if ("MH" %in% igraph::edge_attr_names(g) && use_mh_avg) {
-            cmh_vals <- rowMeans(cbind(cmh_vals, igraph::E(g)$MH), na.rm = TRUE)
-        }
-
-        w_base <- w_L * cmh_vals
-        w_base[is.na(w_base) | w_base <= weight_low_cut] <- 0
-        igraph::E(g)$weight <- w_base
-    }
-
-    ## ---------- 4. Personalized PageRank ----------
-    delta <- scope_obj@meta.data[[IDelta_col_name]]
-    delta[is.na(delta)] <- median(delta, na.rm = TRUE)
-    q <- quantile(delta, c(.1, .9))
-    delta <- pmax(pmin(delta, q[2]), q[1])
-    pers <- exp(delta - max(delta))
-    pers <- pers / sum(pers)
-    names(pers) <- rownames(scope_obj@meta.data)
-
-    pers_g <- pers[V(g)$name]
-    pers_g <- pers_g / sum(pers_g)
-
-    pr <- igraph::page_rank(
-        g,
-        personalized = pers_g,
-        damping      = damping,
-        weights      = igraph::E(g)$weight,
-        directed     = FALSE
-    )$vector
-
-    ## ---------- 5. 调整边权（乘 PR） ----------
-    ed_tbl <- igraph::as_data_frame(g, "edges")
-    w_new <- igraph::E(g)$weight * ((pr[ed_tbl$from] + pr[ed_tbl$to]) / 2)
-    w_new[w_new <= weight_low_cut] <- 0
-    igraph::E(g)$weight <- w_new
-
-    ## ---------- 6. 相似度 → 距离 ----------
-    subg <- igraph::induced_subgraph(g, vids = gene_all)
-    n <- length(gene_all)
-    S <- matrix(0, n, n, dimnames = list(gene_all, gene_all))
-
-    if (igraph::ecount(subg)) {
-        ed2 <- igraph::as_data_frame(subg, "edges")
-        idx <- cbind(match(ed2$from, gene_all), match(ed2$to, gene_all))
-        S[idx] <- ed2$weight
-        S[cbind(idx[, 2], idx[, 1])] <- ed2$weight
-    }
-
-    max_w <- max(S)
-    if (max_w == 0) stop("All edge weights are zero after random-walk weighting.")
-
-    D <- if (dist_mode == "one_minus") {
-        1 - S / max_w
-    } else {
-        M <- 1 / (S + 1e-6)
-        diag(M) <- 0
-        M
-    }
-
-    hc <- hclust(as.dist(D), method = linkage)
-    dend <- as.dendrogram(hc)
-
-    ## ---------- 7. 可视化 ----------
-    if (plot_dend) {
-        op <- par(no.readonly = TRUE)
-        on.exit(par(op), add = TRUE)
-        plot(dend,
-            main = "Weighted Multi-Cluster Dendrogram",
-            ylab = "Distance (1 − Weighted Similarity)"
-        )
-    }
-
-    invisible(list(
-        dend        = dend,
-        hclust      = hc,
-        dist        = as.dist(D),
-        genes       = gene_all,
-        cluster_map = memb[gene_all],
-        PageRank    = pr[gene_all]
-    ))
-}
-
 
 #' @title Compare cluster assignments produced by multiple CI³ parameter sets
 #'
@@ -1438,312 +1180,696 @@ plotClusterComparison <- function(scope_obj,
 
     p
 }
-#' @title 统一聚类结果数据类型
-#' @description 将scope_object中指定的聚类结果列统一转换为因子类型
-#' @param scope_obj scope_object对象，包含聚类结果
-#' @param grid_sizes 要处理的网格尺寸向量
-#' @param verbose 是否打印详细信息
-#' @return 修改后的scope_object对象
-unifyClusteringTypes <- function(scope_obj, grid_sizes = c(10, 30, 55), verbose = TRUE) {
-    # 获取所有列名
-    all_cols <- colnames(scope_obj@meta.data)
 
-    # 计数统计
-    converted_count <- 0
-    already_factor <- 0
+.order_levels_numeric <- function(lev) {
+    lev <- as.character(lev)
+    num <- suppressWarnings(as.numeric(lev))
+    if (all(!is.na(num))) return(lev[order(num)])
+    rx <- regmatches(lev, regexpr("-?\\d+\\.?\\d*", lev))
+    num2 <- suppressWarnings(as.numeric(rx))
+    ord <- order(is.na(num2), num2, lev)
+    lev[ord]
+}
 
-    # 对每个网格尺寸处理
-    for (i in grid_sizes) {
-        # 查找与当前网格尺寸相关的列
-        grid_pattern <- paste0("_grid", i, "$|_grid", i, "_")
-        matching_cols <- grep(grid_pattern, all_cols, value = TRUE)
-
-        if (length(matching_cols) == 0) {
-            if (verbose) message("[geneSCOPE::plotNetwork] No clustering results found for grid size ", i)
-            next
-        }
-
-        if (verbose) message("[geneSCOPE::plotNetwork] Processing grid size ", i, ", found ", length(matching_cols), " clustering results")
-
-        # 处理每列
-        for (col in matching_cols) {
-            # 跳过已经是因子类型的列
-            if (is.factor(scope_obj@meta.data[[col]])) {
-                already_factor <- already_factor + 1
-                next
+.make_pal_map <- function(levels_vec, cluster_palette, tip_palette) {
+    levels_vec <- as.character(levels_vec)
+    n <- length(levels_vec)
+    if (is.null(tip_palette)) {
+        if (is.null(cluster_palette)) {
+            pal <- grDevices::rainbow(n)
+            return(stats::setNames(pal, levels_vec))
+        } else if (is.null(names(cluster_palette))) {
+            pal <- grDevices::colorRampPalette(cluster_palette)(n)
+            return(stats::setNames(pal, levels_vec))
+        } else {
+            pal <- cluster_palette
+            miss <- setdiff(levels_vec, names(pal))
+            if (length(miss)) {
+                pal <- c(pal, stats::setNames(grDevices::colorRampPalette(cluster_palette)(length(miss)), miss))
             }
+            return(pal[levels_vec])
+        }
+    } else if (is.function(tip_palette)) {
+        pal <- tryCatch(tip_palette(n, "Set3"), error = function(...) NULL)
+        if (is.null(pal)) pal <- grDevices::hcl.colors(n, palette = "Dynamic")
+        return(stats::setNames(pal, levels_vec))
+    } else {
+        pal <- if (length(tip_palette) < n) grDevices::colorRampPalette(tip_palette)(n) else tip_palette[seq_len(n)]
+        return(stats::setNames(pal, levels_vec))
+    }
+}
 
-            # 转换为因子类型（保留NA值）
-            values <- scope_obj@meta.data[[col]]
-            if (all(is.na(values))) {
-                # 全部为NA的列，仍然创建一个空因子
-                scope_obj@meta.data[[col]] <- factor(values)
-            } else {
-                non_na <- values[!is.na(values)]
-                # 确保有序的水平
-                levels <- sort(unique(non_na))
-                # 转换为因子
-                scope_obj@meta.data[[col]] <- factor(values, levels = levels)
-            }
-            converted_count <- converted_count + 1
+.format_label_display <- function(x) {
+    gsub("_sub", ".", x, fixed = TRUE)
+}
+
+.draw_wrapped_legend <- function(
+    x_start, y_start, labels, pch, bg, border,
+    point_cex, text_cex, x_range, y_range,
+    max_width, dot_gap_factor = 0.6, item_gap_factor = 0.5,
+    row_spacing_factor = 1.2) {
+
+    if (!length(labels)) return(invisible(NULL))
+
+    width_user <- function(txt, cex) {
+        strwidth(txt, cex = cex, units = "figure") * x_range
+    }
+    height_user <- function(txt, cex) {
+        strheight(txt, cex = cex, units = "figure") * y_range
+    }
+
+    text_widths <- width_user(labels, text_cex)
+    symbol_width <- width_user("M", point_cex) * 0.6
+    dot_gap <- width_user("M", text_cex) * dot_gap_factor
+    item_gap <- width_user(" ", text_cex) * item_gap_factor
+    row_spacing <- height_user("M", text_cex) * row_spacing_factor
+
+    if (!is.finite(max_width) || max_width <= 0) {
+        max_width <- sum(symbol_width + dot_gap + text_widths) + item_gap * (length(labels) - 1)
+    }
+    min_required <- min(symbol_width + dot_gap + text_widths)
+    if (max_width < min_required) {
+        max_width <- min_required * 1.1
+    }
+
+    rows <- list()
+    current <- integer(0)
+    width_current <- 0
+    for (i in seq_along(labels)) {
+        item_width <- symbol_width + dot_gap + text_widths[i]
+        item_total <- if (length(current)) item_width + item_gap else item_width
+        if (length(current) && width_current + item_total > max_width) {
+            rows[[length(rows) + 1]] <- current
+            current <- i
+            width_current <- item_width
+        } else {
+            current <- c(current, i)
+            width_current <- width_current + item_total
         }
     }
+    if (length(current)) rows[[length(rows) + 1]] <- current
 
-    if (verbose) {
-        message("[geneSCOPE::plotNetwork] Converted ", converted_count, " columns to factor type")
-        message("[geneSCOPE::plotNetwork] Already had ", already_factor, " columns as factor type")
-    }
-
-    return(scope_obj)
-}
-
-#' @title 获取有效的聚类列名
-#' @description 根据网格尺寸和聚类参数模式生成有效的列名列表
-#' @param scope_obj scope_object对象
-#' @param grid_size 网格尺寸
-#' @param include_cmh 是否包含cmh相关列
-#' @param pct_filters 百分比过滤字符串向量
-#' @return 存在于scope_obj中的有效列名向量
-getValidClusterColumns <- function(scope_obj,
-                                   grid_size = 10,
-                                   include_cmh = FALSE,
-                                   pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9")) {
-    # 确保meta.data存在
-    if (is.null(scope_obj@meta.data) || ncol(scope_obj@meta.data) == 0) {
-        stop("scope_object中的meta.data为空")
-    }
-
-    # 获取所有列名
-    all_cols <- colnames(scope_obj@meta.data)
-
-    # 构建列名模式
-    column_patterns <- c()
-
-    # 循环构建基本列名
-    for (pct in pct_filters) {
-        # 基础列名
-        base_name <- paste0(pct, "_res0.1_grid", grid_size)
-        column_patterns <- c(column_patterns, base_name)
-
-        # log1p列名
-        log1p_name <- paste0(base_name, "_log1p")
-        column_patterns <- c(column_patterns, log1p_name)
-
-        # pie0.95列名
-        pie_name <- paste0(base_name, "_log1p_pie0.95")
-        column_patterns <- c(column_patterns, pie_name)
-
-        # outCI95列名
-        ci_name <- paste0(base_name, "_log1p_pie0.95_outCI95")
-        column_patterns <- c(column_patterns, ci_name)
-
-        # 可选：添加cmh列名
-        if (include_cmh) {
-            cmh_name <- paste0(base_name, "_log1p_pie0.95_outCI95_cmh")
-            column_patterns <- c(column_patterns, cmh_name)
+    y_current <- y_start
+    for (row_idx in seq_along(rows)) {
+        idxs <- rows[[row_idx]]
+        x_pos <- x_start
+        for (j in idxs) {
+            graphics::points(x_pos, y_current, pch = pch[j], bg = bg[j], col = border[j], cex = point_cex)
+            x_pos <- x_pos + symbol_width
+            graphics::text(x_pos + dot_gap, y_current, labels[j], adj = c(0, 0.5), cex = text_cex)
+            x_pos <- x_pos + dot_gap + text_widths[j] + item_gap
         }
+        y_current <- y_current - row_spacing
     }
 
-    # 检查哪些列确实存在
-    valid_columns <- column_patterns[column_patterns %in% all_cols]
-
-    # 检查是否所有列都存在相同的genes
-    non_na_counts <- sapply(valid_columns, function(col) {
-        sum(!is.na(scope_obj@meta.data[[col]]))
-    })
-
-    # All columns should have the same number of non-NA values, otherwise there might be issues
-    if (length(unique(non_na_counts)) > 1) {
-        message("[geneSCOPE::plotNetwork] !!! Warning: Different clustering results contain different numbers of genes, may cause comparison issues !!!")
-    }
-
-    return(valid_columns)
+    invisible(NULL)
 }
 
-#' @title 执行健壮的聚类比较
-#' @description 统一数据类型并执行聚类比较
-#' @param scope_obj scope_object对象
-#' @param grid_size 网格尺寸
-#' @param include_cmh 是否包含cmh相关列
-#' @param unify_types 是否先统一数据类型
-#' @param pct_filters 百分比过滤字符串向量
-#' @param ... 传递给plotClusterComparison的其他参数
-#' @return plotClusterComparison的返回值
-robustClusterCompare <- function(scope_obj,
-                                 grid_size = 10,
-                                 include_cmh = FALSE,
-                                 unify_types = TRUE,
-                                 pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9"),
-                                 ...) {
-    # 首先统一数据类型（如果需要）
-    if (unify_types) {
-        scope_obj <- unifyClusteringTypes(scope_obj, grid_sizes = grid_size)
-    }
-
-    # 获取有效的列名
-    valid_columns <- getValidClusterColumns(scope_obj, grid_size, include_cmh, pct_filters)
-
-    if (length(valid_columns) == 0) {
-        stop("找不到有效的聚类列，请检查网格尺寸和meta.data")
-    }
-
-    message("[geneSCOPE::plotNetwork] Using ", length(valid_columns), " valid clustering columns for comparison")
-
-    # 执行聚类比较
-    result <- plotClusterComparison(
-        scope_obj = scope_obj,
-        method_cols = valid_columns,
-    )
-
-    return(result)
-}
-
-#' @title 自动列出现有聚类列
-#' @description 基于既有 meta.data 列名与给定网格尺寸/百分位模式返回真实存在的列
-#' @param scope_obj scope_object
-#' @param grid_sizes 整数向量 (例如 c(10,30,55))
-#' @param pct_filters 百分位标签 (需与 add / clusterGenes 生成规则一致)
-#' @param include_cmh 是否包含 *_cmh 变体（仅当列真实存在才返回，不会产生警告）
-#' @return data.frame(columns, grid_size, pct, variant)
+#' @title Dendrogram of the plotDendroNetwork skeleton (plotRWDendrogram8-style)
+#'
+#' @description
+#'   Builds the same MST/forest skeleton as in `plotDendroNetwork` (cluster-internal
+#'   MST + cluster-level MST after optional PageRank reweighting) from the
+#'   specified consensus graph, then renders a dendrogram in the identical
+#'   visual style as `plotRWDendrogram8` with optional dual tip-dot rows,
+#'   adjustable label offsets, and OLO leaf-order optimisation.
+#'
+#' @inheritParams plotRWDendrogram8
+#' @param graph_slot Slot in the LeeStats layer that stores the base graph
+#'                   (e.g. the consensus graph). Defaults to `"g_consensus"`.
+#' @param title Custom title for the rendered dendrogram. Defaults to
+#'   `"Graph-weighted Dendrogram"`.
+#'
+#' @return Invisibly returns a list containing `dend`, `hclust`, `dist`,
+#'   `genes`, `cluster_map`, `tree_graph` (MST skeleton), `graph` (full graph
+#'   on the selected genes), and `PageRank` if applied.
+#'
+#' @importFrom igraph V E as_data_frame induced_subgraph distances ecount vcount edge_attr_names page_rank ends
+#' @importFrom stats hclust as.dendrogram quantile runmed
+#' @importFrom graphics plot points text par
 #' @export
-autoListClusterCols <- function(scope_obj,
-                                grid_sizes = c(10, 30, 55),
-                                pct_filters = c("All", "q85.0", "q90.0", "q95.0", "q99.0", "q99.9"),
-                                include_cmh = TRUE) {
-    stopifnot(!is.null(scope_obj@meta.data))
-    cols <- colnames(scope_obj@meta.data)
-    out <- list()
-    for (g in grid_sizes) {
-        for (pct in pct_filters) {
-            base <- paste0(pct, "_res0.1_grid", g)
-            variants <- c(
-                base,
-                paste0(base, "_log1p"),
-                paste0(base, "_log1p_pie0.95"),
-                paste0(base, "_log1p_pie0.95_outCI95")
-            )
-            if (include_cmh) {
-                variants <- c(variants, paste0(base, "_log1p_pie0.95_outCI95_cmh"))
+plotDendro <- function(
+    scope_obj,
+    grid_name = NULL,
+    lee_stats_layer = "LeeStats_Xz",
+    graph_slot = "g_consensus",
+    cluster_name,
+    cluster_ids = NULL,
+    IDelta_col_name = NULL,
+    linkage = "average",
+    plot_dend = TRUE,
+    weight_low_cut = 0,
+    damping = 0.85,
+    cluster_palette = c(
+        "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#FFFF33",
+        "#A65628", "#984EA3", "#66C2A5", "#FC8D62", "#8DA0CB",
+        "#E78AC3", "#A6D854", "#FFD92F", "#E5C494"
+    ),
+    tip_dots = TRUE,
+    tip_point_cex = 1.2,
+    tip_palette = NULL,
+    cluster_name2 = NULL,
+    tip_palette2 = NULL,
+    tip_row_offset2 = -0.4,
+    tip_label_offset = -0.6,
+    tip_label_cex = 0.6,
+    tip_label_adj = 1,
+    tip_label_srt = 90,
+    tip_label_col = "black",
+    leaf_order = c("OLO", "none"),
+    length_mode = c("neg_log", "inverse", "inverse_sqrt"),
+    weight_normalize = TRUE,
+    weight_clip_quantile = 0.05,
+    height_rescale = c("q95", "max", "none"),
+    height_power = 1,
+    height_scale = 1.2,
+    distance_on = c("tree", "graph"),
+    enforce_cluster_contiguity = TRUE,
+    distance_smooth_power = 1,
+    tip_shape2 = c("square", "circle", "diamond", "triangle"),
+    tip_row1_label = NULL,
+    tip_row2_label = NULL,
+    tip_label_indent = 0.01,
+    legend_inline = FALSE,
+    legend_files = NULL,
+    compose_outfile = NULL,
+    compose_width = 2400,
+    compose_height = 1600,
+    compose_res = 200,
+    legend_ncol1 = 1,
+    legend_ncol2 = 1,
+    title = "Graph-weighted Dendrogram") {
+
+    leaf_order <- match.arg(leaf_order)
+    length_mode <- match.arg(length_mode)
+    height_rescale <- match.arg(height_rescale)
+    distance_on <- match.arg(distance_on)
+    tip_shape2 <- match.arg(tip_shape2)
+    if (is.null(tip_row1_label)) tip_row1_label <- cluster_name
+    if (is.null(tip_row2_label) && !is.null(cluster_name2)) tip_row2_label <- cluster_name2
+    if (!exists("tip_label_indent", inherits = FALSE) || is.null(tip_label_indent)) tip_label_indent <- 0.01
+    if (!exists("legend_inline", inherits = FALSE) || is.null(legend_inline)) legend_inline <- FALSE
+    if (!is.null(distance_smooth_power) && distance_smooth_power <= 0) {
+        stop("distance_smooth_power must be > 0 or NULL")
+    }
+
+    ## ---------- 0. Resolve grid layer & LeeStats ----------
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    if (is.null(grid_name)) {
+        grid_name <- names(scope_obj@grid)[
+            vapply(scope_obj@grid, identical, logical(1), g_layer)
+        ]
+    }
+
+    ## LeeStats object
+    leeStat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
+        !is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+        scope_obj@stats[[grid_name]][[lee_stats_layer]]
+    } else if (!is.null(g_layer[[lee_stats_layer]])) {
+        g_layer[[lee_stats_layer]]
+    } else {
+        stop("Cannot find layer '", lee_stats_layer, "' in grid '", grid_name, "'.")
+    }
+
+    ## ---------- 1. Extract base graph and subset to target genes ----------
+    g_base <- leeStat[[graph_slot]]
+    if (is.null(g_base) || !inherits(g_base, "igraph")) {
+        stop("Graph slot '", graph_slot, "' not found or not an igraph in LeeStats layer.")
+    }
+
+    memb_all <- as.character(scope_obj@meta.data[[cluster_name]])
+    if (is.null(cluster_ids)) cluster_ids <- sort(unique(na.omit(memb_all)))
+    cluster_ids <- as.character(cluster_ids)
+    genes_all <- rownames(scope_obj@meta.data)[memb_all %in% cluster_ids]
+    if (length(genes_all) < 2) stop("Need at least two genes in the selected clusters.")
+
+    g <- igraph::induced_subgraph(g_base, vids = intersect(igraph::V(g_base)$name, genes_all))
+    if (igraph::vcount(g) < 2) stop("Too few vertices in induced subgraph.")
+
+    ## Ensure edges have usable numeric weights (fallback to |L| if missing/invalid)
+    Lmat <- .getLeeMatrix(scope_obj,
+        grid_name = grid_name,
+        lee_layer = lee_stats_layer
+    )
+    ed_l <- igraph::as_edgelist(g, names = TRUE)
+    if (nrow(ed_l) > 0) {
+        w_lmat <- mapply(function(a, b) abs(Lmat[a, b]), ed_l[, 1], ed_l[, 2], USE.NAMES = FALSE)
+        if (!"weight" %in% igraph::edge_attr_names(g)) {
+            igraph::E(g)$weight <- w_lmat
+        } else {
+            w_now <- igraph::E(g)$weight
+            bad <- is.na(w_now) | !is.finite(w_now) | w_now <= 0
+            if (any(bad)) w_now[bad] <- w_lmat[bad]
+            igraph::E(g)$weight <- w_now
+        }
+        # Final NA guard
+        igraph::E(g)$weight[is.na(igraph::E(g)$weight) | !is.finite(igraph::E(g)$weight)] <- 0
+    }
+
+    ## ---------- 2. Δ-PageRank reweighting (same as plotDendroNetwork) ----------
+    pr <- NULL
+    if (!is.null(IDelta_col_name)) {
+        delta <- scope_obj@meta.data[igraph::V(g)$name, IDelta_col_name, drop = TRUE]
+        delta[is.na(delta)] <- stats::median(delta, na.rm = TRUE)
+        q <- stats::quantile(delta, c(.1, .9))
+        delta <- pmax(pmin(delta, q[2]), q[1])
+        pers <- exp(delta - max(delta)); pers <- pers / sum(pers)
+        pr_tmp <- igraph::page_rank(
+            g,
+            personalized = pers,
+            damping = damping,
+            weights = igraph::E(g)$weight,
+            directed = FALSE
+        )$vector
+        pr <- pr_tmp
+        ed <- igraph::as_data_frame(g, "edges")
+        w_new <- igraph::E(g)$weight * ((pr[ed$from] + pr[ed$to]) / 2)
+        w_new[w_new <= weight_low_cut] <- 0
+        igraph::E(g)$weight <- w_new
+    }
+
+    ## ---------- 3. Skeleton: intra-cluster MST + inter-cluster MST (same as plotDendroNetwork) ----------
+    Vnames <- igraph::V(g)$name
+    clu <- as.character(scope_obj@meta.data[Vnames, cluster_name, drop = TRUE])
+    keep <- !is.na(clu)
+    g <- igraph::induced_subgraph(g, Vnames[keep])
+    Vnames <- igraph::V(g)$name
+    clu <- clu[keep]
+
+    # tag edge ids to track selection
+    igraph::E(g)$eid <- seq_len(igraph::ecount(g))
+
+    # 3.1 Intra-cluster MST: use max weight via length 1/(w + eps)
+    keep_eid <- integer(0)
+    for (cl in unique(clu)) {
+        vsub <- Vnames[clu == cl]
+        if (length(vsub) < 2) next
+        g_sub <- igraph::induced_subgraph(g, vsub)
+        if (igraph::ecount(g_sub) > 0) {
+            mst_sub <- igraph::mst(g_sub, weights = 1 / (igraph::E(g_sub)$weight + 1e-9))
+            keep_eid <- c(keep_eid, igraph::edge_attr(mst_sub, "eid"))
+        }
+    }
+
+    # 3.2 Inter-cluster MST: aggregate by each pair's max-weight edge
+    if (length(unique(clu)) > 1) {
+        ed_tab <- igraph::as_data_frame(g, "edges"); ed_tab$eid <- igraph::E(g)$eid
+        ed_tab$cl1 <- clu[ed_tab$from]; ed_tab$cl2 <- clu[ed_tab$to]
+        inter <- ed_tab[ed_tab$cl1 != ed_tab$cl2, , drop = FALSE]
+        if (nrow(inter) > 0) {
+            inter$pair <- ifelse(inter$cl1 < inter$cl2,
+                paste(inter$cl1, inter$cl2, sep = "|"), paste(inter$cl2, inter$cl1, sep = "|"))
+            # drop rows with NA weights to avoid aggregate() zero-row error
+            inter <- inter[!is.na(inter$weight) & is.finite(inter$weight), , drop = FALSE]
+            if (nrow(inter) == 0) {
+                agg <- inter
+            } else {
+                agg <- stats::aggregate(weight ~ pair + cl1 + cl2, data = inter, max)
             }
-            exist <- variants[variants %in% cols]
-            if (length(exist)) {
-                out[[length(out) + 1]] <- data.frame(
-                    column = exist,
-                    grid_size = g,
-                    pct = pct,
-                    stringsAsFactors = FALSE
+            g_clu <- igraph::graph_from_data_frame(
+                agg[, c("cl1", "cl2", "weight")], directed = FALSE, vertices = unique(clu)
+            )
+            if (igraph::ecount(g_clu) > 0) {
+                mstc <- igraph::mst(g_clu, weights = 1 / (igraph::E(g_clu)$weight + 1e-9))
+                ep <- igraph::ends(mstc, igraph::E(mstc))
+                keep_pairs <- ifelse(ep[, 1] < ep[, 2], paste(ep[, 1], ep[, 2], sep = "|"), paste(ep[, 2], ep[, 1], sep = "|"))
+                inter_MST <- inter[inter$pair %in% keep_pairs, ]
+                keep_eid <- unique(c(keep_eid, inter_MST$eid))
+            }
+        }
+    }
+
+    # 3.3 Keep skeleton edges only; drop isolates
+    g_tree <- g
+    if (length(keep_eid)) {
+        g_tree <- igraph::delete_edges(g_tree, igraph::E(g_tree)[!eid %in% keep_eid])
+    }
+    g_tree <- igraph::delete_vertices(g_tree, which(igraph::degree(g_tree) == 0))
+    if (igraph::vcount(g_tree) < 2) stop("MST-based tree has fewer than 2 vertices.")
+
+    ## ---------- 4. Distance matrix (tree-based to merge within clusters first) ----------
+    genes <- igraph::V(g_tree)$name
+    # keep full-graph view for return, regardless of distance_on
+    g_full <- igraph::induced_subgraph(g, vids = genes)
+    if (distance_on == "graph") {
+        ew <- igraph::E(g_full)$weight
+        if (isTRUE(weight_normalize)) {
+            ew <- (ew - min(ew, na.rm = TRUE)) / max(1e-12, diff(range(ew, na.rm = TRUE)))
+        }
+        if (!is.null(weight_clip_quantile) && weight_clip_quantile > 0) {
+            ql <- stats::quantile(ew, probs = weight_clip_quantile, na.rm = TRUE)
+            qu <- stats::quantile(ew, probs = 1 - weight_clip_quantile, na.rm = TRUE)
+            ew <- pmin(pmax(ew, ql), qu)
+        }
+        ew <- ifelse(ew <= 0 | is.na(ew), 1e-6, ew)
+        elen <- switch(length_mode,
+            neg_log      = -log(pmax(ew, 1e-9)),
+            inverse      = 1 / pmax(ew, 1e-9),
+            inverse_sqrt = 1 / sqrt(pmax(ew, 1e-9))
+        )
+        elen <- (elen ^ height_power) * height_scale
+        igraph::E(g_full)$length <- elen
+        Dm <- igraph::distances(g_full, v = igraph::V(g_full), to = igraph::V(g_full), weights = igraph::E(g_full)$length)
+        rownames(Dm) <- igraph::V(g_full)$name
+        colnames(Dm) <- igraph::V(g_full)$name
+        Dm <- Dm[genes, genes, drop = FALSE]
+    } else {
+        # compute lengths on the skeleton tree and use its geodesics
+        ew_t <- igraph::E(g_tree)$weight
+        if (isTRUE(weight_normalize)) {
+            ew_t <- (ew_t - min(ew_t, na.rm = TRUE)) / max(1e-12, diff(range(ew_t, na.rm = TRUE)))
+        }
+        if (!is.null(weight_clip_quantile) && weight_clip_quantile > 0) {
+            ql <- stats::quantile(ew_t, probs = weight_clip_quantile, na.rm = TRUE)
+            qu <- stats::quantile(ew_t, probs = 1 - weight_clip_quantile, na.rm = TRUE)
+            ew_t <- pmin(pmax(ew_t, ql), qu)
+        }
+        ew_t <- ifelse(ew_t <= 0 | is.na(ew_t), 1e-6, ew_t)
+        elen_t <- switch(length_mode,
+            neg_log      = -log(pmax(ew_t, 1e-9)),
+            inverse      = 1 / pmax(ew_t, 1e-9),
+            inverse_sqrt = 1 / sqrt(pmax(ew_t, 1e-9))
+        )
+        elen_t <- (elen_t ^ height_power) * height_scale
+        igraph::E(g_tree)$length <- elen_t
+        Dm <- igraph::distances(g_tree, v = genes, to = genes, weights = igraph::E(g_tree)$length)
+        rownames(Dm) <- genes
+        colnames(Dm) <- genes
+    }
+
+    # optional smoothing of the distance matrix
+    if (!is.null(distance_smooth_power)) {
+        k <- max(3L, as.integer(round(ncol(Dm) * (distance_smooth_power / 10))))
+        if ((k %% 2L) == 0L) k <- k + 1L
+        if (k > 3) {
+            ut <- upper.tri(Dm, diag = FALSE)
+            dv <- as.numeric(Dm[ut])
+            ord <- order(dv); x <- dv[ord]
+            xs <- stats::runmed(x, k = k, endrule = "keep")
+            # guard NA from runmed at boundaries
+            xs[!is.finite(xs)] <- 0
+            dv[ord] <- pmax(xs, 0)
+            Dm2 <- Dm; Dm2[ut] <- dv
+            Dm2 <- Dm2 + t(Dm2); diag(Dm2) <- 0
+            Dm <- Dm2
+        }
+    }
+
+    # fill disconnected/invalid entries with a large finite distance
+    if (any(!is.finite(Dm))) {
+        maxf <- suppressWarnings(max(Dm[is.finite(Dm)], na.rm = TRUE))
+        if (!is.finite(maxf) || is.na(maxf)) maxf <- 1
+        Dm[!is.finite(Dm)] <- maxf * 1.2 + 1
+    }
+    diag(Dm) <- 0
+
+        # Optionally force within-cluster merges to occur first
+    if (isTRUE(enforce_cluster_contiguity)) {
+        clv <- memb_all[genes]
+        within_mask <- outer(clv, clv, "==")
+        ut <- upper.tri(Dm)
+        wvals <- Dm[ut & within_mask]
+        bvals <- Dm[ut & !within_mask]
+        w_max <- suppressWarnings(max(wvals[wvals > 0 & is.finite(wvals)], na.rm = TRUE))
+        b_min <- suppressWarnings(min(bvals[bvals > 0 & is.finite(bvals)], na.rm = TRUE))
+        if (is.finite(w_max) && is.finite(b_min) && b_min <= w_max) {
+            off <- (w_max - b_min) + max(1e-6, 0.05 * w_max)
+            Dm[!within_mask] <- Dm[!within_mask] + off
+        }
+    }
+
+    # rescale heights if requested
+    h <- if (height_rescale == "q95") {
+        stats::quantile(Dm[upper.tri(Dm)], 0.95, na.rm = TRUE)
+    } else if (height_rescale == "max") {
+        max(Dm, na.rm = TRUE)
+    } else {
+        NA_real_
+    }
+    if (is.finite(h) && h > 0) Dm <- Dm / h
+
+    hc <- stats::hclust(stats::as.dist(Dm), method = linkage)
+    dend <- stats::as.dendrogram(hc)
+
+    ## ---------- Optional OLO ----------
+    if (leaf_order == "OLO") {
+        ok_ser <- requireNamespace("seriation", quietly = TRUE)
+        ok_den <- requireNamespace("dendextend", quietly = TRUE)
+        if (ok_ser && ok_den) {
+            ord <- seriation::get_order(seriation::seriate(stats::as.dist(Dm), method = "OLO"))
+            desired <- rownames(Dm)[ord]
+            dend <- dendextend::rotate(dend, order = desired)
+        } else if (requireNamespace("gclus", quietly = TRUE)) {
+            hc <- gclus::reorder.hclust(hc, dist = stats::as.dist(Dm))
+            dend <- stats::as.dendrogram(hc)
+        } else if (requireNamespace("dendsort", quietly = TRUE)) {
+            dend <- dendsort::dendsort(dend)
+        } else if (!ok_ser || !ok_den) {
+            warning("Leaf-order optimization requested but required packages are missing; install one of: seriation + dendextend (preferred), gclus, or dendsort.")
+        }
+    }
+
+    labs <- labels(dend)
+    x <- seq_along(labs)
+
+    tip1 <- list(show = isTRUE(tip_dots) && length(labs) > 0,
+                 title = tip_row1_label)
+    if (tip1$show) {
+        cl_raw1 <- scope_obj@meta.data[labs, cluster_name, drop = TRUE]
+        cl_chr1 <- as.character(cl_raw1)
+        lev1 <- .order_levels_numeric(unique(cl_chr1))
+        pal_map1 <- .make_pal_map(lev1, cluster_palette, tip_palette)
+        cols1 <- unname(pal_map1[cl_chr1]); cols1[is.na(cols1)] <- "gray80"
+        tip1$cols <- cols1
+        tip1$legend_labels <- .format_label_display(lev1)
+        tip1$legend_colors <- unname(pal_map1[lev1])
+        tip1$pch <- rep(21, length(lev1))
+        tip1$lev_order <- lev1
+    } else {
+        tip1$legend_labels <- character(0)
+        tip1$legend_colors <- character(0)
+        tip1$pch <- numeric(0)
+    }
+    if (is.null(tip1$title)) tip1$title <- ""
+
+    tip2 <- list(show = !is.null(cluster_name2) && length(labs) > 0,
+                 title = if (is.null(tip_row2_label)) "" else tip_row2_label)
+    if (tip2$show) {
+        cl_raw2 <- scope_obj@meta.data[labs, cluster_name2, drop = TRUE]
+        cl_chr2 <- as.character(cl_raw2)
+        lev2 <- .order_levels_numeric(unique(cl_chr2))
+        pal_map2 <- .make_pal_map(lev2, cluster_palette, tip_palette2)
+        cols2 <- unname(pal_map2[cl_chr2]); cols2[is.na(cols2)] <- "gray80"
+        tip2$cols <- cols2
+        tip2$legend_labels <- .format_label_display(lev2)
+        tip2$legend_colors <- unname(pal_map2[lev2])
+        tip2$pch <- rep(switch(tip_shape2, square = 22, circle = 21, diamond = 23, triangle = 24), length(lev2))
+        tip2$lev_order <- lev2
+    } else {
+        tip2$legend_labels <- character(0)
+        tip2$legend_colors <- character(0)
+        tip2$pch <- numeric(0)
+    }
+    if (is.null(tip2$title)) tip2$title <- ""
+
+    render_dend_panel <- function(draw_legends = FALSE, preserve_par = TRUE) {
+        if (preserve_par) {
+            op <- graphics::par(no.readonly = TRUE)
+            on.exit(graphics::par(op), add = TRUE)
+        } else {
+            op <- graphics::par(c("mar", "mgp", "xpd"))
+            on.exit(do.call(graphics::par, op), add = TRUE)
+        }
+
+        graphics::par(mar = c(3.9, 3.3, 3.1, 0.2), mgp = c(1.5, 0.25, 0), xpd = NA)
+
+        max_h <- if (length(hc$height)) max(hc$height, na.rm = TRUE) else 1
+        if (!is.finite(max_h) || is.na(max_h) || max_h <= 0) max_h <- 1
+        y_gap <- 0.06 * max_h
+        min_off <- min(0, tip_label_offset, if (tip2$show) tip_row_offset2 else 0)
+        pad_off <- 0.1
+        ylim_use <- c(y_gap * (min_off - pad_off), max_h)
+
+        graphics::plot(dend,
+            main = title,
+            ylab = "Weighted distance",
+            ylim = ylim_use,
+            leaflab = "none"
+        )
+
+        labs_local <- labels(dend)
+        x_local <- seq_along(labs_local)
+        usr <- graphics::par("usr")
+        x_range <- usr[2] - usr[1]
+        y_range <- usr[4] - usr[3]
+
+        if (tip1$show) {
+            y1 <- rep(0, length(labs_local))
+            graphics::points(x_local, y1, pch = 21, bg = tip1$cols, col = "black", cex = tip_point_cex)
+            if (draw_legends && length(tip1$legend_labels)) {
+                label_x1 <- usr[1] + tip_label_indent * x_range
+                legend_y1 <- mean(y1) - 0.12 * y_gap
+                legend_margin <- 0.02 * x_range
+                max_width1 <- max(legend_margin, usr[2] - label_x1 - legend_margin)
+                .draw_wrapped_legend(
+                    x_start = label_x1,
+                    y_start = legend_y1,
+                    labels = tip1$legend_labels,
+                    pch = tip1$pch,
+                    bg = tip1$legend_colors,
+                    border = rep("black", length(tip1$legend_labels)),
+                    point_cex = tip_point_cex,
+                    text_cex = 0.8,
+                    x_range = x_range,
+                    y_range = y_range,
+                    max_width = max_width1,
+                    dot_gap_factor = 0.6,
+                    item_gap_factor = 0.4,
+                    row_spacing_factor = 1.1
                 )
             }
         }
+
+        if (tip2$show) {
+            y2 <- rep(tip_row_offset2 * y_gap, length(labs_local))
+            pch2_sym <- if (length(tip2$pch)) tip2$pch[1] else 21
+            graphics::points(x_local, y2, pch = pch2_sym, bg = tip2$cols, col = "black", cex = tip_point_cex)
+            if (draw_legends && length(tip2$legend_labels)) {
+                label_x2 <- usr[1] + tip_label_indent * x_range
+                legend_y2 <- mean(y2) - 0.28 * y_gap
+                legend_margin <- 0.02 * x_range
+                max_width2 <- max(legend_margin, usr[2] - label_x2 - legend_margin)
+                .draw_wrapped_legend(
+                    x_start = label_x2,
+                    y_start = legend_y2,
+                    labels = tip2$legend_labels,
+                    pch = rep(pch2_sym, length(tip2$legend_labels)),
+                    bg = tip2$legend_colors,
+                    border = rep("black", length(tip2$legend_labels)),
+                    point_cex = tip_point_cex,
+                    text_cex = 0.8,
+                    x_range = x_range,
+                    y_range = y_range,
+                    max_width = max_width2,
+                    dot_gap_factor = 0.6,
+                    item_gap_factor = 0.4,
+                    row_spacing_factor = 1.1
+                )
+            }
+        }
+
+        y_lab <- rep(tip_label_offset * y_gap, length(labs_local))
+        graphics::text(x_local, y_lab, labels = labs_local,
+            srt = tip_label_srt, xpd = NA,
+            cex = tip_label_cex, adj = tip_label_adj,
+            col = tip_label_col)
     }
-    if (!length(out)) {
-        return(data.frame())
+
+    render_legend_panel <- function() {
+        graphics::par(mar = c(0.5, 0.4, 0.5, 0.2))
+        graphics::plot.new()
+        usr <- graphics::par("usr")
+        x_span <- usr[2] - usr[1]
+        y_span <- usr[4] - usr[3]
+        x_left <- usr[1] + 0.08 * x_span
+        legend_width <- 0.28 * x_span
+        legend_gap <- legend_width
+        x_right <- x_left + 2 * legend_width + legend_gap
+        if (x_right > usr[2] - 0.02 * x_span) {
+            overflow <- x_right - (usr[2] - 0.02 * x_span)
+            x_left <- x_left - overflow
+            x_right <- x_right - overflow
+        }
+        y_top <- usr[4] - 0.15 * y_span
+        if (tip1$show && length(tip1$legend_labels)) {
+            graphics::legend(x_left, y_top, legend = tip1$legend_labels,
+                title = tip1$title, pch = tip1$pch,
+                pt.bg = tip1$legend_colors, col = "black",
+                pt.cex = tip_point_cex, cex = 0.9, bty = "n",
+                ncol = legend_ncol1, xjust = 0, yjust = 1,
+                x.intersp = 0.6, y.intersp = 0.8)
+        }
+        if (tip2$show && length(tip2$legend_labels)) {
+            pch2_sym <- if (length(tip2$pch)) tip2$pch[1] else 21
+            graphics::legend(x_right, y_top, legend = tip2$legend_labels,
+                title = tip2$title, pch = rep(pch2_sym, length(tip2$legend_labels)),
+                pt.bg = tip2$legend_colors, col = "black",
+                pt.cex = tip_point_cex, cex = 0.9, bty = "n",
+                ncol = legend_ncol2, xjust = 1, yjust = 1,
+                x.intersp = 0.6, y.intersp = 0.8)
+        }
     }
-    df <- do.call(rbind, out)
-    df$variant <- sub("^[^_]+_res0.1_grid[0-9]+", "base", df$column)
-    df$variant <- sub("^.+_log1p_pie0.95_outCI95_cmh$", "log1p_pie0.95_outCI95_cmh", df$column)
-    df$variant <- ifelse(grepl("_log1p_pie0.95_outCI95_cmh$", df$column), "log1p_pie0.95_outCI95_cmh",
-        ifelse(grepl("_log1p_pie0.95_outCI95$", df$column), "log1p_pie0.95_outCI95",
-            ifelse(grepl("_log1p_pie0.95$", df$column), "log1p_pie0.95",
-                ifelse(grepl("_log1p$", df$column), "log1p", "base")
+    if (!is.null(compose_outfile)) {
+        grDevices::png(filename = compose_outfile, width = compose_width, height = compose_height, res = compose_res)
+        on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
+        graphics::layout(matrix(c(1, 2), ncol = 2), widths = c(4, 1), heights = 1)
+        render_dend_panel(draw_legends = FALSE, preserve_par = FALSE)
+        render_legend_panel()
+        graphics::layout(1)
+    }
+
+    if (isTRUE(plot_dend)) {
+        if (legend_inline) {
+            render_dend_panel(draw_legends = TRUE)
+        } else {
+            op_layout <- graphics::par(no.readonly = TRUE)
+            graphics::layout(matrix(c(1, 2), ncol = 2), widths = c(4, 1), heights = 1)
+            render_dend_panel(draw_legends = FALSE, preserve_par = FALSE)
+            render_legend_panel()
+            graphics::layout(1)
+            graphics::par(op_layout)
+        }
+    }
+
+    if (!is.null(legend_files)) {
+        if (length(legend_files) >= 1 && !is.na(legend_files[1]) && tip1$show && length(tip1$legend_labels)) {
+            grDevices::png(filename = legend_files[1], width = 1200, height = 800, res = 150)
+            graphics::par(mar = c(0, 0, 0, 0))
+            graphics::plot.new()
+            graphics::legend(
+                x = "center", y = "center", legend = tip1$legend_labels,
+                title = tip1$title, pch = tip1$pch,
+                pt.bg = tip1$legend_colors, col = "black",
+                pt.cex = tip_point_cex, cex = 0.9, bty = "n",
+                ncol = legend_ncol1, x.intersp = 0.6, y.intersp = 0.8
             )
-        )
-    )
-    df
-}
-
-#' @title 批量绘制网络与树形网络
-#' @description Batch call plotNetwork and plotDendroNetwork for multiple clustering results
-#' @param scope_obj scope_object
-#' @param cluster_columns 需要绘图的聚类列（默认自动探测）
-#' @param grid_size_col 是否根据列名自动解析 grid (TRUE)
-#' @param output_dir 根输出目录（NULL 则不保存，仅返回列表）
-#' @param width,height,dpi 保存参数
-#' @param ... Parameters passed to plotNetwork (such as fdr_source / FDR_max etc.)
-#' @return 命名列表：每列含 list(network=ggplot, dendro=list(plot=..., graph=...))
-#' @export
-batchPlotGeneNetworks <- function(scope_obj,
-                                  cluster_columns = NULL,
-                                  grid_sizes = c(10, 30, 55),
-                                  output_dir = NULL,
-                                  width = 12, height = 12, dpi = 300,
-                                  ...) {
-    if (is.null(cluster_columns)) {
-        cc_df <- autoListClusterCols(scope_obj, grid_sizes = grid_sizes, include_cmh = TRUE)
-        cluster_columns <- cc_df$column
-    }
-    if (!length(cluster_columns)) stop("未找到可用聚类列")
-    if (!is.null(output_dir) && !dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-
-    out <- list()
-    for (col in cluster_columns) {
-        # 解析 grid 尺寸
-        gsize <- sub("^.*_grid([0-9]+).*", "\\1", col)
-        grid_name <- paste0("grid", gsize)
-        if (!(grid_name %in% names(scope_obj@grid))) {
-            message("[geneSCOPE::plotNetwork] Skipping ", col, " (missing grid layer ", grid_name, ")")
-            next
+            grDevices::dev.off()
         }
-        # At least two non-NA values
-        non_na <- sum(!is.na(scope_obj@meta.data[[col]]))
-        if (non_na < 2) {
-            message("[geneSCOPE::plotNetwork] Skipping ", col, " (non-NA genes < 2)")
-            next
-        }
-        message("[geneSCOPE::plotNetwork] Plotting: ", col, " / grid=", grid_name, " (non-NA=", non_na, ")")
-        title_net <- paste0("Network - ", col, " (grid ", gsize, ")")
-        p_net <- tryCatch(
-            plotNetwork(
-                scope_obj = scope_obj,
-                grid_name = grid_name,
-                cluster_vec = col,
-                use_consensus_graph = TRUE, # 使用共识图
-                graph_slot_name = "g_consensus",
-                title = title_net,
-            ),
-            error = function(e) {
-                message("[geneSCOPE::plotNetwork] !!! Warning: plotNetwork failed: ", col, " : ", e$message, " !!!")
-                NULL
-            }
-        )
-        # 树状网络
-        title_den <- paste0("Dendro Network - ", col, " (grid ", gsize, ")")
-        p_den <- tryCatch(
-            plotDendroNetwork(
-                scope_obj = scope_obj,
-                grid_name = grid_name,
-                cluster_vec = col,
-                graph_slot_name = "g_consensus",
-                IDelta_col_name = paste0("grid", gsize, "_iDelta_raw"),
-                title = title_den,
-                show_sign = TRUE
-            ),
-            error = function(e) {
-                message("[geneSCOPE::plotNetwork] !!! Warning: plotDendroNetwork failed: ", col, " : ", e$message, " !!!")
-                NULL
-            }
-        )
-        out[[col]] <- list(network = p_net, dendro = p_den)
-
-        if (!is.null(output_dir)) {
-            subdir <- file.path(output_dir, paste0("grid", gsize))
-            if (!dir.exists(subdir)) dir.create(subdir, recursive = TRUE)
-            if (!is.null(p_net)) {
-                fn1 <- file.path(subdir, paste0("network_", col, ".png"))
-                ggplot2::ggsave(fn1, plot = p_net, width = width, height = height, dpi = dpi)
-            }
-            if (!is.null(p_den) && !is.null(p_den$plot)) {
-                fn2 <- file.path(subdir, paste0("dendro_network_", col, ".png"))
-                ggplot2::ggsave(fn2, plot = p_den$plot, width = width, height = height, dpi = dpi)
-            }
+        if (length(legend_files) >= 2 && !is.na(legend_files[2]) && tip2$show && length(tip2$legend_labels)) {
+            grDevices::png(filename = legend_files[2], width = 1200, height = 800, res = 150)
+            graphics::par(mar = c(0, 0, 0, 0))
+            graphics::plot.new()
+            graphics::legend(
+                x = "center", y = "center", legend = tip2$legend_labels,
+                title = tip2$title, pch = rep(tip2$pch[1], length(tip2$legend_labels)),
+                pt.bg = tip2$legend_colors, col = "black",
+                pt.cex = tip_point_cex, cex = 0.9, bty = "n",
+                ncol = legend_ncol2, x.intersp = 0.6, y.intersp = 0.8
+            )
+            grDevices::dev.off()
         }
     }
-    invisible(out)
-}
 
-# ===== 使用示例（脚本中调用） =====
-# res_list <- batchPlotGeneNetworks(P5.coord,
-#                                   grid_sizes = c(10,30,55),
-#                                   output_dir = "/path/to/output",
-#                                   fdr_source = "FDR_beta",
-#                                   FDR_max = 0.05)
+    invisible(list(
+        dend        = dend,
+        hclust      = hc,
+        dist        = stats::as.dist(Dm),
+        genes       = genes,
+        cluster_map = setNames(memb_all[genes], genes),
+        tree_graph  = g_tree,
+        graph       = g_full,
+        PageRank    = if (!is.null(pr)) pr[names(pr) %in% genes] else NULL,
+        legend_row1 = list(
+            labels = tip1$legend_labels,
+            colors = tip1$legend_colors,
+            pch = tip1$pch,
+            title = tip1$title
+        ),
+        legend_row2 = list(
+            labels = tip2$legend_labels,
+            colors = tip2$legend_colors,
+            pch = tip2$pch,
+            title = tip2$title
+        )
+    ))
+}
