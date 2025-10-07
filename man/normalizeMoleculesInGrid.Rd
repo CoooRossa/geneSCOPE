@@ -63,5 +63,4 @@ P5.coord <- normalizeMoleculesInGrid(
 )
 }
 }
-</content>
-</invoke>
+
