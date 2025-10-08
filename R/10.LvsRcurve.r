@@ -570,12 +570,15 @@ getTopLvsR <- function(scope_obj,
                        p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
                        mem_limit_GB = 2,
                        pval_mode = c("beta", "mid", "uniform"),
+                       curve_layer = NULL,
+                       CI_rule = c("remove_within", "remove_outside", "none"),
                        verbose = TRUE) {
   pear_level <- match.arg(pear_level)
   direction <- match.arg(direction)
   p_adj_mode <- match.arg(p_adj_mode)
   clamp_mode <- match.arg(clamp_mode)
   pval_mode <- match.arg(pval_mode)
+  CI_rule <- match.arg(CI_rule)
 
   if (verbose) {
     message("[geneSCOPE::getTopLvsR] Starting top Delta analysis")
@@ -583,9 +586,11 @@ getTopLvsR <- function(scope_obj,
     message("[geneSCOPE::getTopLvsR]   Pearson level: ", pear_level)
     message("[geneSCOPE::getTopLvsR]   Direction: ", direction)
     message("[geneSCOPE::getTopLvsR]   Top N: ", top_n)
+    if (!is.null(curve_layer) || CI_rule != "none") {
+      message("[geneSCOPE::getTopLvsR]   Curve layer: ", curve_layer, " (CI_rule = ", CI_rule, ")")
+    }
   }
 
-  # ---- Core count clipping ----
   os_type <- tryCatch(detectOS(), error = function(e) "linux")
   phys <- parallel::detectCores(FALSE)
   logi <- parallel::detectCores(TRUE)
@@ -602,7 +607,6 @@ getTopLvsR <- function(scope_obj,
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
   Sys.setenv(OMP_NUM_THREADS = ncores)
 
-  # ---- Extract matrices ----
   L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = "LeeStats_Xz")
   r_mat <- .getPearsonMatrix(scope_obj, grid_name, level = pear_level)
   common <- intersect(rownames(L_mat), rownames(r_mat))
@@ -621,7 +625,6 @@ getTopLvsR <- function(scope_obj,
   LeesL_vec <- L_mat[ut]
   Pear_vec <- r_mat[ut]
 
-  # ---- Delta ----
   if (verbose) message("[geneSCOPE::getTopLvsR] Computing Delta values and applying filters")
   internal_clamp_mode <- clamp_mode
   if (clamp_mode == "both") {
@@ -638,26 +641,23 @@ getTopLvsR <- function(scope_obj,
     Delta = LeesL_vec - Pear_for_delta
   )
 
-  # ===== Fix coverage: first use counts long table (grid_id,gene,count) then fallback to matrix =====
+  # Expression coverage percentages
   {
-    expr_pct_map <- setNames(rep(0, length(common)), common) # Default 0
+    expr_pct_map <- setNames(rep(0, length(common)), common)
     g_layer_try <- tryCatch(.selectGridLayer(scope_obj, grid_name), error = function(e) NULL)
     coverage_done <- FALSE
 
-    # --- 1. Prefer counts long table ---
     if (!is.null(g_layer_try) && !is.null(g_layer_try$counts)) {
       ct <- g_layer_try$counts
       if (is.data.frame(ct) && all(c("gene", "grid_id") %in% colnames(ct))) {
         total_cells <- if (!is.null(g_layer_try$grid_info)) nrow(g_layer_try$grid_info) else length(unique(ct$grid_id))
         if (total_cells <= 0) total_cells <- NA_real_
         if (inherits(ct, "data.table")) {
-          # Only count common genes, uniqueN(grid_id) avoids duplicates
           gene_cells <- ct[gene %in% common, .(cells = uniqueN(grid_id)), by = gene]
         } else if (requireNamespace("data.table", quietly = TRUE)) {
           dct <- data.table::as.data.table(ct)
           gene_cells <- dct[gene %in% common, .(cells = data.table::uniqueN(grid_id)), by = gene]
         } else {
-          # base: first split by gene, then deduplicate and count grid_id
           keep <- ct$gene %in% common
           if (any(keep)) {
             spl <- split(ct$grid_id[keep], ct$gene[keep])
@@ -677,7 +677,6 @@ getTopLvsR <- function(scope_obj,
       }
     }
 
-    # --- 2. Fallback to matrix (>0 row coverage) ---
     if (!coverage_done) {
       pick_matrix <- function(layer) {
         if (is.null(layer)) {
@@ -685,7 +684,6 @@ getTopLvsR <- function(scope_obj,
         }
         for (nm in c("counts", "raw_counts", "expr", "X", "data", "logCPM", "Xz")) {
           m <- layer[[nm]]
-          # Skip long table data.frame: needs to have dim/be (sparse) matrix
           if (!is.null(m) && (is.matrix(m) || inherits(m, "dgCMatrix"))) {
             return(m)
           }
@@ -704,7 +702,7 @@ getTopLvsR <- function(scope_obj,
         inter_col <- intersect(cn, common)
         inter_row <- intersect(rn, common)
         if (length(inter_col) == 0 && length(inter_row) == 0) {
-          # Keep all 0
+          # keep zeros
         } else {
           gene_in_col <- (length(inter_col) >= length(inter_row))
           if (!gene_in_col) {
@@ -727,9 +725,29 @@ getTopLvsR <- function(scope_obj,
     df$gene1_expr_pct <- round(expr_pct_map[df$gene1], 3)
     df$gene2_expr_pct <- round(expr_pct_map[df$gene2], 3)
   }
-  # ===== Coverage calculation ends =====
 
-  # ---- Threshold filtering ----
+  # Curve filtering
+  if (!is.null(curve_layer) || CI_rule != "none") {
+    if (is.null(curve_layer)) stop("curve_layer must be provided when CI_rule != 'none'")
+    curve_obj <- scope_obj@stats[[grid_name]]$LeeStats_Xz[[curve_layer]]
+    if (is.null(curve_obj)) stop("Curve layer '", curve_layer, "' not found in stats")
+    required_cols <- c("Pear", "lo95", "hi95")
+    if (!all(required_cols %in% colnames(curve_obj))) {
+      stop("Curve layer must contain columns: ", paste(required_cols, collapse = ", "))
+    }
+    lo_fun <- stats::approxfun(curve_obj$Pear, curve_obj$lo95, rule = 2)
+    hi_fun <- stats::approxfun(curve_obj$Pear, curve_obj$hi95, rule = 2)
+    df$curve_lo <- lo_fun(df$Pear)
+    df$curve_hi <- hi_fun(df$Pear)
+    df$outside_ci <- is.na(df$curve_lo) | is.na(df$curve_hi) | df$LeesL < df$curve_lo | df$LeesL > df$curve_hi
+    if (CI_rule == "remove_within") {
+      df <- df[df$outside_ci, , drop = FALSE]
+    } else if (CI_rule == "remove_outside") {
+      df <- df[!df$outside_ci, , drop = FALSE]
+    }
+    if (!nrow(df)) stop("No gene pairs satisfy the requested CI_rule")
+  }
+
   if (verbose) message("[geneSCOPE::getTopLvsR] Applying threshold filters")
   df <- df[df$Pear >= pear_range[1] & df$Pear <= pear_range[2] &
     df$LeesL >= L_range[1] & df$LeesL <= L_range[2], ]
@@ -742,7 +760,14 @@ getTopLvsR <- function(scope_obj,
     message("[geneSCOPE::getTopLvsR]   Lee's L range: [", L_range[1], ", ", L_range[2], "]")
   }
 
-  # ---- Select top ----
+  if (!is.null(df$outside_ci) && CI_rule != "none" && verbose) {
+    if (CI_rule == "remove_within") {
+      message("[geneSCOPE::getTopLvsR]   Pairs outside CI95: ", sum(df$outside_ci))
+    } else if (CI_rule == "remove_outside") {
+      message("[geneSCOPE::getTopLvsR]   Pairs inside CI95: ", sum(!df$outside_ci))
+    }
+  }
+
   if (verbose) message("[geneSCOPE::getTopLvsR] Selecting top gene pairs by Delta values")
   sel <- switch(direction,
     largest = dplyr::slice_max(df, Delta, n = top_n),
@@ -764,16 +789,19 @@ getTopLvsR <- function(scope_obj,
   }
 
   if (!nrow(sel) || !do_perm) {
-    sel$stat_type <- switch(clamp_mode,
-      none     = "Delta",
-      ref_only = "Delta_refClamp",
-      both     = "Delta_clamp_Ronly"
-    )
-    if (verbose && !do_perm) message("[geneSCOPE::getTopLvsR] Skipping permutation testing (do_perm = FALSE)")
-    return(sel)
+    sel$FDR <- NA_real_
+    return(dplyr::transmute(
+      sel,
+      gene1,
+      gene2,
+      L = LeesL,
+      r = Pear,
+      pct1 = gene1_expr_pct,
+      pct2 = gene2_expr_pct,
+      fdr = FDR
+    ))
   }
 
-  # ---- Permutation preparation ----
   if (verbose) {
     message("[geneSCOPE::getTopLvsR] Preparing permutation analysis")
     message("[geneSCOPE::getTopLvsR]   Permutations: ", perms)
@@ -804,7 +832,6 @@ getTopLvsR <- function(scope_obj,
   }
   split_rows <- split(seq_along(block_id), block_id)
 
-  # ---- CSR weights ----
   W_rows <- lapply(seq_len(nrow(W)), function(i) {
     nz <- which(W[i, ] != 0)
     if (length(nz)) list(indices = nz - 1L, values = as.numeric(W[i, nz])) else list(indices = integer(0), values = numeric(0))
@@ -817,7 +844,6 @@ getTopLvsR <- function(scope_obj,
   Xz_sub <- Xz[, gene_map, drop = FALSE]
   n_cells <- nrow(Xz_sub)
 
-  # ---- batch size ----
   target_batch <- min(100L, perms)
   max_idx_bytes <- mem_limit_GB * 1024^3 * 0.30
   est_bytes <- function(bs) n_cells * bs * 4
@@ -830,7 +856,6 @@ getTopLvsR <- function(scope_obj,
     " MB / limit ", sprintf("%.2f", max_idx_bytes / 1024^2), " MB)"
   )
 
-  # ---- Permutation loop ----
   if (verbose) message("[geneSCOPE::getTopLvsR] Starting permutation testing loop")
   remaining <- perms
   exceed_count <- rep(0L, nrow(sel))
@@ -884,7 +909,6 @@ getTopLvsR <- function(scope_obj,
     remaining <- remaining - bsz
   }
 
-  # ---- p-values and multiple correction ----
   if (verbose) message("[geneSCOPE::getTopLvsR] Computing p-values and applying multiple testing correction")
   N <- perms
   k <- exceed_count
@@ -929,5 +953,14 @@ getTopLvsR <- function(scope_obj,
     if (!nrow(sel)) message("[geneSCOPE::getTopLvsR] No Bonferroni-significant pairs (FDR < 0.05).")
   }
 
-  sel
+  dplyr::transmute(
+    sel,
+    gene1,
+    gene2,
+    L = LeesL,
+    r = Pear,
+    pct1 = gene1_expr_pct,
+    pct2 = gene2_expr_pct,
+    fdr = FDR
+  )
 }
