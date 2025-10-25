@@ -37,13 +37,14 @@
 #' @importFrom Matrix sparseMatrix t
 #' @importFrom rhdf5 h5read
 #' @export
-createSCOPE <- function(xenium_dir,
+createSCOPE_xenium <- function(xenium_dir,
                         grid_length,
                         seg_type = c("cell", "nucleus", "both"),
                         filter_genes = NULL,
                         max_dist_mol_nuc = 25,
                         filtermolecule = TRUE,
-                        exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
+                        exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword",
+                                           "SystemControl", "Negative"),
                         filterqv = 20,
                         coord_file = NULL,
                         ncores = 1L,
@@ -165,7 +166,7 @@ createSCOPE <- function(xenium_dir,
         break
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE::createSCOPE] Testing ", test_nc, " cores failed, trying fewer")
+        if (verbose) message("[geneSCOPE::createSCOPE xenium] Testing ", test_nc, " cores failed, trying fewer")
       }
     )
   }
@@ -179,9 +180,9 @@ createSCOPE <- function(xenium_dir,
     }
 
     if (ncores_safe < ncores) {
-      message("[geneSCOPE::createSCOPE] Core configuration: using ", ncores_safe, "/", ncores, " cores (", mem_display, " RAM, ", os_type, ")")
+      message("[geneSCOPE::createSCOPE xenium] Core configuration: using ", ncores_safe, "/", ncores, " cores (", mem_display, " RAM, ", os_type, ")")
     } else {
-      message("[geneSCOPE::createSCOPE] Core configuration: using ", ncores_safe, " cores")
+      message("[geneSCOPE::createSCOPE xenium] Core configuration: using ", ncores_safe, " cores")
     }
   }
 
@@ -236,13 +237,13 @@ createSCOPE <- function(xenium_dir,
         data.table::setDTthreads(1)
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE::createSCOPE] Warning: Could not set data.table threads")
+        if (verbose) message("[geneSCOPE::createSCOPE xenium] Warning: Could not set data.table threads")
       }
     )
   }
 
   ## ---- 3. Package loading and configuration --------------------------------------------
-  if (verbose) message("[geneSCOPE::createSCOPE] Initializing data processing environment")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium] Initializing data processing environment")
 
   suppressPackageStartupMessages({
     library(arrow)
@@ -265,7 +266,7 @@ createSCOPE <- function(xenium_dir,
         }
       },
       error = function(e) {
-        if (verbose) message("[geneSCOPE::createSCOPE]  Warning: Could not configure Arrow threading")
+        if (verbose) message("[geneSCOPE::createSCOPE xenium]  Warning: Could not configure Arrow threading")
       }
     )
   }
@@ -294,7 +295,7 @@ createSCOPE <- function(xenium_dir,
   }
 
   ## ---- 5. Read centroid data with I/O optimization
-  if (verbose) message("[geneSCOPE::createSCOPE] Loading cell centroids and transcripts")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium] Loading cell centroids and transcripts")
 
   centroids_dt <- tryCatch(
     {
@@ -305,9 +306,15 @@ createSCOPE <- function(xenium_dir,
       }
 
       cell_data <- arrow::read_parquet(cell_parq)
-      as.data.table(cell_data)[
-        , .(cell = cell_id, x = x_centroid, y = y_centroid)
-      ]
+      cd <- as.data.table(cell_data)
+      # CosMx: cell_id may repeat across FOVs; if a 'fov' column exists,
+      # build a unique key 'cell_id_fov'.
+      if ("fov" %in% names(cd)) {
+        cd[, cell := paste0(as.character(cell_id), "_", as.character(fov))]
+      } else {
+        cd[, cell := as.character(cell_id)]
+      }
+      cd[, .(cell = cell, x = x_centroid, y = y_centroid)]
     },
     error = function(e) {
       stop("Error reading centroids from cells.parquet: ", e$message)
@@ -318,7 +325,7 @@ createSCOPE <- function(xenium_dir,
     stop("No centroids found in cells.parquet")
   }
 
-  if (verbose) message("[geneSCOPE::createSCOPE]  Found ", nrow(centroids_dt), " cells")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium]  Found ", nrow(centroids_dt), " cells")
 
   ## ---- 6. Dataset preparation --------------------------------
   ds <- tryCatch(
@@ -332,23 +339,23 @@ createSCOPE <- function(xenium_dir,
 
   # Apply filters
   if (!is.null(filter_genes)) {
-    if (verbose) message("[geneSCOPE::createSCOPE]  Filtering genes: ", length(filter_genes), " genes")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Filtering genes: ", length(filter_genes), " genes")
     ds <- ds |> filter(feature_name %in% filter_genes)
   }
 
   if (!is.null(max_dist_mol_nuc)) {
-    if (verbose) message("[geneSCOPE::createSCOPE]  Filtering by nucleus distance: max ", max_dist_mol_nuc)
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Filtering by nucleus distance: max ", max_dist_mol_nuc)
     ds <- ds |> filter(nucleus_distance <= max_dist_mol_nuc)
   }
 
   if (filtermolecule) {
-    if (verbose) message("[geneSCOPE::createSCOPE]  Filtering molecules by prefix exclusion")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Filtering molecules by prefix exclusion")
     pat <- paste0("^(?:", paste(exclude_prefix, collapse = "|"), ")")
     ds <- ds |> filter(!grepl(pat, feature_name))
   }
 
   if (!is.null(filterqv)) {
-    if (verbose) message("[geneSCOPE::createSCOPE]  Filtering by QV score: min ", filterqv)
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Filtering by QV score: min ", filterqv)
     ds <- ds |> filter(qv >= filterqv)
   }
 
@@ -371,7 +378,7 @@ createSCOPE <- function(xenium_dir,
 
   if (verbose) {
     message(
-      "[geneSCOPE::createSCOPE] Data bounds: x=[", round(bounds_global$xmin), ",",
+      "[geneSCOPE::createSCOPE xenium] Data bounds: x=[", round(bounds_global$xmin), ",",
       round(bounds_global$xmax), "], y=[", round(bounds_global$ymin),
       ",", round(bounds_global$ymax), "]"
     )
@@ -379,13 +386,13 @@ createSCOPE <- function(xenium_dir,
 
   if (flip_y) {
     centroids_dt <- .flipCoordinates(centroids_dt, y_max)
-    if (verbose) message("[geneSCOPE::createSCOPE]  Applied Y-axis flip")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Applied Y-axis flip")
   }
 
   ## ---- 7. ROI polygon processing -------------------------
   user_poly <- NULL
   if (!is.null(coord_file)) {
-    if (verbose) message("[geneSCOPE::createSCOPE] Processing ROI polygon from file")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Processing ROI polygon from file")
 
     if (!file.exists(coord_file)) {
       stop("Coordinate file not found: ", coord_file)
@@ -421,7 +428,7 @@ createSCOPE <- function(xenium_dir,
       stop("ROI polygon must have at least 3 points")
     }
 
-    if (verbose) message("[geneSCOPE::createSCOPE]  Polygon has ", nrow(poly_tb), " vertices")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium]  Polygon has ", nrow(poly_tb), " vertices")
 
     poly_geom <- tryCatch(
       {
@@ -452,7 +459,7 @@ createSCOPE <- function(xenium_dir,
     user_poly <- sf::st_sfc(poly_geom)
   } else {
     # Auto-create ROI from data boundaries when no coord_file is specified
-    if (verbose) message("[geneSCOPE::createSCOPE] Creating automatic ROI from data boundaries")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Creating automatic ROI from data boundaries")
 
     # Create rectangle polygon from global bounds
     poly_coords <- data.frame(
@@ -482,7 +489,7 @@ createSCOPE <- function(xenium_dir,
 
     if (verbose) {
       message(
-        "[geneSCOPE::createSCOPE] Automatic ROI created: x=[", round(min(poly_coords$x)), ",",
+        "[geneSCOPE::createSCOPE xenium] Automatic ROI created: x=[", round(min(poly_coords$x)), ",",
         round(max(poly_coords$x)), "], y=[", round(min(poly_coords$y)), ",",
         round(max(poly_coords$y)), "]"
       )
@@ -491,7 +498,7 @@ createSCOPE <- function(xenium_dir,
 
   ## ---- 8. Centroid clipping -----------------------------
   if (!is.null(user_poly) && nrow(centroids_dt)) {
-    if (verbose) message("[geneSCOPE::createSCOPE] Clipping centroids to ROI...")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Clipping centroids to ROI...")
 
     centroids_dt <- tryCatch(
       {
@@ -505,7 +512,7 @@ createSCOPE <- function(xenium_dir,
       }
     )
 
-    if (verbose) message("[geneSCOPE::createSCOPE] Retained ", nrow(centroids_dt), " cells within ROI")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Retained ", nrow(centroids_dt), " cells within ROI")
   }
 
   keep_cells <- if (nrow(centroids_dt)) unique(centroids_dt$cell) else NULL
@@ -518,10 +525,10 @@ createSCOPE <- function(xenium_dir,
   )
 
   ## ---- 10. Process segmentation data -------------------------------
-  if (verbose) message("[geneSCOPE::createSCOPE] Processing segmentation data...")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium] Processing segmentation data...")
 
   for (tag in names(seg_files)) {
-    if (verbose) message("[geneSCOPE::createSCOPE] Processing ", tag, " segmentation...")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Processing ", tag, " segmentation...")
 
     seg_res <- tryCatch(
       {
@@ -547,7 +554,7 @@ createSCOPE <- function(xenium_dir,
   ## ---- 11. Pre-fetch molecules (ROI case) ----------------------------
   mol_small <- NULL
   if (!is.null(user_poly)) {
-    if (verbose) message("[geneSCOPE::createSCOPE] Pre-fetching molecules for ROI...")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Pre-fetching molecules for ROI...")
 
     mol_small <- tryCatch(
       {
@@ -573,7 +580,7 @@ createSCOPE <- function(xenium_dir,
       )
     }
 
-    if (verbose) message("[geneSCOPE::createSCOPE] Retained ", nrow(mol_small), " molecules within ROI")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Retained ", nrow(mol_small), " molecules within ROI")
   }
 
   ## ---- 12. Batch scan counting (panoramic case, using original iterator approach) ----------------------
@@ -583,7 +590,7 @@ createSCOPE <- function(xenium_dir,
   }
 
   if (is.null(user_poly)) {
-    if (verbose) message("[geneSCOPE::createSCOPE] Starting multi-resolution scan...")
+    if (verbose) message("[geneSCOPE::createSCOPE xenium] Starting multi-resolution scan...")
 
     # Using the original iterator approach
     n_total <- tryCatch(
@@ -628,7 +635,7 @@ createSCOPE <- function(xenium_dir,
           }
         },
         error = function(e) {
-          if (verbose) message("[geneSCOPE::createSCOPE] Scanner finished or error: ", e$message)
+          if (verbose) message("[geneSCOPE::createSCOPE xenium] Scanner finished or error: ", e$message)
           NULL
         }
       )
@@ -673,7 +680,7 @@ createSCOPE <- function(xenium_dir,
 
   ## ---- 13. build_grid() function ----------------------------------------
   build_grid <- function(lg) {
-    if (verbose) message(sprintf("[geneSCOPE::createSCOPE] Grid %.1f µm …", lg))
+    if (verbose) message(sprintf("[geneSCOPE::createSCOPE xenium] Grid %.1f µm …", lg))
     x0 <- floor(bounds_global$xmin / lg) * lg
     y0 <- if (flip_y) 0 else floor(bounds_global$ymin / lg) * lg
 
@@ -768,9 +775,9 @@ createSCOPE <- function(xenium_dir,
     )
   }
 
-  if (verbose) message("[geneSCOPE::createSCOPE] Building grid layers …")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium] Building grid layers …")
   invisible(lapply(sort(unique(grid_length)), build_grid))
-  if (verbose) message("[geneSCOPE::createSCOPE] Grid construction finished.")
+  if (verbose) message("[geneSCOPE::createSCOPE xenium] Grid construction finished.")
 
   ## ---- 14. Integrity check ----------------------------------------------
   if (length(scope_obj@grid) == 0 ||
@@ -782,260 +789,666 @@ createSCOPE <- function(xenium_dir,
 }
 
 
-#' @title Add Single Cell Count Matrix
+#' @title Build scope_object from CosMx (AtomX flat files) with Sopa-like conventions
 #' @description
-#'   Read the Xenium **cell-feature sparse matrix** (either HDF5 or
-#'   Matrix-Market format), keep only the cells that appear in
-#'   \code{scope_obj@coord$centroids$cell}, preserve that order, and store the
-#'   result in the new \code{@cells} slot.
+#'   Normalizes CosMx AtomX flat files (flatFiles) into the parquet layout
+#'   expected by \code{createSCOPE_xenium} (transcripts.parquet, cells.parquet,
+#'   segmentation_boundaries.parquet, etc.), then delegates to
+#'   \code{createSCOPE_xenium} to build a scope_object identical in structure
+#'   to the Xenium pipeline.
 #'
-#'   The function relies only on \strong{Matrix}, \strong{data.table}, and
-#'   \strong{rhdf5} (or \strong{hdf5r})—no Seurat, tidyverse, or other heavy
-#'   dependencies.
-#' @param scope_obj A valid \code{scope_object} whose \code{@coord$centroids} slot
-#'        is already filled (e.g. via \code{\link{createSCOPE}}). Cells
-#'        found in this slot define the subset and order of columns kept.
-#' @param xenium_dir Character scalar. Path to the Xenium \file{outs/}
-#'        directory that holds \file{cell_feature_matrix.h5}; must exist.
-#' @param filter_genes Character vector or NULL. Gene names to include (default NULL keeps all).
-#' @param exclude_prefix Character vector. Prefixes to exclude when filtering genes (default c("Unassigned", "NegControl", "Background", "DeprecatedCodeword")).
-#' @param filter_barcodes Logical. Whether to filter cells to match barcodes in scope_obj (default TRUE). When FALSE, all cells from the HDF5 matrix are included.
-#' @param verbose Logical. Whether to print progress messages (default TRUE).
-#' @return The same object (modified in place) now carrying a
-#'         \code{dgCMatrix} in \code{@cells}.
-#' @details
-#' The function performs five main steps:
-#' \enumerate{
-#'   \item Reads the \strong{cell‑feature} matrix in HDF5 format produced by
-#'         10x Xenium, using \pkg{rhdf5} to avoid loading the full file into
-#'         memory.
-#'   \item Reconstructs the sparse count matrix as a \code{dgCMatrix} from
-#'         the \emph{x/i/p} components and automatically handles either
-#'         {genes × cells} or {cells × genes} orientations.
-#'   \item Filters genes by excluding those with specified prefixes
-#'         (\code{exclude_prefix}) and optionally keeping only genes in
-#'         \code{filter_genes}, similar to the filtering applied in
-#'         \code{\link{createSCOPE}}.
-#'   \item Conditionally filters and reorders columns based on \code{filter_barcodes}:
-#'         when \code{TRUE} (default), columns are filtered and reordered to match
-#'         the centroid table (\code{scope_obj@coord$centroids$cell}) for spatial
-#'         analyses; when \code{FALSE}, all cells from the HDF5 matrix are retained.
-#'   \item Migrates any extra attributes found on the original matrix
-#'         (e.g. log-CPM transforms) into the list stored in
-#'         \code{scope_obj@cells}.
-#' }
+#'   The function first checks whether the target parquet files already exist;
+#'   if not, it attempts to synthesize them from
+#'   \code{flatFiles/*_{tx|polygons|fov_positions}_file.csv(.gz)}. Only
+#'   \code{transcripts.parquet} is guaranteed to be produced; missing
+#'   \code{cells.parquet}/segmentation parquet files are handled by
+#'   \code{seg_type} fallback.
 #'
-#' Only the \pkg{Matrix}, \pkg{data.table}, and \pkg{rhdf5} packages are
-#' required; no Seurat or tidyverse dependencies are introduced. Memory
-#' footprint scales with the number of non‑zero entries, not the full matrix
-#' dimensions.
-#' @importFrom Matrix sparseMatrix t
-#' @importFrom data.table data.table
-#' @importFrom rhdf5 h5read
-#' @examples
-#' \dontrun{
-#' ## Add the cell‑level count matrix to an existing scope_object
-#' coord <- createSCOPE("mouse_brain/xenium_output")
-#' coord <- addSingleCells(coord, "mouse_brain/xenium_output")
-#'
-#' ## With custom gene filtering
-#' coord <- addSingleCells(coord, "mouse_brain/xenium_output",
-#'   filter_genes = c("Gene1", "Gene2", "Gene3"),
-#'   exclude_prefix = c("Unassigned", "NegControl")
-#' )
-#'
-#' ## Include all cells from HDF5 matrix (skip barcode filtering)
-#' coord <- addSingleCells(coord, "mouse_brain/xenium_output",
-#'   filter_barcodes = FALSE
-#' )
-#' }
+#' @param cosmx_root Character. Root directory of a CosMx project; must contain
+#'        \file{flatFiles/} and optionally \file{DecodedFiles/}.
+#' @param grid_length Numeric vector. Grid edge length(s) (in the same
+#'        coordinate unit/pixels) forwarded to \code{createSCOPE_xenium}.
+#' @param seg_type Character. One of \code{"cell"}, \code{"nucleus"}, or
+#'        \code{"both"}. Automatically downgraded if a segmentation parquet is
+#'        missing.
+#' @param dataset_id Character or NULL. If NULL, inferred from
+#'        \file{flatFiles/*/*_tx_file.csv(.gz)} filename.
+#' @param pixel_size_um Numeric. Pixel size (µm/px) used when unit conversion is
+#'        required; default \code{0.120280945}.
+#' @param verbose Logical. Print progress messages.
+#' @param ... Additional arguments forwarded to \code{createSCOPE_xenium}
+#'        (e.g. \code{filter_genes}, \code{filterqv}, \code{flip_y}).
+#' @return A \code{scope_object} whose structure matches the output of
+#'         \code{createSCOPE_xenium}.
+#' @importFrom data.table fread as.data.table
+#' @importFrom arrow write_parquet
 #' @export
-addSingleCells <- function(scope_obj, xenium_dir,
-                           filter_genes = NULL,
-                           exclude_prefix = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword"),
-                           filter_barcodes = TRUE,
-                           verbose = TRUE) {
-  stopifnot(inherits(scope_obj, "scope_object"), dir.exists(xenium_dir))
+createSCOPE_cosmx <- function(cosmx_root,
+                              grid_length,
+                              seg_type = c("cell", "nucleus", "both"),
+                              dataset_id = NULL,
+                              pixel_size_um = 0.120280945,
+                              verbose = TRUE,
+                              build_from_flatfiles = TRUE,
+                              build_cells_from_polygons = TRUE,
+                              ...) {
+  stopifnot(dir.exists(cosmx_root))
+  seg_type <- match.arg(seg_type)
 
-  if (verbose) message("[geneSCOPE::addSingleCells] Loading cell-feature matrix from HDF5")
+  if (verbose) message("[geneSCOPE::createSCOPE cosmx] Root = ", cosmx_root)
+
+  # 1) Target parquet paths
+  tf_parq   <- file.path(cosmx_root, "transcripts.parquet")
+  cell_parq <- file.path(cosmx_root, "cells.parquet")
+  seg_cell  <- file.path(cosmx_root, "cell_boundaries.parquet")
+  seg_any   <- file.path(cosmx_root, "segmentation_boundaries.parquet")
+  nuc_parq  <- file.path(cosmx_root, "nucleus_boundaries.parquet")
+
+  # Working directory: if we need to synthesize any inputs, use a temp dir
+  work_dir <- cosmx_root
+  need_temp <- FALSE
+
+  # 2) If transcripts.parquet is missing, synthesize from flatFiles
+  if (!file.exists(tf_parq) && build_from_flatfiles) {
+    if (verbose) message("[geneSCOPE::createSCOPE cosmx] transcripts.parquet not found; generating from flatFiles …")
+
+    # Locate flatFiles and infer dataset ID if needed
+    ff_dir <- file.path(cosmx_root, "flatFiles")
+    if (!dir.exists(ff_dir)) {
+      stop("flatFiles/ not found under ", cosmx_root)
+    }
+    # Search for *_tx_file.csv(.gz)
+    tx_candidates <- c(
+      Sys.glob(file.path(ff_dir, "*/*_tx_file.csv.gz")),
+      Sys.glob(file.path(ff_dir, "*/*_tx_file.csv"))
+    )
+    if (length(tx_candidates) == 0L) {
+      stop("No *_tx_file.csv(.gz) found under ", ff_dir)
+    }
+    tx_path <- tx_candidates[[1]]
+
+    if (is.null(dataset_id)) {
+      # Infer dataset ID from filename: External_xxx_tx_file.csv.gz → External_xxx
+      base <- basename(tx_path)
+      dataset_id <- sub("_tx_file\\.csv(\\.gz)?$", "", base)
+    }
+
+    # Read tx CSV. Expected minimum columns: fov, x_global_px, y_global_px, target
+    suppressPackageStartupMessages({
+      library(data.table)
+      library(arrow)
+    })
+    if (verbose) message("[geneSCOPE::createSCOPE cosmx] Reading ", tx_path)
+    tx <- tryCatch({ data.table::fread(tx_path) }, error = function(e) stop("Failed to read ", tx_path, ": ", e$message))
+    cn <- tolower(names(tx)); names(tx) <- cn
+    headerless <- all(grepl("^v[0-9]+$", cn))
+
+    if (!headerless && all(c("x_global_px","y_global_px","target") %in% cn)) {
+      xg <- tx[["x_global_px"]]; yg <- tx[["y_global_px"]]; tgt <- tx[["target"]]
+      qv <- if ("qv" %in% cn) tx[["qv"]] else Inf
+      nd <- if ("nucleus_distance" %in% cn) tx[["nucleus_distance"]] else 0
+    } else {
+      # headerless (positional mapping) or missing expected names
+      if (ncol(tx) < 9L) stop("headerless tx_file has insufficient columns (<9)")
+      if (verbose) message("[geneSCOPE::createSCOPE cosmx] tx_file headerless – using positional mapping col6/col7/col9 (and col8 as nucleus_distance)")
+      xg <- tx[[6]]; yg <- tx[[7]]; tgt <- tx[[9]]
+      qv <- if (ncol(tx) >= 10 && is.numeric(tx[[10]])) tx[[10]] else Inf
+      nd <- if (ncol(tx) >= 8 && is.numeric(tx[[8]])) tx[[8]] else 0
+    }
+    tx_out <- data.table::data.table(
+      x_location = as.numeric(xg),
+      y_location = as.numeric(yg),
+      feature_name = as.character(tgt),
+      qv = as.numeric(qv),
+      nucleus_distance = as.numeric(nd)
+    )
+
+    # choose working directory
+    work_dir <- file.path(tempdir(), paste0("cosmx_scope_", as.integer(Sys.time())))
+    if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
+    need_temp <- TRUE
+    tf_parq <- file.path(work_dir, "transcripts.parquet")
+    if (verbose) message("[geneSCOPE::createSCOPE cosmx] Writing ", tf_parq)
+    arrow::write_parquet(tx_out, tf_parq)
+  } else if (verbose) {
+    message("[geneSCOPE::createSCOPE cosmx] Using existing transcripts.parquet")
+  }
+
+  # 3) Segmentation and centroids: downgrade seg_type if segmentation is missing
+  have_cell_seg <- file.exists(seg_cell) || file.exists(seg_any)
+  have_nuc_seg  <- file.exists(nuc_parq)
+
+  if (seg_type %in% c("cell","both") && !have_cell_seg) {
+    if (verbose) message("[geneSCOPE::createSCOPE cosmx] Cell segmentation parquet not found; downgrade seg_type")
+    seg_type <- if (have_nuc_seg) "nucleus" else "cell" # Prefer nucleus; otherwise pass 'cell' and let downstream handle absence
+  }
+  if (seg_type %in% c("nucleus","both") && !have_nuc_seg) {
+    if (verbose) message("[geneSCOPE::createSCOPE cosmx] Nucleus segmentation parquet not found; downgrade seg_type")
+    seg_type <- if (have_cell_seg) "cell" else "nucleus"
+  }
+
+  # 3.1) If cells.parquet is missing and polygon derivation is allowed, generate a temporary cells.parquet
+  if (!file.exists(cell_parq) && build_from_flatfiles && build_cells_from_polygons) {
+    # find polygons in flatFiles
+    poly_path <- NULL
+    ff_dir <- file.path(cosmx_root, "flatFiles")
+    cand <- c(Sys.glob(file.path(ff_dir, "*/*-polygons.csv.gz")), Sys.glob(file.path(ff_dir, "*/*_polygons.csv.gz")))
+    if (length(cand)) poly_path <- cand[[1]]
+    if (!is.null(poly_path)) {
+      if (verbose) message("[geneSCOPE::createSCOPE cosmx] cells.parquet not found; deriving centroids from polygons: ", basename(poly_path))
+      pol <- data.table::fread(poly_path)
+      cn <- tolower(names(pol)); names(pol) <- cn
+      headerless <- all(grepl("^v[0-9]+$", cn))
+      if (headerless) {
+        # Map: col1=fov, col2=cell_id, col6=x_global_px, col7=y_global_px
+        if (ncol(pol) < 7L) stop("headerless polygons has insufficient columns (<7)")
+        fov <- pol[[1]]; cid <- pol[[2]]; xg <- pol[[6]]; yg <- pol[[7]]
+      } else {
+        # try common lowercase names
+        fx <- if ("fov" %in% cn) pol[["fov"]] else pol[[1]]
+        cx <- if ("cellid" %in% cn) pol[["cellid"]] else if ("cell_id" %in% cn) pol[["cell_id"]] else pol[[2]]
+        xg <- if ("x_global_px" %in% cn) pol[["x_global_px"]] else pol[[which.max(cn=="x")]]
+        yg <- if ("y_global_px" %in% cn) pol[["y_global_px"]] else pol[[which.max(cn=="y")]]
+        fov <- fx; cid <- cx
+      }
+      dt <- data.table::data.table(fov=as.integer(fov), cell_id=as.character(cid), x=as.numeric(xg), y=as.numeric(yg))
+      cent <- dt[, .(x_centroid = mean(x, na.rm=TRUE), y_centroid = mean(y, na.rm=TRUE)), by=.(cell_id, fov)]
+      # write to work_dir
+      if (!need_temp) { work_dir <- file.path(tempdir(), paste0("cosmx_scope_", as.integer(Sys.time()))); dir.create(work_dir, recursive = TRUE); need_temp <- TRUE }
+      cell_parq <- file.path(work_dir, "cells.parquet")
+      if (verbose) message("[geneSCOPE::createSCOPE cosmx] Writing ", cell_parq)
+      arrow::write_parquet(cent, cell_parq)
+    } else if (verbose) {
+      message("[geneSCOPE::createSCOPE cosmx] polygons not found; cannot derive cells.parquet")
+    }
+  }
+
+  # 3.2) If using a temporary working directory, symlink/copy existing segmentation parquets into it so downstream code sees a single root
+  if (need_temp) {
+    link_or_copy <- function(src, dst) {
+      if (file.exists(src) && !file.exists(dst)) {
+        ok <- FALSE
+        suppressWarnings({ ok <- file.symlink(src, dst) })
+        if (!ok) invisible(file.copy(src, dst, overwrite = FALSE))
+      }
+    }
+    link_or_copy(file.path(cosmx_root, "segmentation_boundaries.parquet"), file.path(work_dir, "segmentation_boundaries.parquet"))
+    link_or_copy(file.path(cosmx_root, "cell_boundaries.parquet"),         file.path(work_dir, "cell_boundaries.parquet"))
+    link_or_copy(file.path(cosmx_root, "nucleus_boundaries.parquet"),      file.path(work_dir, "nucleus_boundaries.parquet"))
+  }
+
+  # 4) Delegate to createSCOPE_xenium (flip_y defaults to TRUE to match Xenium coordinates)
+  if (verbose) message("[geneSCOPE::createSCOPE cosmx] Delegating to createSCOPE_xenium() …")
+  scope_obj <- createSCOPE_xenium(
+    xenium_dir = work_dir,
+    grid_length = grid_length,
+    seg_type = seg_type,
+    verbose = verbose,
+    ...
+  )
+
+  # Attach platform/dataset metadata
+  if (nrow(scope_obj@meta.data) > 0L) {
+    scope_obj@meta.data$platform <- rep("CosMx", nrow(scope_obj@meta.data))
+    scope_obj@meta.data$dataset  <- rep(if (is.null(dataset_id)) NA_character_ else dataset_id,
+                                        nrow(scope_obj@meta.data))
+  } else {
+    # When meta.data is empty, record identifiers in @stats to avoid data.frame length mismatch
+    scope_obj@stats$platform <- "CosMx"
+    scope_obj@stats$dataset  <- if (is.null(dataset_id)) NA_character_ else dataset_id
+  }
+  scope_obj
+}
+
+#' @title Build scope_object from 10x Visium spot-level outputs
+#' @description
+#'   Reads standard 10x Visium outputs (matrix + spatial metadata) and constructs
+#'   a \code{scope_object} where the sole grid layer matches the Visium spot size.
+#'   Coordinates are expressed in microns using \code{scalefactors_json.json},
+#'   and only in-tissue spots are retained by default.
+#' @param visium_dir Character. Path to the Visium run (typically the \code{outs/} directory)
+#'        containing \code{spatial/} and the feature-barcode matrix folder.
+#' @param use_filtered Logical. If \code{TRUE} (default), prefer
+#'        \code{filtered_feature_bc_matrix}; otherwise fall back to raw counts.
+#' @param include_in_tissue Logical. Keep only spots marked with
+#'        \code{in_tissue == 1} (default \code{TRUE}).
+#' @param grid_multiplier Numeric scalar. Multiplier applied to the inferred spot
+#'        diameter when defining the grid width/height (default 1, i.e. spot-sized grid).
+#' @param flip_y Logical. Whether to flip Y so that the origin is bottom-left
+#'        (default \code{FALSE}; Visium images are usually top-left origin).
+#' @param verbose Logical. Print progress messages (default \code{TRUE}).
+#' @return A \code{scope_object} containing spot centroids, a single grid layer,
+#'         and a spot-level count matrix stored in \code{@cells$counts}.
+#' @details
+#'   This helper bypasses \code{\link{createSCOPE}} because Visium provides
+#'   spot-level counts instead of molecule coordinates. Grid tiles are centered
+#'   on Visium spot centroids and their edge length equals the spot diameter
+#'   reported in \code{scalefactors_json.json} multiplied by \code{grid_multiplier}.
+#' @export
+createSCOPE_visium <- function(visium_dir,
+                               use_filtered = TRUE,
+                               include_in_tissue = TRUE,
+                               grid_multiplier = 1,
+                               flip_y = FALSE,
+                               verbose = TRUE) {
+  stopifnot(dir.exists(visium_dir))
+
+  if (!is.numeric(grid_multiplier) || length(grid_multiplier) != 1L || !is.finite(grid_multiplier)) {
+    stop("grid_multiplier must be a single finite numeric value.")
+  }
+  if (grid_multiplier <= 0) {
+    stop("grid_multiplier must be positive.")
+  }
 
   suppressPackageStartupMessages({
     library(Matrix)
     library(data.table)
   })
 
-  # Cross-platform HDF5 library detection and loading
-  hdf5_available <- FALSE
-  if (requireNamespace("rhdf5", quietly = TRUE)) {
-    library(rhdf5)
-    hdf5_available <- TRUE
-  } else if (requireNamespace("hdf5r", quietly = TRUE)) {
-    library(hdf5r)
-    hdf5_available <- TRUE
+  candidate_dirs <- unique(file.path(visium_dir, c(
+    if (isTRUE(use_filtered)) "filtered_feature_bc_matrix",
+    if (!isTRUE(use_filtered)) "raw_feature_bc_matrix",
+    "filtered_feature_bc_matrix",
+    "raw_feature_bc_matrix"
+  )))
+  matrix_dir <- candidate_dirs[dir.exists(candidate_dirs)][1]
+
+  if (is.na(matrix_dir)) {
+    stop("Could not find filtered_feature_bc_matrix/ or raw_feature_bc_matrix/ under ", visium_dir)
+  }
+  if (verbose) message("[geneSCOPE::createSCOPE visium] Using matrix directory: ", basename(matrix_dir))
+
+  matrix_file <- file.path(matrix_dir, "matrix.mtx.gz")
+  if (!file.exists(matrix_file)) matrix_file <- file.path(matrix_dir, "matrix.mtx")
+  feature_file <- file.path(matrix_dir, "features.tsv.gz")
+  if (!file.exists(feature_file)) feature_file <- file.path(matrix_dir, "features.tsv")
+  barcode_file <- file.path(matrix_dir, "barcodes.tsv.gz")
+  if (!file.exists(barcode_file)) barcode_file <- file.path(matrix_dir, "barcodes.tsv")
+
+  if (!file.exists(matrix_file)) {
+    stop("matrix.mtx(.gz) not found in ", matrix_dir)
+  }
+  if (!file.exists(feature_file) || !file.exists(barcode_file)) {
+    stop("Required features.tsv(.gz) or barcodes.tsv(.gz) missing in ", matrix_dir)
   }
 
-  if (!hdf5_available) {
-    stop("Neither rhdf5 nor hdf5r package is available. Please install one of them.")
+  counts_mt <- Matrix::readMM(if (grepl("\\.gz$", matrix_file, ignore.case = TRUE)) gzfile(matrix_file) else matrix_file)
+  # Use CsparseMatrix to avoid Matrix::DeprecatedCoerce warnings
+  counts_mat <- as(counts_mt, "CsparseMatrix")
+  rm(counts_mt)
+
+  features_dt <- data.table::fread(feature_file, header = FALSE)
+  barcodes_dt <- data.table::fread(barcode_file, header = FALSE)
+  if (ncol(features_dt) < 2) {
+    stop("features.tsv must contain at least two columns (gene id, gene name).")
   }
+  gene_ids <- as.character(features_dt[[1]])
+  gene_names <- make.unique(as.character(features_dt[[2]]))
+  feature_type <- if (ncol(features_dt) >= 3) as.character(features_dt[[3]]) else rep(NA_character_, length(gene_names))
+  barcodes <- as.character(barcodes_dt[[1]])
+  dimnames(counts_mat) <- list(gene_names, barcodes)
 
-  ## ------------------------------------------------------------------ 1
-  if (filter_barcodes) {
-    keep_cells_target <- scope_obj@coord$centroids$cell
-    if (!length(keep_cells_target)) {
-      stop("scope_obj@coord$centroids is empty, cannot determine cells to keep.")
-    }
-
-    if (verbose) message("[geneSCOPE::addSingleCells]  Target cells: ", length(keep_cells_target))
-  } else {
-    if (verbose) message("[geneSCOPE::addSingleCells]  Barcode filtering disabled - will include all cells from HDF5")
-  }
-
-  ## ------------------------------------------------------------------ 2
-  h5_file <- file.path(xenium_dir, "cell_feature_matrix.h5")
-  if (!file.exists(h5_file)) {
-    stop("HDF5 file not found: ", h5_file)
-  }
-
-  # Cross-platform HDF5 reading
-  if (requireNamespace("rhdf5", quietly = TRUE)) {
-    barcodes <- rhdf5::h5read(h5_file, "matrix/barcodes")
-    genes_id <- rhdf5::h5read(h5_file, "matrix/features/id")
-    genes_nm <- rhdf5::h5read(h5_file, "matrix/features/name")
-    data <- rhdf5::h5read(h5_file, "matrix/data")
-    indices <- rhdf5::h5read(h5_file, "matrix/indices")
-    indptr <- rhdf5::h5read(h5_file, "matrix/indptr")
-    shape <- as.integer(rhdf5::h5read(h5_file, "matrix/shape"))
-  } else {
-    # Alternative hdf5r implementation
-    h5file <- hdf5r::H5File$new(h5_file, mode = "r")
-    barcodes <- h5file[["matrix/barcodes"]][]
-    genes_id <- h5file[["matrix/features/id"]][]
-    genes_nm <- h5file[["matrix/features/name"]][]
-    data <- h5file[["matrix/data"]][]
-    indices <- h5file[["matrix/indices"]][]
-    indptr <- h5file[["matrix/indptr"]][]
-    shape <- as.integer(h5file[["matrix/shape"]][])
-    h5file$close()
-  }
-
-  ## -------------------------- 2a Determine HDF5 storage orientation ----
-  nrow_h5 <- shape[1]
-  ncol_h5 <- shape[2]
-  by_cols <- length(indptr) == (ncol_h5 + 1) # indptr length = ncol+1
-
-  if (!by_cols) {
-    stop("Current function only supports CSC-style storage (indptr length = ncol+1).")
-  }
-
-  col_is_cell <- (ncol_h5 == length(barcodes))
-  if (!col_is_cell && !(nrow_h5 == length(barcodes))) {
-    stop("Shape doesn't match barcode/gene counts, cannot determine orientation.")
-  }
-
-  if (verbose) {
-    message(
-      "[geneSCOPE::addSingleCells]  Matrix: ", nrow_h5, "×", ncol_h5,
-      " (", length(genes_nm), " genes, ", length(barcodes), " cells)"
-    )
-  }
-
-  ## -------------------------- 2b Build sparse matrix ------------------
-  x <- as.numeric(data)
-  i <- as.integer(indices)
-  p <- as.integer(indptr)
-
-  if (col_is_cell) {
-    ## →  columns = cells, rows = genes   (most common)
-    counts_raw <- new("dgCMatrix",
-      Dim      = c(length(genes_nm), length(barcodes)),
-      x        = x,
-      i        = i,
-      p        = p,
-      Dimnames = list(make.unique(genes_nm), barcodes)
-    )
-  } else {
-    ## →  columns = genes, rows = cells   (rare case: need transpose)
-    if (verbose) message("[geneSCOPE::addSingleCells]  Transposing matrix layout")
-    tmp <- new("dgCMatrix",
-      Dim      = c(length(barcodes), length(genes_nm)),
-      x        = x,
-      i        = i,
-      p        = p,
-      Dimnames = list(barcodes, make.unique(genes_nm))
-    )
-    counts_raw <- Matrix::t(tmp)
-  }
-
-  attr(counts_raw, "gene_map") <- data.frame(
-    ensembl = genes_id,
-    symbol = genes_nm,
-    stringsAsFactors = FALSE
+  gene_meta <- data.frame(
+    feature_id = gene_ids,
+    feature_type = feature_type,
+    stringsAsFactors = FALSE,
+    row.names = gene_names
   )
 
-  ## -------------------------- 2c Filter genes by exclude_prefix and filter_genes ------------------
-  if (verbose) message("[geneSCOPE::addSingleCells] Applying gene filters")
+  spatial_dir <- file.path(visium_dir, "spatial")
+  if (!dir.exists(spatial_dir)) {
+    stop("spatial/ directory not found under ", visium_dir)
+  }
 
-  # Get gene names (rownames)
-  all_genes <- rownames(counts_raw)
-  keep_genes <- all_genes
+  pos_candidates <- c(
+    file.path(spatial_dir, "tissue_positions_list.csv"),
+    file.path(spatial_dir, "tissue_positions.csv")
+  )
+  pos_path <- pos_candidates[file.exists(pos_candidates)][1]
+  if (is.na(pos_path)) {
+    stop("Could not find tissue_positions_list.csv or tissue_positions.csv under ", spatial_dir)
+  }
+  pos_raw <- data.table::fread(pos_path)
+  if (verbose) message("[geneSCOPE::createSCOPE visium] Loaded ", nrow(pos_raw), " spot positions")
 
-  # Filter by exclude_prefix
-  if (length(exclude_prefix) > 0) {
-    exclude_pattern <- paste0("^(?:", paste(exclude_prefix, collapse = "|"), ")")
-    exclude_mask <- grepl(exclude_pattern, keep_genes, perl = TRUE)
-    keep_genes <- keep_genes[!exclude_mask]
-
-    if (verbose) {
-      excluded_count <- sum(exclude_mask)
-      if (excluded_count > 0) {
-        message(
-          "[geneSCOPE::addSingleCells]  Excluded ", excluded_count, " genes with prefixes: ",
-          paste(exclude_prefix, collapse = ", ")
-        )
+  standardize_positions <- function(dt) {
+    if (!data.table::is.data.table(dt)) dt <- data.table::as.data.table(dt)
+    if (ncol(dt) < 6) {
+      stop("Visium position file must contain at least six columns.")
+    }
+    if (all(grepl("^V[0-9]+$", names(dt)))) {
+      cols <- c("barcode", "in_tissue", "array_row", "array_col", "pxl_col_in_fullres", "pxl_row_in_fullres")
+      data.table::setnames(dt, cols[seq_len(ncol(dt))])
+    } else {
+      lower <- tolower(names(dt))
+      rename_first <- function(target, aliases) {
+        idx <- which(lower %in% aliases)
+        if (length(idx)) {
+          data.table::setnames(dt, idx[1], target)
+          lower[idx[1]] <<- target
+        }
       }
+      rename_first("barcode", c("barcode", "barcodes"))
+      rename_first("in_tissue", c("in_tissue", "intissue"))
+      rename_first("array_row", c("array_row", "row", "spot_row", "arrayrow"))
+      rename_first("array_col", c("array_col", "col", "spot_col", "arraycol"))
+      rename_first("pxl_col_in_fullres", c("pxl_col_in_fullres", "pixel_x", "pxl_col", "imagecol", "col_coord"))
+      rename_first("pxl_row_in_fullres", c("pxl_row_in_fullres", "pixel_y", "pxl_row", "imagerow", "row_coord"))
+    }
+    required <- c("barcode", "in_tissue", "array_row", "array_col", "pxl_col_in_fullres", "pxl_row_in_fullres")
+    missing_cols <- setdiff(required, names(dt))
+    if (length(missing_cols)) {
+      stop("Position file missing required columns: ", paste(missing_cols, collapse = ", "))
+    }
+    dt[, `:=`(
+      barcode = as.character(barcode),
+      in_tissue = as.integer(in_tissue),
+      array_row = as.integer(array_row),
+      array_col = as.integer(array_col),
+      pxl_col_in_fullres = as.numeric(pxl_col_in_fullres),
+      pxl_row_in_fullres = as.numeric(pxl_row_in_fullres)
+    )]
+    dt
+  }
+
+  pos_dt <- standardize_positions(pos_raw)
+  if (isTRUE(include_in_tissue)) {
+    pos_dt <- pos_dt[in_tissue == 1L]
+    if (verbose) message("[geneSCOPE::createSCOPE visium] Retained ", nrow(pos_dt), " in-tissue spots")
+  }
+  if (nrow(pos_dt) == 0L) {
+    stop("No spots remain after applying the in_tissue filter.")
+  }
+
+  col_idx <- match(pos_dt$barcode, colnames(counts_mat))
+  if (anyNA(col_idx)) {
+    missing <- pos_dt$barcode[is.na(col_idx)]
+    warning("Removing ", length(missing), " spots absent from the count matrix.")
+    pos_dt <- pos_dt[!is.na(col_idx)]
+    col_idx <- col_idx[!is.na(col_idx)]
+  }
+  if (!length(col_idx)) {
+    stop("No overlap between Visium positions and the count matrix barcodes.")
+  }
+
+  counts_mat <- counts_mat[, col_idx, drop = FALSE]
+  colnames(counts_mat) <- pos_dt$barcode
+
+  nonzero_genes <- Matrix::rowSums(counts_mat) > 0
+  if (!any(nonzero_genes)) {
+    stop("All genes have zero counts across the selected spots.")
+  }
+  if (any(!nonzero_genes)) {
+    counts_mat <- counts_mat[nonzero_genes, , drop = FALSE]
+  }
+  gene_meta <- gene_meta[rownames(counts_mat), , drop = FALSE]
+
+  scalefactor_candidates <- c(
+    file.path(spatial_dir, "scalefactors_json.json"),
+    file.path(spatial_dir, "scalefactors_json_fullres.json")
+  )
+  scalefactor_path <- scalefactor_candidates[file.exists(scalefactor_candidates)][1]
+  if (is.na(scalefactor_path)) {
+    stop("scalefactors_json.json not found under ", spatial_dir)
+  }
+  scalefactors <- jsonlite::fromJSON(scalefactor_path)
+  microns_per_pixel <- scalefactors$microns_per_pixel
+  spot_diameter_um <- scalefactors$spot_diameter_microns
+  spot_diameter_px <- scalefactors$spot_diameter_fullres
+
+  # Derive missing pieces when possible
+  if (is.null(spot_diameter_um) && !is.null(spot_diameter_px) && !is.null(microns_per_pixel)) {
+    spot_diameter_um <- as.numeric(spot_diameter_px) * as.numeric(microns_per_pixel)
+  }
+  if (is.null(microns_per_pixel) && !is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
+    microns_per_pixel <- as.numeric(spot_diameter_um) / as.numeric(spot_diameter_px)
+  }
+
+  # Fallback for outputs lacking microns_per_pixel and spot_diameter_microns
+  if (is.null(microns_per_pixel) && is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
+    default_spot_um <- getOption("geneSCOPE.default_visium_spot_um", 55)
+    microns_per_pixel <- as.numeric(default_spot_um) / as.numeric(spot_diameter_px)
+    spot_diameter_um  <- as.numeric(default_spot_um)
+    if (isTRUE(verbose)) {
+      message(
+        "[geneSCOPE::createSCOPE visium] microns_per_pixel missing; assumed spot_diameter_microns = ",
+        default_spot_um, " um and computed microns_per_pixel = ",
+        format(round(microns_per_pixel, 9), scientific = FALSE)
+      )
     }
   }
 
-  # Filter by filter_genes (if specified)
-  if (!is.null(filter_genes)) {
-    keep_genes <- intersect(keep_genes, filter_genes)
-    if (verbose) {
-      message("[geneSCOPE::addSingleCells]  Filtered to ", length(keep_genes), " genes from target list")
+  if (is.null(microns_per_pixel)) {
+    stop("scalefactors file missing microns_per_pixel; cannot convert coordinates.")
+  }
+  if (is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
+    spot_diameter_um <- as.numeric(spot_diameter_px) * as.numeric(microns_per_pixel)
+  }
+  if (is.null(spot_diameter_um)) {
+    stop("scalefactors file missing spot diameter information.")
+  }
+
+  microns_per_pixel <- as.numeric(microns_per_pixel)
+  base_spot_um <- as.numeric(spot_diameter_um)
+  grid_size_um <- base_spot_um * as.numeric(grid_multiplier)
+
+  pos_dt[, `:=`(
+    x_um = pxl_col_in_fullres * microns_per_pixel,
+    y_um = pxl_row_in_fullres * microns_per_pixel
+  )]
+
+  if (isTRUE(flip_y)) {
+    y_max <- max(pos_dt$y_um, na.rm = TRUE)
+    pos_dt[, y_um := y_max - y_um]
+  }
+
+  centroids_dt <- data.table::data.table(
+    cell = pos_dt$barcode,
+    x = pos_dt$x_um,
+    y = pos_dt$y_um,
+    array_row = pos_dt$array_row,
+    array_col = pos_dt$array_col,
+    in_tissue = pos_dt$in_tissue
+  )
+
+  unique_cols <- sort(unique(pos_dt$array_col))
+  unique_rows <- sort(unique(pos_dt$array_row))
+  col_map <- setNames(seq_along(unique_cols), unique_cols)
+  row_map <- setNames(seq_along(unique_rows), unique_rows)
+
+  grid_dt <- data.table::data.table(
+    grid_id = pos_dt$barcode,
+    gx = as.integer(col_map[as.character(pos_dt$array_col)]),
+    gy = as.integer(row_map[as.character(pos_dt$array_row)]),
+    xmin = pos_dt$x_um - grid_size_um / 2,
+    xmax = pos_dt$x_um + grid_size_um / 2,
+    ymin = pos_dt$y_um - grid_size_um / 2,
+    ymax = pos_dt$y_um + grid_size_um / 2,
+    center_x = pos_dt$x_um,
+    center_y = pos_dt$y_um,
+    width = rep(grid_size_um, nrow(pos_dt)),
+    height = rep(grid_size_um, nrow(pos_dt)),
+    idx = seq_len(nrow(pos_dt)),
+    array_row = pos_dt$array_row,
+    array_col = pos_dt$array_col
+  )
+
+  xbins_eff <- length(unique(grid_dt$gx))
+  ybins_eff <- length(unique(grid_dt$gy))
+
+  counts_tbl <- Matrix::summary(counts_mat)
+  counts_dt <- data.table::data.table(
+    grid_id = colnames(counts_mat)[counts_tbl$j],
+    gene = rownames(counts_mat)[counts_tbl$i],
+    count = as.numeric(counts_tbl$x)
+  )
+  counts_dt <- counts_dt[count > 0]
+
+  gene_meta$platform <- "Visium"
+
+  fmt_len <- formatC(grid_size_um, format = "fg", digits = 6)
+  fmt_len <- trimws(fmt_len)
+  fmt_len <- sub("\\.?0+$", "", fmt_len)
+  grid_name <- paste0("grid", fmt_len)
+
+  scope_obj <- new("scope_object",
+    coord = list(centroids = centroids_dt),
+    grid = list(),
+    meta.data = gene_meta,
+    cells = list(counts = counts_mat),
+    stats = list(),
+    density = list()
+  )
+
+  ## --- infer hex orientation (flat-top vs pointy-top) -----------------
+  infer_hex_orientation <- function(cent, tol_deg = 15) {
+    cn <- c("x","y","array_row","array_col")
+    if (!all(cn %in% names(cent))) return(list(orientation = NA_character_, horiz_frac = NA_real_, vert_frac = NA_real_, tol_deg = tol_deg))
+    dt <- data.table::as.data.table(cent)[, .(x, y, array_row = as.integer(array_row), array_col = as.integer(array_col))]
+    # helper to join neighbor at offset (dr, dc)
+    get_pairs <- function(dr, dc) {
+      a <- dt
+      b <- data.table::copy(dt)
+      b[, `:=`(array_row_nb = array_row - dr, array_col_nb = array_col - dc, x_nb = x, y_nb = y)]
+      m <- merge(a, b, by.x = c("array_row", "array_col"), by.y = c("array_row_nb", "array_col_nb"), all = FALSE)
+      if (!nrow(m)) return(NULL)
+      m[, .(dx = x_nb - x, dy = y_nb - y)]
     }
+    edges <- data.table::rbindlist(list(
+      get_pairs(0, 1),   # E
+      get_pairs(1, 0),   # S (vertical-ish in pointy-top)
+      get_pairs(1, 1),   # SE/NW
+      get_pairs(1, -1)   # SW/NE
+    ), use.names = TRUE, fill = TRUE)
+    if (is.null(edges) || !nrow(edges)) return(list(orientation = NA_character_, horiz_frac = NA_real_, vert_frac = NA_real_, tol_deg = tol_deg))
+    theta <- abs(atan2(edges$dy, edges$dx) * 180 / pi)
+    horiz <- pmin(theta, 180 - theta) <= tol_deg
+    vert  <- abs(theta - 90) <= tol_deg
+    hfrac <- mean(horiz, na.rm = TRUE)
+    vfrac <- mean(vert,  na.rm = TRUE)
+    list(orientation = ifelse(hfrac >= vfrac, "flat-top", "pointy-top"), horiz_frac = hfrac, vert_frac = vfrac, tol_deg = tol_deg)
   }
+  ori <- infer_hex_orientation(centroids_dt, tol_deg = 15)
 
-  if (length(keep_genes) == 0) {
-    stop("No genes remain after filtering. Please check exclude_prefix and filter_genes parameters.")
-  }
-
-  # Apply gene filtering to the matrix
-  counts_raw <- counts_raw[keep_genes, , drop = FALSE]
+  scope_obj@grid[[grid_name]] <- list(
+    grid_info = grid_dt,
+    counts = counts_dt,
+    grid_length = grid_size_um,
+    xbins_eff = xbins_eff,
+    ybins_eff = ybins_eff,
+    spot_diameter_um = base_spot_um,
+    microns_per_pixel = microns_per_pixel,
+    visium_orientation = ori$orientation,
+    visium_orientation_horiz_frac = ori$horiz_frac,
+    visium_orientation_vert_frac  = ori$vert_frac,
+    visium_orientation_tol_deg    = ori$tol_deg
+  )
 
   if (verbose) {
     message(
-      "[geneSCOPE::addSingleCells]  Final count: ", nrow(counts_raw), "/", length(all_genes), " genes"
+      "[geneSCOPE::createSCOPE visium] scope_object created with ",
+      nrow(centroids_dt), " spots and grid_length = ", round(grid_size_um, 3), " µm"
     )
   }
 
-  ## ------------------------------------------------------------------ 3
-  if (filter_barcodes) {
-    keep_cells <- keep_cells_target[keep_cells_target %in% colnames(counts_raw)]
-    if (!length(keep_cells)) {
-      stop("Centroid cell IDs do not overlap with H5 data.")
-    }
+  scope_obj
+}
 
-    if (verbose) message("[geneSCOPE::addSingleCells]  Cell overlap: ", length(keep_cells), "/", length(keep_cells_target))
+#' @title Auto-detect data type and create scope_object
+#' @description
+#'   Wrapper that inspects a data directory and dispatches to one of:
+#'   \code{createSCOPE_xenium()}, \code{createSCOPE_cosmx()}, or
+#'   \code{.seurat_visium_to_scope()} based on characteristic files.
+#'   For Visium, it returns the scope_object by default (and the Seurat
+#'   object if \code{return_both=TRUE}).
+#' @param data_dir Character. Directory containing a Xenium, CosMx, or Visium run.
+#'        As a convenience, you may also pass \code{xenium_dir}, \code{cosmx_root},
+#'        or \code{visium_dir} via \code{...}; the first non-NULL will be used.
+#' @param prefer Character. One of \code{"auto"}, \code{"xenium"}, \code{"cosmx"},
+#'        \code{"visium"}. When \code{"auto"}, detection order is Xenium → Visium → CosMx.
+#' @param return_both Logical. For Visium only, return list(scope_obj, seurat) when TRUE.
+#' @param ... Additional parameters forwarded to the chosen builder. Note that
+#'        Xenium/CosMx require \code{grid_length}; Visium does not.
+#' @return A scope_object (or a list for Visium when \code{return_both=TRUE}).
+#' @export
+createSCOPE <- function(data_dir = NULL,
+                        prefer = c("auto", "xenium", "cosmx", "visium"),
+                        return_both = FALSE,
+                        verbose = TRUE,
+                        sctransform = TRUE,
+                        ...) {
+  dots <- list(...)
+  if (is.null(dots$verbose)) dots$verbose <- verbose
+  # Backward-compatible aliasing
+  if (is.null(data_dir)) {
+    if (!is.null(dots$xenium_dir)) data_dir <- dots$xenium_dir
+    else if (!is.null(dots$visium_dir)) data_dir <- dots$visium_dir
+    else if (!is.null(dots$cosmx_root)) data_dir <- dots$cosmx_root
+  }
+  if (is.null(data_dir)) stop("Please provide data_dir (or xenium_dir/visium_dir/cosmx_root).")
+  if (!dir.exists(data_dir)) stop("Directory not found: ", data_dir)
 
-    counts <- counts_raw[, keep_cells, drop = FALSE]
-  } else {
-    # Keep all cells from the HDF5 matrix
-    counts <- counts_raw
-    if (verbose) message("[geneSCOPE::addSingleCells]  Keeping all ", ncol(counts), " cells from HDF5 matrix")
+  prefer <- match.arg(prefer)
+
+  is_xenium <- function(d) {
+    file.exists(file.path(d, "transcripts.parquet")) ||
+      file.exists(file.path(d, "cells.parquet"))
+  }
+  is_visium <- function(d) {
+    sp <- file.path(d, "spatial")
+    dir.exists(sp) && (
+      file.exists(file.path(d, "filtered_feature_bc_matrix.h5")) ||
+      dir.exists(file.path(d, "filtered_feature_bc_matrix")) ||
+      dir.exists(file.path(d, "raw_feature_bc_matrix")) ||
+      file.exists(file.path(sp, "scalefactors_json.json"))
+    )
+  }
+  is_cosmx <- function(d) {
+    ff <- file.path(d, "flatFiles")
+    dec <- file.path(d, "DecodedFiles")
+    dir.exists(ff) || dir.exists(dec)
   }
 
-  ## ------------------------------------------------------------------ 4
-  scope_obj@cells <- list(counts = counts)
+  pick <- switch(prefer,
+    xenium = "xenium",
+    visium = "visium",
+    cosmx  = "cosmx",
+    auto   = {
+      if (is_xenium(data_dir)) "xenium"
+      else if (is_visium(data_dir)) "visium"
+      else if (is_cosmx(data_dir)) "cosmx"
+      else stop("Unable to detect data type under ", data_dir,
+                 "; expected Xenium (parquet), Visium (spatial/ + matrix), or CosMx (flatFiles/).")
+    }
+  )
 
-  if (verbose) message("[geneSCOPE::addSingleCells] Cell matrix integration completed")
-  invisible(scope_obj)
+  # Clean conflicting aliases in dots
+  dots$xenium_dir <- NULL; dots$visium_dir <- NULL; dots$cosmx_root <- NULL
+
+  if (pick == "xenium") {
+    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE xenium] Dispatching to createSCOPE_xenium() …")
+    if (is.null(dots$grid_length)) stop("grid_length is required for Xenium. Pass grid_length= ...")
+    dots$xenium_dir <- data_dir
+    return(do.call(createSCOPE_xenium, dots))
+  }
+  if (pick == "cosmx") {
+    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE cosmx] Dispatching to createSCOPE_cosmx() …")
+    if (is.null(dots$grid_length)) stop("grid_length is required for CosMx. Pass grid_length= ...")
+    dots$cosmx_root <- data_dir
+    return(do.call(createSCOPE_cosmx, dots))
+  }
+
+  # Visium → choose Seurat-first (SCT) or direct builder based on sctransform
+  dots$visium_dir <- data_dir
+  if (isTRUE(sctransform)) {
+    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Dispatching to Seurat pipeline (SCTransform=TRUE) …")
+    # Ensure the downstream function gets the flag
+    if (is.null(dots$run_sctransform)) dots$run_sctransform <- TRUE
+    res <- do.call(.seurat_visium_to_scope, dots)
+    if (isTRUE(return_both)) res else res$scope_obj
+  } else {
+    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Dispatching to createSCOPE_visium (SCTransform=FALSE) …")
+    obj <- do.call(createSCOPE_visium, dots)
+    if (isTRUE(return_both)) list(scope_obj = obj, seurat = NULL) else obj
+  }
 }
