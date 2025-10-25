@@ -333,9 +333,23 @@
         stop("Segmentation file not found: ", seg_file)
     }
 
-    seg_dt <- data.table::as.data.table(
-        arrow::read_parquet(seg_file)
-    )[, .(cell = cell_id, x = vertex_x, y = vertex_y, label_id)]
+    seg_raw <- data.table::as.data.table(arrow::read_parquet(seg_file))
+    # 若存在 fov 列：构造唯一键 key = paste(cell_id, fov)，并把 label_id 也更新为该唯一键
+    if ("fov" %in% names(seg_raw)) {
+        seg_dt <- seg_raw[, .(
+            cell     = paste0(as.character(cell_id), "_", as.character(fov)),
+            x        = vertex_x,
+            y        = vertex_y,
+            label_id = paste0(as.character(cell_id), "_", as.character(fov))
+        )]
+    } else {
+        seg_dt <- seg_raw[, .(
+            cell     = as.character(cell_id),
+            x        = vertex_x,
+            y        = vertex_y,
+            label_id = as.character(label_id)
+        )]
+    }
 
     if (flip_y) {
         if (is.null(y_max)) {
@@ -504,4 +518,3 @@
     }
     data.frame(gene = kept_genes, cluster = members, p_in = p_in, p_best_out = p_best_out, w_in = w_in, stringsAsFactors = FALSE)
 }
-
