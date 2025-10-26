@@ -240,6 +240,7 @@ computeL <- function(scope_obj,
 
     L <- res$Lmat
     X_full <- res$X_full
+    X_used <- res$X_used
     W <- res$W
     grid_inf <- res$grid_info
     gname <- res$grid_name
@@ -303,10 +304,17 @@ computeL <- function(scope_obj,
         while (!perm_success && perm_cores >= 1) {
             if (verbose && perm_attempt > 1) message("[geneSCOPE::computeL]  Retry #", perm_attempt, " with ", perm_cores, " cores")
 
+            # Sanity check to avoid C++ OOB when a gene subset is used
+            if (ncol(X_used) != nrow(L_reg) || ncol(X_used) != ncol(L_reg)) {
+                stop(sprintf("Permutation input mismatch: ncol(X_used)=%d but L_ref is %dx%d",
+                    ncol(X_used), nrow(L_reg), ncol(L_reg)))
+            }
+
             perm_result <- tryCatch(
                 {
                     t_start <- Sys.time()
-                    p_result <- .leeL_perm_block(X_full, W, L_reg,
+                    # Use X_used to match the dimensions of L_reg when a gene subset is used
+                    p_result <- .leeL_perm_block(X_used, W, L_reg,
                         block_id   = block_id,
                         perms      = perms,
                         block_size = min(block_size, 32),
@@ -644,22 +652,11 @@ computeL <- function(scope_obj,
             bytes_L, mem_limit_GB
         ))
 
-        bm_file <- file.path(
-            backing_path,
-            sprintf("LeeL_%s.bin", grid_name)
-        )
-        bm_desc <- file.path(
-            backing_path,
-            sprintf("LeeL_%s.desc", grid_name)
-        )
-
-        ## *** Key change: init=NULL, dimnames=NULL ***
-        L_bm <- bigmemory::filebacked.big.matrix(
+        ## Use in-memory shared big.matrix to avoid unsupported 'shared' arg on filebacked in some versions
+        ## Note: this stores the chunked result in RAM. Ensure sufficient memory is available.
+        L_bm <- bigmemory::big.matrix(
             nrow = n_g, ncol = n_g, type = "double",
-            backingfile = basename(bm_file),
-            descriptorfile = basename(bm_desc),
-            backingpath = backing_path,
-            init = NULL, # ← do not initialize full matrix
+            init = NA_real_,
             dimnames = NULL,
             shared = TRUE
         )
