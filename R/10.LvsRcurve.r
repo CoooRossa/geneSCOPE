@@ -561,6 +561,7 @@ getTopLvsR <- function(scope_obj,
                        grid_name,
                        pear_level = c("cell", "grid"),
                        lee_stats_layer = "LeeStats_Xz",
+                       expr_layer = NULL,
                        pear_range = c(-1, 1),
                        L_range = c(-1, 1),
                        top_n = 10,
@@ -813,10 +814,25 @@ getTopLvsR <- function(scope_obj,
     message("[geneSCOPE::getTopLvsR]   Multiple testing correction: ", p_adj_mode)
   }
   g_layer <- .selectGridLayer(scope_obj, grid_name)
-  Xz <- g_layer$Xz
+  # Infer expression layer from lee_stats_layer if not specified
+  if (is.null(expr_layer) || !nzchar(expr_layer)) {
+    inferred <- sub("^LeeStats_", "", lee_stats_layer)
+    expr_layer <- if (identical(inferred, lee_stats_layer)) "Xz" else inferred
+    if (verbose) message("[geneSCOPE::getTopLvsR] Using expr_layer='", expr_layer, "' inferred from lee_stats_layer")
+  }
+  Xcand <- g_layer[[expr_layer]]
+  if (is.null(Xcand) && expr_layer != "Xz") Xcand <- g_layer$Xz
+  Xz <- Xcand
   W <- g_layer$W
   grid_info <- g_layer$grid_info
-  if (is.null(Xz) || is.null(W)) stop("Grid layer missing Xz/W")
+  if (is.null(Xz)) stop("Grid layer missing expression layer '", expr_layer, "' and 'Xz'")
+  if (is.null(W)) stop("Grid layer missing spatial weights W; run computeWeights() first")
+  # Align rows of Xz to grid_info if possible
+  if (!is.null(rownames(Xz)) && !is.null(grid_info$grid_id)) {
+    ord <- match(grid_info$grid_id, rownames(Xz))
+    if (!any(is.na(ord))) Xz <- Xz[ord, , drop = FALSE]
+  }
+  if (!is.matrix(Xz)) Xz <- as.matrix(Xz)
   genes_top <- unique(c(sel$gene1, sel$gene2))
   gene_map <- match(genes_top, colnames(Xz))
   if (any(is.na(gene_map))) stop("Selected genes not found in Xz")
