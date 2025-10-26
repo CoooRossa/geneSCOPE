@@ -115,9 +115,10 @@ computeCorrelation <- function(scope_obj,
   }
 
   n_genes <- nrow(expr_mat)
-  n_cells <- ncol(expr_mat)
+  n_samples <- ncol(expr_mat)
+  sample_label <- if (level == "grid") "spots" else "cells"
 
-  if (verbose) message("[geneSCOPE::computeCorrelation] Data dimensions: ", n_genes, " genes × ", n_cells, " cells")
+  if (verbose) message("[geneSCOPE::computeCorrelation] Data dimensions: ", n_genes, " genes × ", n_samples, " ", sample_label)
 
   ## ---- Memory check and chunking strategy -------------------------------
   # Estimate correlation matrix size (n_genes × n_genes × 8 bytes)
@@ -200,7 +201,7 @@ computeCorrelation <- function(scope_obj,
       fdr_matrix <- matrix(1, nrow = nrow(cor_matrix), ncol = ncol(cor_matrix))
     } else {
       # Compute two-tailed p-values (only for valid values)
-      n_samples <- n_cells
+      n_samples <- n_samples
       df <- n_samples - 2
 
       if (df > 0) {
