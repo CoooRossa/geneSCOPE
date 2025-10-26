@@ -1338,6 +1338,41 @@ createSCOPE_visium <- function(visium_dir,
     ybins_eff = ybins_eff,
     spot_diameter_um = base_spot_um,
     microns_per_pixel = microns_per_pixel,
+    image_info = {
+      image_candidates_hires <- c(
+        file.path(spatial_dir, "aligned_tissue_image.jpg"),
+        file.path(spatial_dir, "tissue_hires_image.png"),
+        file.path(spatial_dir, "tissue_hires_image.jpg")
+      )
+      image_candidates_lowres <- c(
+        file.path(spatial_dir, "tissue_lowres_image.png"),
+        file.path(spatial_dir, "detected_tissue_image.jpg")
+      )
+      hires_path <- image_candidates_hires[file.exists(image_candidates_hires)][1]
+      lowres_path <- image_candidates_lowres[file.exists(image_candidates_lowres)][1]
+      get_img_dim <- function(p) {
+        if (is.na(p)) return(c(NA_integer_, NA_integer_))
+        ext <- tolower(tools::file_ext(p))
+        dims <- c(NA_integer_, NA_integer_)
+        try({
+          if (ext %in% c("png") && requireNamespace("png", quietly = TRUE)) {
+            a <- png::readPNG(p); dims <- c(dim(a)[2], dim(a)[1])
+          } else if (ext %in% c("jpg","jpeg") && requireNamespace("jpeg", quietly = TRUE)) {
+            a <- jpeg::readJPEG(p); dims <- c(dim(a)[2], dim(a)[1])
+          }
+        }, silent = TRUE)
+        dims
+      }
+      list(
+        hires_path = if (is.na(hires_path)) NULL else hires_path,
+        lowres_path = if (is.na(lowres_path)) NULL else lowres_path,
+        hires_dim_px = get_img_dim(hires_path),
+        lowres_dim_px = get_img_dim(lowres_path),
+        positions_path = pos_path,
+        scalefactors_path = sf_path,
+        y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
+      )
+    },
     visium_orientation = ori$orientation,
     visium_orientation_horiz_frac = ori$horiz_frac,
     visium_orientation_vert_frac  = ori$vert_frac,
@@ -1790,6 +1825,48 @@ createSCOPE <- function(data_dir = NULL,
     visium_orientation_horiz_frac = ori$horiz_frac,
     visium_orientation_vert_frac  = ori$vert_frac,
     visium_orientation_tol_deg    = ori$tol_deg
+  )
+  ## ---- 4.x Store image paths and metadata for overlay -------------------
+  image_candidates_hires <- c(
+    file.path(spatial_dir, "aligned_tissue_image.jpg"),
+    file.path(spatial_dir, "tissue_hires_image.png"),
+    file.path(spatial_dir, "tissue_hires_image.jpg")
+  )
+  image_candidates_lowres <- c(
+    file.path(spatial_dir, "tissue_lowres_image.png"),
+    file.path(spatial_dir, "detected_tissue_image.jpg")
+  )
+  hires_path <- image_candidates_hires[file.exists(image_candidates_hires)][1]
+  lowres_path <- image_candidates_lowres[file.exists(image_candidates_lowres)][1]
+  get_img_dim <- function(p) {
+    if (is.na(p)) return(c(NA_integer_, NA_integer_))
+    ext <- tolower(tools::file_ext(p))
+    dims <- c(NA_integer_, NA_integer_)
+    try({
+      if (ext %in% c("png")) {
+        if (requireNamespace("png", quietly = TRUE)) {
+          a <- png::readPNG(p)
+          dims <- c(dim(a)[2], dim(a)[1]) # width, height
+        }
+      } else if (ext %in% c("jpg","jpeg")) {
+        if (requireNamespace("jpeg", quietly = TRUE)) {
+          a <- jpeg::readJPEG(p)
+          dims <- c(dim(a)[2], dim(a)[1])
+        }
+      }
+    }, silent = TRUE)
+    dims
+  }
+  hires_dim <- get_img_dim(hires_path)
+  lowres_dim <- get_img_dim(lowres_path)
+  scope_obj@grid[[grid_name]]$image_info <- list(
+    hires_path = if (is.na(hires_path)) NULL else hires_path,
+    lowres_path = if (is.na(lowres_path)) NULL else lowres_path,
+    hires_dim_px = hires_dim,
+    lowres_dim_px = lowres_dim,
+    positions_path = pos_path,
+    scalefactors_path = sf_path,
+    y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
   )
   if (!is.null(sct_mat)) {
     scope_obj@grid[[grid_name]]$SCT <- t(sct_mat)
