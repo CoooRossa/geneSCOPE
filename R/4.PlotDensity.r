@@ -32,6 +32,10 @@ plotDensity <- function(scope_obj,
                         palette2 = "#4753f8",
                         alpha1 = 0.5,
                         alpha2 = 0.5,
+                        overlay_image = FALSE,
+                        image_path = NULL,
+                        image_alpha = 0.6,
+                        image_choice = c("auto", "hires", "lowres"),
                         seg_type = c("cell", "nucleus", "both"),
                         colour_cell = "black",
                         colour_nucleus = "#3182bd",
@@ -46,6 +50,7 @@ plotDensity <- function(scope_obj,
                         max.cutoff2 = 1,
                         legend_digits = 1) {
     seg_type <- match.arg(seg_type)
+    image_choice <- match.arg(image_choice)
     accuracy_val <- 1 / (10^legend_digits)
 
     ## ------------------------------------------------------------------ 1
@@ -112,7 +117,59 @@ plotDensity <- function(scope_obj,
     }
 
     library(ggplot2)
-    p <- ggplot() +
+    p <- ggplot()
+
+    ## ------------------------------------------------------------------ 3.0
+    ## optional background image overlay (auto-detect from grid layer)
+    if (isTRUE(overlay_image)) {
+        img_info <- g_layer$image_info
+        mpp <- g_layer$microns_per_pixel
+        hires_path <- if (!is.null(img_info)) img_info$hires_path else NULL
+        lowres_path <- if (!is.null(img_info)) img_info$lowres_path else NULL
+        if (!is.null(image_path)) {
+            hires_path <- image_path
+            lowres_path <- NULL
+        }
+        sel_path <- switch(image_choice,
+            auto = if (!is.null(hires_path)) hires_path else lowres_path,
+            hires = hires_path,
+            lowres = lowres_path
+        )
+        if (!is.null(sel_path) && file.exists(sel_path) && is.finite(mpp)) {
+            ext <- tolower(tools::file_ext(sel_path))
+            img <- NULL
+            if (ext %in% c("png") && requireNamespace("png", quietly = TRUE)) {
+                img <- png::readPNG(sel_path)
+            } else if (ext %in% c("jpg","jpeg") && requireNamespace("jpeg", quietly = TRUE)) {
+                img <- jpeg::readJPEG(sel_path)
+            }
+            if (!is.null(img)) {
+                # image size (width x height) in um
+                wpx <- dim(img)[2]; hpx <- dim(img)[1]
+                w_um <- as.numeric(wpx) * as.numeric(mpp)
+                h_um <- as.numeric(hpx) * as.numeric(mpp)
+                y_origin <- if (!is.null(img_info$y_origin)) img_info$y_origin else "top-left"
+                # If grid was not flipped (top-left), flip image vertically by swapping ymin/ymax
+                if (identical(y_origin, "top-left")) {
+                    p <- p + annotation_raster(img,
+                        xmin = 0, xmax = w_um,
+                        ymin = h_um, ymax = 0,
+                        interpolate = TRUE,
+                        alpha = image_alpha
+                    )
+                } else {
+                    p <- p + annotation_raster(img,
+                        xmin = 0, xmax = w_um,
+                        ymin = 0, ymax = h_um,
+                        interpolate = TRUE,
+                        alpha = image_alpha
+                    )
+                }
+            }
+        }
+    }
+
+    p <- p +
         geom_tile(
             data = tile_df(heat1),
             aes(x = x, y = y, width = w, height = h, fill = d),
