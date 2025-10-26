@@ -397,6 +397,8 @@ computeLvsRCurve <- function(scope_obj,
 #' @param grid_name   Character. Grid sub-layer name.
 #' @param pear_level  Character, \code{"cell"} or \code{"grid"}; which
 #'                    Pearson matrix to use.
+#' @param lee_stats_layer Character. Name of the Lee's L stats layer to use
+#'                    (default "LeeStats_Xz").
 #' @param delta_top_n Integer. How many extreme \code{Delta} pairs to label
 #'                    on the plot.
 #' @param flip        Logical. If \code{TRUE}, put Pearson on the x-axis and
@@ -413,12 +415,13 @@ computeLvsRCurve <- function(scope_obj,
 plotLvsR <- function(scope_obj,
                      grid_name,
                      pear_level = c("cell", "grid"),
+                     lee_stats_layer = "LeeStats_Xz",
                      delta_top_n = 10,
                      flip = TRUE) {
   pear_level <- match.arg(pear_level)
 
   ## ---- 1. Lee's L and Pearson r ------------------------------------------------
-  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = "LeeStats_Xz")
+  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = lee_stats_layer)
   r_mat <- .getPearsonMatrix(scope_obj, grid_name,
     level = pear_level
   )
