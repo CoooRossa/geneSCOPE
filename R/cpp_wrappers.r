@@ -253,3 +253,46 @@ delta_perm_pairs <- function(Xz, W, idx_mat, gene_pairs, delta_ref,
         }
     }
 }
+
+# Thin R wrappers for Visium-specific C++ accelerators
+
+#' Sparse × dense multiply: WX = W %*% X
+#' @param X n×S numeric matrix
+#' @param W n×n dgCMatrix
+#' @param n_threads Integer, OpenMP threads
+#' @param precision "float32" or "float64"
+#' @keywords internal
+spmm_dgc_dense <- function(X, W, n_threads = 1L, precision = c("float32", "float64")) {
+    precision <- match.arg(precision)
+    if (precision == "float32") {
+        .Call(`_geneSCOPE_spmm_dgc_dense_f32`, X, W, as.integer(n_threads), PACKAGE = "geneSCOPE")
+    } else {
+        .Call(`_geneSCOPE_spmm_dgc_dense_f64`, X, W, as.integer(n_threads), PACKAGE = "geneSCOPE")
+    }
+}
+
+#' Sign random projection LSH: per-gene bucket IDs (hex) per table
+#' @param X n×S numeric matrix
+#' @param bits Bits per table b (<= 60)
+#' @param n_tables Number of tables L
+#' @param seed Random seed
+#' @param n_threads Threads
+#' @return Character matrix S×L, each entry like "0xABCD..." (64-bit bucket)
+#' @keywords internal
+rp_sign_bits <- function(X, bits = 12L, n_tables = 6L, seed = 1L, n_threads = 1L) {
+    .Call(`_geneSCOPE_rp_sign_bits`, X, as.integer(bits), as.integer(n_tables), as.integer(seed), as.integer(n_threads), PACKAGE = "geneSCOPE")
+}
+
+#' Compute L on candidate CSR and keep per-row Top-K
+#' @param X n×S matrix
+#' @param WX n×S matrix (W%*%X)
+#' @param row_ptr Integer vector length S+1 (1-based CSR start/end)
+#' @param indices Integer vector (1-based column indices)
+#' @param K_keep Keep Top-K per row
+#' @param n_threads Threads
+#' @return list(row_ptr, indices, values)
+#' @keywords internal
+leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threads = 1L) {
+    .Call(`_geneSCOPE_leeL_topk_candidates`, X, WX, as.integer(row_ptr), as.integer(indices), as.integer(K_keep), as.integer(n_threads), PACKAGE = "geneSCOPE")
+}
+
