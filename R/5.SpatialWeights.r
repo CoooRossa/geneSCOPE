@@ -1,4 +1,4 @@
-#' 5.SpatialWeights.r (2025-10-26)
+#' 5.SpatialWeights.r (2025-06-27)
 #' @title Compute Spatial Weight Matrix and listw for a Grid Layer
 #'
 #' @description
@@ -115,9 +115,21 @@ computeWeights <- function(scope_obj,
     )
   }
 
-  ## ---------- 1. Auto-detect topology ----------------------------------------
+  ## ---------- 1. Auto-detect / force topology ---------------------------------
   chosen_topology <- "queen"
   gi <- data.table::as.data.table(grid_info)
+
+  # Detect platform tag (optionally stored in meta.data or stats) to force hex for Visium
+  is_visium <- FALSE
+  if (!is.null(scope_obj@meta.data) && nrow(scope_obj@meta.data) > 0L &&
+      "platform" %in% names(scope_obj@meta.data)) {
+    plat_vals <- unique(as.character(scope_obj@meta.data$platform))
+    is_visium <- any(grepl("visium", plat_vals, ignore.case = TRUE))
+  }
+  if (!is_visium && !is.null(scope_obj@stats$platform)) {
+    is_visium <- grepl("visium", as.character(scope_obj@stats$platform), ignore.case = TRUE)
+  }
+
   if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
     warning("[geneSCOPE::computeWeights] grid_info lacks centre coordinates; using Queen adjacency.")
   } else {
@@ -141,7 +153,13 @@ computeWeights <- function(scope_obj,
         detect_by_angle <- TRUE
       }
     }
-    # 1b) Fallback: distance ratio heuristic (only if angle not decisive)
+    # If platform is Visium, force hex even when angle evidence is weak
+    if (is_visium && !detect_by_angle) {
+      chosen_topology <- "hex-oddr"  # default to flat-top; will be refined by angle if possible
+      detect_by_angle <- TRUE
+    }
+
+    # 1b) Fallback: distance ratio heuristic (only if not forced and angle not decisive)
     if (!detect_by_angle) {
       neighbor_pairs <- function(dr, dc) {
         a2 <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
@@ -160,10 +178,11 @@ computeWeights <- function(scope_obj,
           if (horiz >= vert) "hex-oddr" else "hex-oddq"
         } else "hex-oddr"
       } else {
-        chosen_topology <- "queen"
+        chosen_topology <- if (is_visium) "hex-oddr" else "queen"
       }
     }
-    if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology)
+    if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology,
+                         if (is_visium) " (forced for Visium)" else "")
   }
   
 
