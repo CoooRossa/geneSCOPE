@@ -25,6 +25,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// grid_nb_hex_omp
+List grid_nb_hex_omp(const int nrow, const int ncol, const bool oddr);
+RcppExport SEXP _geneSCOPE_grid_nb_hex_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddr(oddrSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_hex_omp(nrow, ncol, oddr));
+    return rcpp_result_gen;
+END_RCPP
+}
+// grid_nb_hexq_omp
+List grid_nb_hexq_omp(const int nrow, const int ncol, const bool oddq);
+RcppExport SEXP _geneSCOPE_grid_nb_hexq_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddqSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddq(oddqSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_hexq_omp(nrow, ncol, oddq));
+    return rcpp_result_gen;
+END_RCPP
+}
 // listw_B_omp
 SEXP listw_B_omp(const List nb);
 RcppExport SEXP _geneSCOPE_listw_B_omp(SEXP nbSEXP) {
@@ -338,6 +364,8 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_grid_nb_omp", (DL_FUNC) &_geneSCOPE_grid_nb_omp, 3},
+    {"_geneSCOPE_grid_nb_hex_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hex_omp, 3},
+    {"_geneSCOPE_grid_nb_hexq_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hexq_omp, 3},
     {"_geneSCOPE_listw_B_omp", (DL_FUNC) &_geneSCOPE_listw_B_omp, 1},
     {"_geneSCOPE_grid_nb", (DL_FUNC) &_geneSCOPE_grid_nb, 3},
     {"_geneSCOPE_nb2mat", (DL_FUNC) &_geneSCOPE_nb2mat, 1},
