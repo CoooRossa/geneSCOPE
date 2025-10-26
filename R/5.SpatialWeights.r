@@ -1,4 +1,4 @@
-#' 5.SpatialWeights.r (2025-06-27)
+#' 5.SpatialWeights.r (2025-10-26)
 #' @title Compute Spatial Weight Matrix and listw for a Grid Layer
 #'
 #' @description
@@ -116,60 +116,55 @@ computeWeights <- function(scope_obj,
   }
 
   ## ---------- 1. Auto-detect topology ----------------------------------------
-  chosen_topology <- "auto"
-    # Use centre coordinates to compare typical neighbour spacings along
-    # grid axes; if ~equal → square, else → hex. Then infer flat vs pointy.
-    gi <- data.table::as.data.table(grid_info)
-    if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
-      warning("[geneSCOPE::computeWeights] auto topology requested but grid_info lacks centre coordinates; falling back to 'queen'.")
-      chosen_topology <- "queen"
-    } else {
-      neighbor_pairs <- function(dr, dc) {
-        a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
-        b <- data.table::copy(a)
-        b[, `:=`(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
-        m <- merge(a, b, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
-        if (!nrow(m)) return(numeric())
-        sqrt((m$cx_nb - m$cx)^2 + (m$cy_nb - m$cy)^2)
+  chosen_topology <- "queen"
+  gi <- data.table::as.data.table(grid_info)
+  if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
+    warning("[geneSCOPE::computeWeights] grid_info lacks centre coordinates; using Queen adjacency.")
+  } else {
+    # 1a) Angle-based detection first (more reliable for hex): build neighbour vectors
+    a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
+    mk <- function(dr, dc) {
+      b <- a[, .(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
+      m <- merge(a, b, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
+      if (!nrow(m)) return(NULL)
+      data.table::data.table(dx = m$cx_nb - m$cx, dy = m$cy_nb - m$cy)
+    }
+    edges_xy <- data.table::rbindlist(list(mk(0,1), mk(1,0), mk(1,1), mk(1,-1)), use.names = TRUE, fill = TRUE)
+    detect_by_angle <- FALSE
+    if (!is.null(edges_xy) && nrow(edges_xy)) {
+      th <- abs(atan2(edges_xy$dy, edges_xy$dx) * 180 / pi)
+      horiz <- mean(pmin(th, 180 - th) <= 15, na.rm = TRUE)
+      vert  <- mean(abs(th - 90) <= 15, na.rm = TRUE)
+      # If either horizontal or vertical alignment is clearly present, treat as hex
+      if (is.finite(horiz) && is.finite(vert) && max(horiz, vert) >= 0.15) {
+        chosen_topology <- if (horiz >= vert) "hex-oddr" else "hex-oddq"
+        detect_by_angle <- TRUE
       }
-      dE <- neighbor_pairs(0, 1) # along columns (E/W)
-      dS <- neighbor_pairs(1, 0) # along rows   (N/S)
+    }
+    # 1b) Fallback: distance ratio heuristic (only if angle not decisive)
+    if (!detect_by_angle) {
+      neighbor_pairs <- function(dr, dc) {
+        a2 <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
+        b2 <- a2[, .(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
+        m2 <- merge(a2, b2, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
+        if (!nrow(m2)) return(numeric())
+        sqrt((m2$cx_nb - m2$cx)^2 + (m2$cy_nb - m2$cy)^2)
+      }
+      dE <- neighbor_pairs(0, 1)
+      dS <- neighbor_pairs(1, 0)
       medE <- if (length(dE)) stats::median(dE) else NA_real_
       medS <- if (length(dS)) stats::median(dS) else NA_real_
-      if (is.finite(medE) && is.finite(medS)) {
-        if (abs(medE/medS - 1) <= 0.1) {
-          chosen_topology <- "queen" # square
-        } else {
-          # Hex: decide flat-top vs pointy-top by angle concentration
-          edges_xy <- {
-            # sample four primary offsets to avoid duplication
-            e1 <- neighbor_pairs(0, 1)
-            e2 <- neighbor_pairs(1, 0)
-            # For angles we need dx,dy. Build once with merges.
-            a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
-            mk <- function(dr, dc) {
-              b <- data.table::copy(a)
-              b[, `:=`(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
-              m <- merge(a, b, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
-              if (!nrow(m)) return(NULL)
-              data.table::data.table(dx = m$cx_nb - m$cx, dy = m$cy_nb - m$cy)
-            }
-            data.table::rbindlist(list(mk(0,1), mk(1,0), mk(1,1), mk(1,-1)), use.names = TRUE, fill = TRUE)
-          }
-          if (is.null(edges_xy) || !nrow(edges_xy)) {
-            chosen_topology <- "hex-oddr"
-          } else {
-            th <- abs(atan2(edges_xy$dy, edges_xy$dx) * 180 / pi)
-            horiz <- mean(pmin(th, 180 - th) <= 15, na.rm = TRUE)
-            vert  <- mean(abs(th - 90) <= 15, na.rm = TRUE)
-            chosen_topology <- if (horiz >= vert) "hex-oddr" else "hex-oddq"
-          }
-        }
+      if (is.finite(medE) && is.finite(medS) && abs(medE/medS - 1) > 0.1) {
+        # Distances differ → assume hex; pick flat/pointy by angle if available else default flat-top
+        chosen_topology <- if (exists("horiz") && exists("vert") && is.finite(horiz) && is.finite(vert)) {
+          if (horiz >= vert) "hex-oddr" else "hex-oddq"
+        } else "hex-oddr"
       } else {
         chosen_topology <- "queen"
       }
-      if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology)
     }
+    if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology)
+  }
   
 
   ## ---------- 2. Full-grid neighbourhood per (possibly auto) topology ---------
