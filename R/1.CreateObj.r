@@ -1742,8 +1742,11 @@ createSCOPE <- function(data_dir = NULL,
     dt <- data.table::as.data.table(cent)[, .(x, y, array_row = as.integer(array_row), array_col = as.integer(array_col))]
     get_pairs <- function(dr, dc) {
       a <- dt
-      b <- data.table::copy(dt)
-      b[, `:=`(array_row_nb = array_row - dr, array_col_nb = array_col - dc, x_nb = x, y_nb = y)]
+      # Build neighbour table with unique column names to avoid x/y suffixing after merge
+      b <- dt[, .(array_row_nb = array_row - dr,
+                  array_col_nb = array_col - dc,
+                  x_nb = x,
+                  y_nb = y)]
       m <- merge(a, b, by.x = c("array_row", "array_col"), by.y = c("array_row_nb", "array_col_nb"), all = FALSE)
       if (!nrow(m)) return(NULL)
       m[, .(dx = x_nb - x, dy = y_nb - y)]
@@ -1793,3 +1796,4 @@ createSCOPE <- function(data_dir = NULL,
 
   list(scope_obj = scope_obj, seurat = seu)
 }
+
