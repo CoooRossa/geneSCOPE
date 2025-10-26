@@ -131,6 +131,7 @@ computeL_visium <- function(
         grid_name = grid_name,
         norm_layer = norm_layer,
         genes = keep,
+        ncores = ncores,
         verbose = verbose,
         ...
     )
