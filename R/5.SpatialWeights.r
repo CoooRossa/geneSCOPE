@@ -21,6 +21,14 @@
 #'                   \code{TRUE} (default) zero-neighbour regions are allowed.
 #' @param store_listw Logical. If \code{TRUE} (default) store the \code{listw}
 #'                   object in \code{$listw}.
+#' @details
+#'   Topology is detected automatically from the grid layer:
+#'   - If row/column neighbour distances are ~equal, a square lattice is
+#'     assumed and a Queen (8-neighbour) adjacency is used.
+#'   - Otherwise, a hex lattice is assumed. The function then infers flat-top
+#'     (row-offset; odd-r by default) vs pointy-top (column-offset; odd-q by
+#'     default) from neighbour angle concentrations and builds the
+#'     corresponding 6-neighbour adjacency.
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #'
 #' @return The modified \code{scope_object} is returned invisibly.
@@ -95,24 +103,98 @@ computeWeights <- function(scope_obj,
   grid_id <- grid_info$grid_id
   xbins_eff <- g_layer$xbins_eff
   ybins_eff <- g_layer$ybins_eff
-  hbins <- max(xbins_eff, ybins_eff)
 
-  if (any(gx < 1 | gx > hbins | gy < 1 | gy > hbins)) {
-    stop("gx/gy exceed hbins × hbins range; check coordinates.")
+  if (any(gx < 1 | gx > xbins_eff | gy < 1 | gy > ybins_eff)) {
+    stop("gx/gy exceed xbins_eff × ybins_eff range; check coordinates.")
   }
 
   if (verbose) {
     message(
-      "[geneSCOPE::computeWeights] Grid dimensions: ", length(grid_id), " grids, ",
-      hbins, "×", hbins, " lattice"
+      "[geneSCOPE::computeWeights] Grid dimensions: ", length(grid_id),
+      " grids, ", ybins_eff, "×", xbins_eff, " lattice"
     )
   }
 
-  ## ---------- 1. Full grid Queen neighborhood ---------------------------------
-  full_nb <- grid_nb_omp(hbins, hbins, queen = TRUE)
+  ## ---------- 1. Auto-detect topology ----------------------------------------
+  chosen_topology <- "auto"
+    # Use centre coordinates to compare typical neighbour spacings along
+    # grid axes; if ~equal → square, else → hex. Then infer flat vs pointy.
+    gi <- data.table::as.data.table(grid_info)
+    if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
+      warning("[geneSCOPE::computeWeights] auto topology requested but grid_info lacks centre coordinates; falling back to 'queen'.")
+      chosen_topology <- "queen"
+    } else {
+      neighbor_pairs <- function(dr, dc) {
+        a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
+        b <- data.table::copy(a)
+        b[, `:=`(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
+        m <- merge(a, b, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
+        if (!nrow(m)) return(numeric())
+        sqrt((m$cx_nb - m$cx)^2 + (m$cy_nb - m$cy)^2)
+      }
+      dE <- neighbor_pairs(0, 1) # along columns (E/W)
+      dS <- neighbor_pairs(1, 0) # along rows   (N/S)
+      medE <- if (length(dE)) stats::median(dE) else NA_real_
+      medS <- if (length(dS)) stats::median(dS) else NA_real_
+      if (is.finite(medE) && is.finite(medS)) {
+        if (abs(medE/medS - 1) <= 0.1) {
+          chosen_topology <- "queen" # square
+        } else {
+          # Hex: decide flat-top vs pointy-top by angle concentration
+          edges_xy <- {
+            # sample four primary offsets to avoid duplication
+            e1 <- neighbor_pairs(0, 1)
+            e2 <- neighbor_pairs(1, 0)
+            # For angles we need dx,dy. Build once with merges.
+            a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
+            mk <- function(dr, dc) {
+              b <- data.table::copy(a)
+              b[, `:=`(gx_nb = gx - dr, gy_nb = gy - dc, cx_nb = cx, cy_nb = cy)]
+              m <- merge(a, b, by.x = c("gx","gy"), by.y = c("gx_nb","gy_nb"), all = FALSE)
+              if (!nrow(m)) return(NULL)
+              data.table::data.table(dx = m$cx_nb - m$cx, dy = m$cy_nb - m$cy)
+            }
+            data.table::rbindlist(list(mk(0,1), mk(1,0), mk(1,1), mk(1,-1)), use.names = TRUE, fill = TRUE)
+          }
+          if (is.null(edges_xy) || !nrow(edges_xy)) {
+            chosen_topology <- "hex-oddr"
+          } else {
+            th <- abs(atan2(edges_xy$dy, edges_xy$dx) * 180 / pi)
+            horiz <- mean(pmin(th, 180 - th) <= 15, na.rm = TRUE)
+            vert  <- mean(abs(th - 90) <= 15, na.rm = TRUE)
+            chosen_topology <- if (horiz >= vert) "hex-oddr" else "hex-oddq"
+          }
+        }
+      } else {
+        chosen_topology <- "queen"
+      }
+      if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology)
+    }
+  
 
-  ## ---------- 2. Subset and relabel ------------------------------------
-  cell_id <- (gy - 1L) * hbins + gx # Row-major order
+  ## ---------- 2. Full-grid neighbourhood per (possibly auto) topology ---------
+  if (chosen_topology == "queen" || chosen_topology == "rook") {
+    full_nb <- grid_nb_omp(ybins_eff, xbins_eff, queen = (chosen_topology == "queen"))
+    # standard mapping: row-major by (gy,gx)
+    cell_id <- (gy - 1L) * xbins_eff + gx
+  } else if (chosen_topology == "hex-oddr") {
+    full_nb <- grid_nb_hex_omp(ybins_eff, xbins_eff, oddr = TRUE)
+    cell_id <- (gy - 1L) * xbins_eff + gx
+  } else if (chosen_topology == "hex-evenr") {
+    full_nb <- grid_nb_hex_omp(ybins_eff, xbins_eff, oddr = FALSE)
+    cell_id <- (gy - 1L) * xbins_eff + gx
+  } else if (chosen_topology == "hex-oddq") {
+    # Column-offset (pointy-top) using dedicated builder
+    full_nb <- grid_nb_hexq_omp(ybins_eff, xbins_eff, oddq = TRUE)
+    cell_id <- (gx - 1L) * ybins_eff + gy
+  } else if (chosen_topology == "hex-evenq") {
+    full_nb <- grid_nb_hexq_omp(ybins_eff, xbins_eff, oddq = FALSE)
+    cell_id <- (gx - 1L) * ybins_eff + gy
+  } else {
+    stop("Unknown topology: ", chosen_topology)
+  }
+
+  ## ---------- 3. Subset and relabel ------------------------------------
   sub_nb <- full_nb[cell_id]
   relabel_nb <- lapply(sub_nb, function(v) {
     idx <- match(v, cell_id)
@@ -120,7 +202,8 @@ computeWeights <- function(scope_obj,
   })
   attr(relabel_nb, "class") <- "nb"
   attr(relabel_nb, "region.id") <- grid_id
-  attr(relabel_nb, "queen") <- TRUE
+  attr(relabel_nb, "queen") <- identical(chosen_topology, "queen")
+  attr(relabel_nb, "topology") <- chosen_topology
 
   # ——— Avoid spdep::card() error on zero-length vectors ———
   if (zero_policy) {
