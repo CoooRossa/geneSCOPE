@@ -1,4 +1,4 @@
-#' 1.CreateObj_fixed.r (2025-07-09)
+#' 1.CreateObj.r (2025-10-26)
 #' @title Build scope_object from Xenium Output with (Multi-)Scale Grid Aggregation - FIXED
 #' @description
 #'   Fixes Y-axis flipping issue that caused misalignment between grid heatmap and segmentation:
@@ -1339,6 +1339,21 @@ createSCOPE_visium <- function(visium_dir,
     spot_diameter_um = base_spot_um,
     microns_per_pixel = microns_per_pixel,
     image_info = {
+      # Try to read scalefactors for hires/lowres scales
+      scalefactor_candidates <- c(
+        file.path(spatial_dir, "scalefactors_json.json"),
+        file.path(spatial_dir, "scalefactors_json_fullres.json")
+      )
+      sf_path <- scalefactor_candidates[file.exists(scalefactor_candidates)][1]
+      hires_scalef <- lowres_scalef <- spot_diameter_fullres <- NA_real_
+      if (!is.na(sf_path)) {
+        sf <- try(jsonlite::fromJSON(sf_path), silent = TRUE)
+        if (!inherits(sf, "try-error")) {
+          hires_scalef <- sf$tissue_hires_scalef %||% sf$tissue_hires_scale %||% NA_real_
+          lowres_scalef <- sf$tissue_lowres_scalef %||% sf$tissue_lowres_scale %||% NA_real_
+          spot_diameter_fullres <- sf$spot_diameter_fullres %||% NA_real_
+        }
+      }
       image_candidates_hires <- c(
         file.path(spatial_dir, "aligned_tissue_image.jpg"),
         file.path(spatial_dir, "tissue_hires_image.png"),
@@ -1369,7 +1384,10 @@ createSCOPE_visium <- function(visium_dir,
         hires_dim_px = get_img_dim(hires_path),
         lowres_dim_px = get_img_dim(lowres_path),
         positions_path = pos_path,
-        scalefactors_path = sf_path,
+        scalefactors_path = if (exists("sf_path")) sf_path else NULL,
+        tissue_hires_scalef = hires_scalef,
+        tissue_lowres_scalef = lowres_scalef,
+        spot_diameter_fullres = spot_diameter_fullres,
         y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
       )
     },
@@ -1651,6 +1669,8 @@ createSCOPE <- function(data_dir = NULL,
   microns_per_pixel <- sf$microns_per_pixel
   spot_diameter_um <- sf$spot_diameter_microns
   spot_diameter_px <- sf$spot_diameter_fullres
+  hires_scalef <- sf$tissue_hires_scalef %||% sf$tissue_hires_scale %||% NA_real_
+  lowres_scalef <- sf$tissue_lowres_scalef %||% sf$tissue_lowres_scale %||% NA_real_
   if (is.null(spot_diameter_um) && !is.null(spot_diameter_px) && !is.null(microns_per_pixel)) {
     spot_diameter_um <- as.numeric(spot_diameter_px) * as.numeric(microns_per_pixel)
   }
@@ -1866,6 +1886,9 @@ createSCOPE <- function(data_dir = NULL,
     lowres_dim_px = lowres_dim,
     positions_path = pos_path,
     scalefactors_path = sf_path,
+    tissue_hires_scalef = hires_scalef,
+    tissue_lowres_scalef = lowres_scalef,
+    spot_diameter_fullres = spot_diameter_px,
     y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
   )
   if (!is.null(sct_mat)) {
