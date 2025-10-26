@@ -123,7 +123,7 @@ plotDensity <- function(scope_obj,
     ## optional background image overlay (auto-detect from grid layer)
     if (isTRUE(overlay_image)) {
         img_info <- g_layer$image_info
-        mpp <- g_layer$microns_per_pixel
+        mpp_fullres <- g_layer$microns_per_pixel
         hires_path <- if (!is.null(img_info)) img_info$hires_path else NULL
         lowres_path <- if (!is.null(img_info)) img_info$lowres_path else NULL
         if (!is.null(image_path)) {
@@ -135,7 +135,7 @@ plotDensity <- function(scope_obj,
             hires = hires_path,
             lowres = lowres_path
         )
-        if (!is.null(sel_path) && file.exists(sel_path) && is.finite(mpp)) {
+        if (!is.null(sel_path) && file.exists(sel_path) && is.finite(mpp_fullres)) {
             ext <- tolower(tools::file_ext(sel_path))
             img <- NULL
             if (ext %in% c("png") && requireNamespace("png", quietly = TRUE)) {
@@ -144,25 +144,54 @@ plotDensity <- function(scope_obj,
                 img <- jpeg::readJPEG(sel_path)
             }
             if (!is.null(img)) {
+                # Normalize to RGBA array and apply alpha (annotation_raster has no alpha arg)
+                if (length(dim(img)) == 2L) {
+                    # grayscale -> RGB
+                    img_rgb <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 3L))
+                    img_rgb[,,1] <- img; img_rgb[,,2] <- img; img_rgb[,,3] <- img
+                    img <- img_rgb
+                }
+                if (length(dim(img)) == 3L) {
+                    if (dim(img)[3] == 3L) {
+                        img_rgba <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 4L))
+                        img_rgba[,,1:3] <- img
+                        img_rgba[,,4]   <- max(0, min(1, image_alpha))
+                        img <- img_rgba
+                    } else if (dim(img)[3] == 4L) {
+                        img[,,4] <- pmin(1, pmax(0, img[,,4] * image_alpha))
+                    }
+                }
+
                 # image size (width x height) in um
                 wpx <- dim(img)[2]; hpx <- dim(img)[1]
-                w_um <- as.numeric(wpx) * as.numeric(mpp)
-                h_um <- as.numeric(hpx) * as.numeric(mpp)
+                # Determine effective microns-per-pixel depending on image type and scalefactors
+                hires_sf <- if (!is.null(img_info)) img_info$tissue_hires_scalef else NA_real_
+                lowres_sf <- if (!is.null(img_info)) img_info$tissue_lowres_scalef else NA_real_
+                eff_mpp <- mpp_fullres
+                # Detect by filename if necessary
+                is_hires <- grepl("tissue_hires_image", basename(sel_path), ignore.case = TRUE)
+                is_lowres <- grepl("tissue_lowres_image", basename(sel_path), ignore.case = TRUE)
+                is_aligned <- grepl("aligned_tissue_image", basename(sel_path), ignore.case = TRUE)
+                if (is_hires && is.finite(hires_sf)) eff_mpp <- mpp_fullres / hires_sf
+                if (is_lowres && is.finite(lowres_sf)) eff_mpp <- mpp_fullres / lowres_sf
+                if (is_aligned) eff_mpp <- mpp_fullres
+                # Fallback: if cannot infer, try to match grid width to image width by simple ratio
+                if (!is.finite(eff_mpp) || eff_mpp <= 0) eff_mpp <- mpp_fullres
+                w_um <- as.numeric(wpx) * as.numeric(eff_mpp)
+                h_um <- as.numeric(hpx) * as.numeric(eff_mpp)
                 y_origin <- if (!is.null(img_info$y_origin)) img_info$y_origin else "top-left"
                 # If grid was not flipped (top-left), flip image vertically by swapping ymin/ymax
                 if (identical(y_origin, "top-left")) {
                     p <- p + annotation_raster(img,
                         xmin = 0, xmax = w_um,
                         ymin = h_um, ymax = 0,
-                        interpolate = TRUE,
-                        alpha = image_alpha
+                        interpolate = TRUE
                     )
                 } else {
                     p <- p + annotation_raster(img,
                         xmin = 0, xmax = w_um,
                         ymin = 0, ymax = h_um,
-                        interpolate = TRUE,
-                        alpha = image_alpha
+                        interpolate = TRUE
                     )
                 }
             }
