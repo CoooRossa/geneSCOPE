@@ -560,6 +560,7 @@ plotLvsR <- function(scope_obj,
 getTopLvsR <- function(scope_obj,
                        grid_name,
                        pear_level = c("cell", "grid"),
+                       lee_stats_layer = "LeeStats_Xz",
                        pear_range = c(-1, 1),
                        L_range = c(-1, 1),
                        top_n = 10,
@@ -610,7 +611,7 @@ getTopLvsR <- function(scope_obj,
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
   Sys.setenv(OMP_NUM_THREADS = ncores)
 
-  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = "LeeStats_Xz")
+  L_mat <- .getLeeMatrix(scope_obj, grid_name, lee_layer = lee_stats_layer)
   r_mat <- .getPearsonMatrix(scope_obj, grid_name, level = pear_level)
   common <- intersect(rownames(L_mat), rownames(r_mat))
   if (length(common) < 2) stop("Insufficient common genes")
@@ -732,7 +733,7 @@ getTopLvsR <- function(scope_obj,
   # Curve filtering
   if (!is.null(curve_layer) || CI_rule != "none") {
     if (is.null(curve_layer)) stop("curve_layer must be provided when CI_rule != 'none'")
-    curve_obj <- scope_obj@stats[[grid_name]]$LeeStats_Xz[[curve_layer]]
+    curve_obj <- scope_obj@stats[[grid_name]][[lee_stats_layer]][[curve_layer]]
     if (is.null(curve_obj)) stop("Curve layer '", curve_layer, "' not found in stats")
     required_cols <- c("Pear", "lo95", "hi95")
     if (!all(required_cols %in% colnames(curve_obj))) {
