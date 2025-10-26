@@ -1359,8 +1359,7 @@ createSCOPE_visium <- function(visium_dir,
 #'   Wrapper that inspects a data directory and dispatches to one of:
 #'   \code{createSCOPE_xenium()}, \code{createSCOPE_cosmx()}, or
 #'   \code{.seurat_visium_to_scope()} based on characteristic files.
-#'   For Visium, it returns the scope_object by default (and the Seurat
-#'   object if \code{return_both=TRUE}).
+#'   For all platforms (Xenium/CosMx/Visium), a \code{scope_object} is returned.
 #' @param data_dir Character. Directory containing a Xenium, CosMx, or Visium run.
 #'        As a convenience, you may also pass \code{xenium_dir}, \code{cosmx_root},
 #'        or \code{visium_dir} via \code{...}; the first non-NULL will be used.
@@ -1373,7 +1372,6 @@ createSCOPE_visium <- function(visium_dir,
 #' @export
 createSCOPE <- function(data_dir = NULL,
                         prefer = c("auto", "xenium", "cosmx", "visium"),
-                        return_both = FALSE,
                         verbose = TRUE,
                         sctransform = TRUE,
                         ...) {
@@ -1445,14 +1443,13 @@ createSCOPE <- function(data_dir = NULL,
     # Ensure the downstream function gets the flag
     if (is.null(dots$run_sctransform)) dots$run_sctransform <- TRUE
     res <- do.call(.seurat_visium_to_scope, dots)
-    if (isTRUE(return_both)) res else res$scope_obj
+    res
   } else {
     if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Dispatching to createSCOPE_visium (SCTransform=FALSE) …")
     obj <- do.call(createSCOPE_visium, dots)
-    if (isTRUE(return_both)) list(scope_obj = obj, seurat = NULL) else obj
+    obj
   }
 }
-
 #' @title Seurat-first Visium pipeline to scope_object
 #' @description
 #' Read a 10x Visium run directory using Seurat, optionally run SCTransform,
@@ -1478,8 +1475,7 @@ createSCOPE <- function(data_dir = NULL,
 #' @param flip_y Logical; flip Y coordinates to bottom-left origin (default FALSE).
 #' @param verbose Logical; print progress (default TRUE).
 #'
-#' @return A list with components: \code{scope_obj} and \code{seurat}.
-#'   The returned \code{scope_obj} has:
+#' @return A \code{scope_object} with:
 #'   - \code{@cells$counts}: raw counts (dgCMatrix)
 #'   - \code{@cells$SCT}: SCTransform scale.data (if run)
 #'   - one grid layer sized to the Visium spot diameter * \code{grid_multiplier}
@@ -1539,13 +1535,23 @@ createSCOPE <- function(data_dir = NULL,
   }
 
   # 3) Extract matrices -----------------------------------------------------
-  raw_counts <- Seurat::GetAssayData(seu, assay = "Spatial", slot = "counts")
+  # Use layer=.. if available (SeuratObject >= 5) to avoid deprecation warnings; fallback to slot=..
+  getAssayLayer <- function(obj, assay, which) {
+    ga <- Seurat::GetAssayData
+    fm <- try(formals(ga), silent = TRUE)
+    if (!inherits(fm, "try-error") && "layer" %in% names(fm)) {
+      ga(object = obj, assay = assay, layer = which)
+    } else {
+      ga(object = obj, assay = assay, slot = which)
+    }
+  }
+  raw_counts <- getAssayLayer(seu, assay = "Spatial", which = "counts")
   if (!inherits(raw_counts, "dgCMatrix")) raw_counts <- as(raw_counts, "dgCMatrix")
 
   sct_mat <- NULL
   if (isTRUE(run_sctransform)) {
     # Pearson residuals (scale.data) by convention
-    sct_mat <- Seurat::GetAssayData(seu, assay = "SCT", slot = "scale.data")
+    sct_mat <- getAssayLayer(seu, assay = "SCT", which = "scale.data")
   }
 
   # 4) Positions & scalefactors --------------------------------------------
@@ -1794,6 +1800,5 @@ createSCOPE <- function(data_dir = NULL,
             " spots and grid_length = ", round(grid_size_um, 3), " um")
   }
 
-  list(scope_obj = scope_obj, seurat = seu)
+  scope_obj
 }
-
