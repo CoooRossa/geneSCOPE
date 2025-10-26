@@ -28,6 +28,7 @@
 #' @export
 computeCorrelation <- function(scope_obj,
                                level = c("cell", "grid"),
+                               grid_name = NULL,
                                layer = "logCPM",
                                method = c("pearson", "spearman", "kendall"),
                                blocksize = 2000,
@@ -92,9 +93,20 @@ computeCorrelation <- function(scope_obj,
     if (is.null(scope_obj@cells) || is.null(scope_obj@cells[[layer]])) {
       stop("Cell layer '", layer, "' not found in @cells")
     }
+    # cells: genes × cells (transposed later to cells × genes)
     expr_mat <- scope_obj@cells[[layer]]
   } else {
-    stop("Grid level correlation not yet implemented")
+    # grid: select grid layer and use spots × genes matrix
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    grid_name <- if (is.null(grid_name)) {
+      names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+    } else grid_name
+    if (is.null(g_layer[[layer]])) {
+      stop("Grid layer '", layer, "' not found in @grid[['", grid_name, "']]")
+    }
+    X_grid <- g_layer[[layer]]            # spots × genes
+    if (!inherits(X_grid, "dgCMatrix")) X_grid <- as(X_grid, "dgCMatrix")
+    expr_mat <- Matrix::t(X_grid)         # genes × spots, to reuse common path
   }
 
   if (!inherits(expr_mat, "dgCMatrix")) {
@@ -229,15 +241,30 @@ computeCorrelation <- function(scope_obj,
   colnames(cor_matrix) <- gene_names
 
   ## ---- Store results ----------------------------------------
-  scope_obj@cells[[store_layer]] <- cor_matrix
+  if (level == "cell") {
+    scope_obj@cells[[store_layer]] <- cor_matrix
+  } else {
+    scope_obj@grid[[grid_name]][[store_layer]] <- cor_matrix
+  }
 
   if (!is.null(fdr_matrix)) {
     fdr_layer_name <- paste0(store_layer, "_FDR")
-    scope_obj@cells[[fdr_layer_name]] <- fdr_matrix
-    if (verbose) message("[geneSCOPE::computeCorrelation] FDR matrix stored in @cells$", fdr_layer_name)
+    if (level == "cell") {
+      scope_obj@cells[[fdr_layer_name]] <- fdr_matrix
+      if (verbose) message("[geneSCOPE::computeCorrelation] FDR matrix stored in @cells$", fdr_layer_name)
+    } else {
+      scope_obj@grid[[grid_name]][[fdr_layer_name]] <- fdr_matrix
+      if (verbose) message("[geneSCOPE::computeCorrelation] FDR matrix stored in @grid[['", grid_name, "']]$", fdr_layer_name)
+    }
   }
 
-  if (verbose) message("[geneSCOPE::computeCorrelation] Correlation matrix stored in @cells$", store_layer)
+  if (verbose) {
+    if (level == "cell") {
+      message("[geneSCOPE::computeCorrelation] Correlation matrix stored in @cells$", store_layer)
+    } else {
+      message("[geneSCOPE::computeCorrelation] Correlation matrix stored in @grid[['", grid_name, "']]$", store_layer)
+    }
+  }
 
   invisible(scope_obj)
 }
