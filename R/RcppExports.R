@@ -70,6 +70,23 @@ nb2mat <- function(nb) {
     .Call(`_geneSCOPE_nb2mat`, nb)
 }
 
+#' @title Build Hex (6-neighbour) nb with odd-r/even-r layout (OpenMP)
+#' @param nrow Integer rows; ncol Integer cols on the logical rectangular lattice.
+#' @param oddr Logical; TRUE for odd-r (odd rows shifted right), FALSE for even-r.
+#' @return An nb list with attributes topology="hex-oddr" or "hex-evenr".
+grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hex_omp`, nrow, ncol, oddr)
+}
+
+#' Build hex nb with column-offset (odd-q/even-q) in OpenMP
+#'
+#' @param nrow Integer rows; ncol Integer cols
+#' @param oddq Logical; TRUE for odd-q, FALSE for even-q
+#' @return nb list with topology attribute set
+grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hexq_omp`, nrow, ncol, oddq)
+}
+
 #' @title Lee's L (single pass)
 #' @description Computes the Lee's L statistic for all gene pairs using a zero-mean,
 #'   sample-size–scaled formulation and a canonical S0 term. Matrix multiplication
