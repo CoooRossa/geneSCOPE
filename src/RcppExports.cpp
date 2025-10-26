@@ -362,6 +362,64 @@ BEGIN_RCPP
 END_RCPP
 }
 
+// spmm_dgc_dense_f64
+arma::mat spmm_dgc_dense_f64(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f64(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f64(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spmm_dgc_dense_f32
+arma::mat spmm_dgc_dense_f32(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f32(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f32(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rp_sign_bits
+CharacterMatrix rp_sign_bits(const arma::mat& X, const int bits, const int n_tables, const int seed, const int n_threads);
+RcppExport SEXP _geneSCOPE_rp_sign_bits(SEXP XSEXP, SEXP bitsSEXP, SEXP n_tablesSEXP, SEXP seedSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const int >::type bits(bitsSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_tables(n_tablesSEXP);
+    Rcpp::traits::input_parameter< const int >::type seed(seedSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rp_sign_bits(X, bits, n_tables, seed, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// leeL_topk_candidates
+Rcpp::List leeL_topk_candidates(const arma::mat& X, const arma::mat& WX, const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& indices, const int K_keep, const int n_threads);
+RcppExport SEXP _geneSCOPE_leeL_topk_candidates(SEXP XSEXP, SEXP WXSEXP, SEXP row_ptrSEXP, SEXP indicesSEXP, SEXP K_keepSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type WX(WXSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type indices(indicesSEXP);
+    Rcpp::traits::input_parameter< const int >::type K_keep(K_keepSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(leeL_topk_candidates(X, WX, row_ptr, indices, K_keep, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+
 static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_grid_nb_omp", (DL_FUNC) &_geneSCOPE_grid_nb_omp, 3},
     {"_geneSCOPE_grid_nb_hex_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hex_omp, 3},
@@ -387,6 +445,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_delta_lr_perm_csr", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr, 9},
     {"_geneSCOPE_delta_lr_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr_block, 10},
     {"_geneSCOPE_test_64bit_support", (DL_FUNC) &_geneSCOPE_test_64bit_support, 0},
+    {"_geneSCOPE_spmm_dgc_dense_f64", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f64, 3},
+    {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
+    {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
+    {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
     {NULL, NULL, 0}
 };
 
