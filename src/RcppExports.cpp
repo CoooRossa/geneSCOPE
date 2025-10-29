@@ -25,6 +25,57 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// ci95_drop_mask_edges_omp
+LogicalVector ci95_drop_mask_edges_omp(NumericMatrix rMat, IntegerVector ridx, IntegerVector ei, IntegerVector ej, NumericVector L_vals, NumericVector xp, NumericVector lo95, NumericVector hi95, int rule, int n_threads);
+RcppExport SEXP _geneSCOPE_ci95_drop_mask_edges_omp(SEXP rMatSEXP, SEXP ridxSEXP, SEXP eiSEXP, SEXP ejSEXP, SEXP L_valsSEXP, SEXP xpSEXP, SEXP lo95SEXP, SEXP hi95SEXP, SEXP ruleSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type rMat(rMatSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ridx(ridxSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type L_vals(L_valsSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type xp(xpSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type lo95(lo95SEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type hi95(hi95SEXP);
+    Rcpp::traits::input_parameter< int >::type rule(ruleSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(ci95_drop_mask_edges_omp(rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// consensus_on_edges_omp
+IntegerVector consensus_on_edges_omp(IntegerVector ei, IntegerVector ej, IntegerMatrix memb, int n_threads);
+RcppExport SEXP _geneSCOPE_consensus_on_edges_omp(SEXP eiSEXP, SEXP ejSEXP, SEXP membSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix >::type memb(membSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(consensus_on_edges_omp(ei, ej, memb, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cmh_lookup_rcpp
+NumericVector cmh_lookup_rcpp(IntegerVector ei, IntegerVector ej, IntegerVector si, IntegerVector sj, NumericVector sw, double fallback, int n_threads);
+RcppExport SEXP _geneSCOPE_cmh_lookup_rcpp(SEXP eiSEXP, SEXP ejSEXP, SEXP siSEXP, SEXP sjSEXP, SEXP swSEXP, SEXP fallbackSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type si(siSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type sj(sjSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type sw(swSEXP);
+    Rcpp::traits::input_parameter< double >::type fallback(fallbackSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(cmh_lookup_rcpp(ei, ej, si, sj, sw, fallback, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // grid_nb_hex_omp
 List grid_nb_hex_omp(const int nrow, const int ncol, const bool oddr);
 RcppExport SEXP _geneSCOPE_grid_nb_hex_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
@@ -449,6 +500,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
     {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
     {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
+    {"_geneSCOPE_ci95_drop_mask_edges_omp", (DL_FUNC) &_geneSCOPE_ci95_drop_mask_edges_omp, 10},
+    {"_geneSCOPE_consensus_on_edges_omp", (DL_FUNC) &_geneSCOPE_consensus_on_edges_omp, 4},
+    {"_geneSCOPE_cmh_lookup_rcpp", (DL_FUNC) &_geneSCOPE_cmh_lookup_rcpp, 7},
     {NULL, NULL, 0}
 };
 
