@@ -1,6 +1,7 @@
 #' @title Gene Clustering (results written to scope_obj@meta.data)
 #' @description Based on Lee's L statistics for filtering, graph construction, multiple community detection and optional consensus, output cluster numbers to scope_obj@meta.data.
 #' @export
+#' @noRd 
 # Lightweight worker: do NOT capture parent environment
 # Accepts 'ii' and '...' to swallow any future-specific extras
 .geneSCOPE_cluster_once <- function(ii, graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity"), ...) {
@@ -22,7 +23,7 @@
     }
     as.integer(igraph::membership(comm))
 }
-
+#' @noRd 
 # Batch worker to avoid capturing large environments; only depends on arguments.
 .geneSCOPE_cluster_batch <- function(batch_ids, graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity")) {
     res <- vector("list", length(batch_ids))
@@ -32,7 +33,7 @@
     }
     res
 }
-
+#' @export
 clusterGenes <- function(
     scope_obj,
     grid_name = NULL,
@@ -80,12 +81,14 @@ clusterGenes <- function(
     # optional report output
     return_report = FALSE,
     verbose = TRUE,
+    debug = FALSE,
     ncores = 16,
     future_strategy = c("auto", "multisession", "multicore", "inherit", "sequential"),
     # parallel controls
     future_scheduling_stage1 = 1,
     future_scheduling_stage2 = 0.5,
     restart_batch_size = NULL,
+    aggressive_cpu = FALSE,
     stage2_cluster_parallel = FALSE,
     stage2_max_workers = NULL,
     mode = c("fast", "robust"),            # speed/memory profile
@@ -268,16 +271,20 @@ clusterGenes <- function(
     }
 
     # Stage-1: restart batching to reduce scheduling/serialization overhead
+    rvec <- seq_len(n_restart_eff)
+    workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
+    if (is.na(workers) || workers < 1) workers <- ncores
+    if (is.null(restart_batch_size)) {
+        bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
+        if (isTRUE(aggressive_cpu)) bs <- max(3L, min(10L, bs))
+    } else bs <- as.integer(max(1L, restart_batch_size))
+    batches_stage1 <- split(rvec, ceiling(rvec / bs))
+    if (isTRUE(verbose) || isTRUE(debug)) {
+        message(sprintf("[Stage1] workers=%d, n_restart=%d, batch_size=%d, n_batches=%d, scheduling=%.2f",
+                        workers, n_restart_eff, bs, length(batches_stage1), as.numeric(future_scheduling_stage1)))
+    }
     memb_list1 <- future.apply::future_lapply(
-        X = {
-            rvec <- seq_len(n_restart_eff)
-            if (is.null(restart_batch_size)) {
-                workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
-                if (is.na(workers) || workers < 1) workers <- ncores
-                bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
-            } else bs <- as.integer(max(1L, restart_batch_size))
-            split(rvec, ceiling(rvec / bs))
-        },
+        X = batches_stage1,
         FUN = .geneSCOPE_cluster_batch,
         graph = g0,
         algo = algo,
@@ -301,6 +308,11 @@ clusterGenes <- function(
         cons <- Matrix::sparseMatrix(dims = c(length(kept_genes), length(kept_genes)))
     } else {
         # Build consensus only on base edges (vectorized over restart blocks)
+        E0 <- nrow(ed0)
+        if (isTRUE(verbose) || isTRUE(debug)) {
+            message(sprintf("[Stage1] consensus inputs: edges(E0)=%d, restarts(R)=%d, threads=%d, cpp_available=%s",
+                            E0, ncol(memb_mat1), ncores, as.character(exists("consensus_on_edges_omp"))))
+        }
         cons_w <- .consensus_on_edges(memb_mat1, ed0$i, ed0$j, n_threads = ncores)
         keep_e <- cons_w >= consensus_thr & is.finite(cons_w)
         if (any(keep_e)) {
@@ -552,6 +564,9 @@ clusterGenes <- function(
                     ridx <- match(kept_genes, rownames(rMat))
                     L_vals <- as.numeric(L_post[cbind(ei, ej)])
                     rule_int <- if (CI_rule == "remove_within") 0L else 1L
+                    if (isTRUE(verbose) || isTRUE(debug)) {
+                        message(sprintf("[Stage2.CI95] using C++ ci95_drop_mask_edges_omp: edges=%d, threads=%d", length(ei), ncores))
+                    }
                     drop_mask <- ci95_drop_mask_edges_omp(rMat, as.integer(ridx), as.integer(ei), as.integer(ej),
                                                           L_vals, xp, lo, hi, rule = rule_int, n_threads = ncores)
                     drop_mask <- as.logical(drop_mask)
@@ -564,6 +579,9 @@ clusterGenes <- function(
                 }
             }
             if (!drop_applied) {
+                if (isTRUE(verbose) || isTRUE(debug)) {
+                    message(sprintf("[Stage2.CI95] using R fallback for edges=%d", length(ei)))
+                }
                 r_vals <- .get_pairwise_cor_for_edges(scope_obj, grid_name = gname, level = "cell",
                                                      kept_genes = kept_genes, edge_i = ei, edge_j = ej)
                 L_vals <- L_post[cbind(ei, ej)]
@@ -745,16 +763,20 @@ clusterGenes <- function(
         ew <- igraph::E(g1_sub)$weight
         el <- igraph::as_data_frame(g1_sub, what = "edges")[, c("from", "to")]
 
+        rvec <- seq_len(n_restart_eff)
+        workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
+        if (is.na(workers) || workers < 1) workers <- ncores
+        if (is.null(restart_batch_size)) {
+            bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
+            if (isTRUE(aggressive_cpu)) bs <- max(3L, min(10L, bs))
+        } else bs <- as.integer(max(1L, restart_batch_size))
+        batches_stage2 <- split(rvec, ceiling(rvec / bs))
+        if (isTRUE(verbose) || isTRUE(debug)) {
+            message(sprintf("[Stage2] workers=%d, n_restart=%d, batch_size=%d, n_batches=%d, scheduling=%.2f",
+                            workers, n_restart_eff, bs, length(batches_stage2), as.numeric(future_scheduling_stage1)))
+        }
         memb_list_sub <- future.apply::future_lapply(
-            X = {
-                rvec <- seq_len(n_restart_eff)
-                if (is.null(restart_batch_size)) {
-                    workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
-                    if (is.na(workers) || workers < 1) workers <- ncores
-                    bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
-                } else bs <- as.integer(max(1L, restart_batch_size))
-                split(rvec, ceiling(rvec / bs))
-            },
+            X = batches_stage2,
             FUN = .geneSCOPE_cluster_batch,
             graph = g1_sub,
             algo = algo,
@@ -778,7 +800,11 @@ clusterGenes <- function(
             cons_w <- as.integer(memb_sub[match(el$from, genes_c)] == memb_sub[match(el$to, genes_c)])
         } else {
             ii <- match(el$from, genes_c); jj <- match(el$to, genes_c)
-            cons_w <- .consensus_on_edges(memb_mat_sub, ii, jj)
+            if (isTRUE(verbose) || isTRUE(debug)) {
+                message(sprintf("[Stage2] consensus on subgraph: |E|=%d, R=%d, threads=%d, cpp_available=%s",
+                                nrow(el), ncol(memb_mat_sub), ncores, as.character(exists("consensus_on_edges_omp"))))
+            }
+            cons_w <- .consensus_on_edges(memb_mat_sub, ii, jj, n_threads = ncores)
         }
         keep_e <- (cons_w >= consensus_thr) & is.finite(cons_w)
         if (any(keep_e)) {
