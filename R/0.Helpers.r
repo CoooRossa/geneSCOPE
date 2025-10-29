@@ -340,10 +340,13 @@
 #' Sparse-safe symmetric pmax for matrices. Keeps sparse structure when possible.
 .symmetric_pmax <- function(M) {
     if (inherits(M, "sparseMatrix")) {
+        # Robust to Matrix versions without exported pmax(): use algebraic identity
+        # max(A,B) = (A + B + |A - B|) / 2, then zero the diagonal
         M <- methods::as(M, "dgCMatrix")
-        M <- Matrix::pmax(M, Matrix::t(M))
+        Mt <- Matrix::t(M)
+        M <- (M + Mt + abs(M - Mt)) * 0.5
         Matrix::diag(M) <- 0
-        return(M)
+        return(Matrix::drop0(M))
     } else {
         M <- pmax(M, t(M))
         diag(M) <- 0
