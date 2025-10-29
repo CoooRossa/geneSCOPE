@@ -318,6 +318,21 @@ delta_lr_perm <- function(Xz, W, idx_mat, gene_pairs, delta_ref, n_threads = 1L,
     .Call(`_geneSCOPE_delta_lr_perm`, Xz, W, idx_mat, gene_pairs, delta_ref, n_threads, chunk_size)
 }
 
+# Fast consensus on edges (counts across restarts)
+consensus_on_edges_omp <- function(ei, ej, memb, n_threads = 1L) {
+    .Call(`_geneSCOPE_consensus_on_edges_omp`, ei, ej, memb, n_threads)
+}
+
+# Fast CMH weight lookup for (ei,ej) from similarity edges (si,sj,sw)
+cmh_lookup_rcpp <- function(ei, ej, si, sj, sw, fallback = NA_real_, n_threads = 1L) {
+    .Call(`_geneSCOPE_cmh_lookup_rcpp`, ei, ej, si, sj, sw, fallback, n_threads)
+}
+
+# CI95 drop mask (parallel over edges)
+ci95_drop_mask_edges_omp <- function(rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule = 0L, n_threads = 1L) {
+    .Call(`_geneSCOPE_ci95_drop_mask_edges_omp`, rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule, n_threads)
+}
+
 #' @title Block-wise permutation counts for Lee's L minus Pearson r difference
 #' @description Performs block-wise permutations to evaluate the significance of
 #'   the difference between Lee's L and Pearson r correlation (Delta) for specific
