@@ -509,8 +509,6 @@ clusterGenes <- function(
     L_post[abs(L_post) < L_min] <- 0
     if (use_FDR) {
         L_post <- .align_and_filter_FDR(L_post, L_raw, FDRmat, FDR_max)
-        ridx <- match(kept_genes, rownames(L_raw))
-        L_post <- L_post[ridx, ridx, drop = FALSE]
     }
     L_post[L_post < 0] <- 0
     L_post <- .symmetric_pmax(L_post)
