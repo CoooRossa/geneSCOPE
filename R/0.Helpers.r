@@ -554,6 +554,18 @@
             dimnames(FM) <- dimnames(L_raw)
         }
     }
+
+    target_rows <- rownames(L)
+    if (!is.null(target_rows) && !is.null(rownames(FM))) {
+        idx <- match(target_rows, rownames(FM))
+        if (anyNA(idx)) {
+            stop("FDR matrix cannot be aligned to current gene subset", call. = FALSE)
+        }
+        FM <- FM[idx, idx, drop = FALSE]
+    } else if (nrow(FM) != nrow(L) || ncol(FM) != ncol(L)) {
+        stop("FDR matrix dimensions do not match current subset", call. = FALSE)
+    }
+
     L[FM > FDR_max] <- 0
     L
 }
