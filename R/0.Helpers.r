@@ -427,30 +427,109 @@
 }
 
 #' @noRd
-#' Unified community detection with robust fallbacks (Leiden -> Louvain).
-.community_detect <- function(graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity")) {
+#' @noRd
+#' Networkit-based Leiden wrapper (multi-thread CPU via reticulate).
+.community_detect_networkit <- function(graph, resolution = 1, threads = 1, debug = FALSE) {
+    if (!requireNamespace("reticulate", quietly = TRUE)) {
+        stop("reticulate package required for networkit backend", call. = FALSE)
+    }
+
+    edges <- igraph::as_data_frame(graph, what = "edges")
+    n <- igraph::vcount(graph)
+    node_names <- igraph::as_ids(igraph::V(graph))
+    if (is.null(node_names)) node_names <- as.character(seq_len(n))
+
+    if (!nrow(edges)) {
+        memb <- rep(1L, n)
+        names(memb) <- node_names
+        return(memb)
+    }
+
+    if (!"weight" %in% names(edges)) edges$weight <- 1
+    edges$weight[is.na(edges$weight)] <- 1
+
+    idx_map <- setNames(seq_len(n) - 1L, node_names)
+    edges$from_idx <- idx_map[as.character(edges$from)]
+    edges$to_idx   <- idx_map[as.character(edges$to)]
+
+    tmp <- tempfile(fileext = ".tsv")
+    on.exit(unlink(tmp), add = TRUE)
+    cols <- edges[, c("from_idx", "to_idx", "weight")]
+    if (requireNamespace("data.table", quietly = TRUE)) {
+        data.table::fwrite(cols, tmp, sep = " ", col.names = FALSE)
+    } else {
+        write.table(cols, file = tmp, sep = " ", col.names = FALSE,
+                    row.names = FALSE, quote = FALSE)
+    }
+
+    nk <- reticulate::import("networkit", delay_load = TRUE)
+    threads_use <- max(1L, as.integer(threads))
+    try(nk$setNumberOfThreads(threads_use), silent = TRUE)
+    reader <- nk$graphio$EdgeListReader(weighted = TRUE, directed = FALSE)
+    G <- reader$read(tmp)
+    if (debug) message(sprintf("[networkit] ParallelLeiden threads=%d, resolution=%.4f",
+                               threads_use, resolution))
+    algo <- nk$community$ParallelLeiden(G, resolution = as.numeric(resolution))
+    comm <- nk$community$detectCommunities(G, algo)
+    membership <- reticulate::py_to_r(comm$getVector())
+    membership <- as.integer(membership) + 1L
+    names(membership) <- node_names
+    membership
+}
+
+#' @noRd
+#' Unified community detection with backend switch (igraph / networkit).
+.community_detect <- function(graph, algo = c("leiden", "louvain"), resolution = 1,
+                               objective = c("CPM", "modularity"),
+                               backend = c("igraph", "networkit"),
+                               threads = 1, debug = FALSE) {
     algo <- match.arg(algo)
     objective <- match.arg(objective)
-    if (algo == "leiden") {
-        comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
-        if (inherits(comm, "try-error")) {
-            comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
-        }
-        if (inherits(comm, "try-error")) {
-            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
+    backend <- match.arg(backend)
+
+    if (algo == "leiden" && identical(backend, "networkit")) {
+        memb <- try(.community_detect_networkit(graph, resolution = resolution,
+                                               threads = threads, debug = debug), silent = TRUE)
+        if (!inherits(memb, "try-error")) return(memb)
+        if (debug) message("[networkit] Leiden failed, falling back to igraph implementation")
+        backend <- "igraph"
+    }
+
+    if (identical(backend, "igraph")) {
+        if (algo == "leiden") {
+            comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight,
+                                               resolution = resolution, objective_function = objective), silent = TRUE)
             if (inherits(comm, "try-error")) {
-                comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+                comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight,
+                                                   resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+            }
+            if (inherits(comm, "try-error")) {
+                comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight,
+                                                     resolution = resolution, objective_function = objective), silent = TRUE)
+                if (inherits(comm, "try-error")) {
+                    comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight,
+                                                         resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+                    if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
+                }
+            }
+            memb <- igraph::membership(comm)
+            if (is.null(names(memb))) names(memb) <- igraph::as_ids(igraph::V(graph))
+            return(memb)
+        } else {
+            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight,
+                                                 resolution = resolution, objective_function = objective), silent = TRUE)
+            if (inherits(comm, "try-error")) {
+                comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight,
+                                                     resolution_parameter = resolution, objective_function = objective), silent = TRUE)
                 if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
             }
-        }
-    } else {
-        comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
-        if (inherits(comm, "try-error")) {
-            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
-            if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
+            memb <- igraph::membership(comm)
+            if (is.null(names(memb))) names(memb) <- igraph::as_ids(igraph::V(graph))
+            return(memb)
         }
     }
-    comm
+
+    stop("Unsupported backend", call. = FALSE)
 }
 
 #' @noRd
