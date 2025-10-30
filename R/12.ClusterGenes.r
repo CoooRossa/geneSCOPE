@@ -96,13 +96,15 @@ clusterGenes <- function(
     refine_always = TRUE,                   # run Stage-2 even if no CI95/CMH
     adaptive_restarts = FALSE,               # do not cap restarts by default
     target_pair_ops = 2.5e8,                # total pairwise ops budget for consensus (fast mode)
-    aggressive_gc = TRUE                    # free big objects between stages
+    aggressive_gc = TRUE,                   # free big objects between stages
+    leiden_backend = c("igraph", "networkit")
     ) {
 
     algo <- match.arg(algo)
     objective <- match.arg(objective)
     CI_rule <- match.arg(CI_rule)
     mode <- match.arg(mode)
+    leiden_backend <- match.arg(getOption("geneSCOPE.leiden_backend", leiden_backend))
     fast_mode <- identical(mode, "fast")
 
     ## 1. Select grid layer
@@ -236,12 +238,18 @@ clusterGenes <- function(
         directed = FALSE, vertices = kept_genes
     )
 
-    ## 5. First-round multi-run community detection / consensus
-    # Determine OpenMP threads per worker to avoid oversubscription
-    threads_consensus <- {
+    threads_for_consensus <- function() {
         workers_now <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
         if (is.na(workers_now) || workers_now < 1) workers_now <- 1L
         max(1L, as.integer(floor(ncores / workers_now)))
+    }
+
+    ## 5. First-round multi-run community detection / consensus
+    # Determine OpenMP threads per worker to avoid oversubscription
+    threads_stage1 <- threads_for_consensus()
+    if (isTRUE(verbose) || isTRUE(debug)) {
+        message(sprintf("[Stage1] workers=%d, threads_per_worker=%d",
+                        tryCatch(future::nbrOfWorkers(), error = function(e) 1L), threads_stage1))
     }
     # Note: avoid local wrapper closures that capture large environments; call igraph API inline with try/ fallback
 
@@ -319,13 +327,9 @@ clusterGenes <- function(
         E0 <- nrow(ed0)
         if (isTRUE(verbose) || isTRUE(debug)) {
             message(sprintf("[Stage1] consensus inputs: edges(E0)=%d, restarts(R)=%d, threads=%d, cpp_available=%s",
-                            E0, ncol(memb_mat1), ncores, as.character(exists("consensus_on_edges_omp"))))
+                            nrow(ed0), ncol(memb_mat1), threads_stage1, as.character(exists("consensus_on_edges_omp"))))
         }
-        if (isTRUE(verbose) || isTRUE(debug)) {
-            message(sprintf("[Stage1] consensus inputs: edges(E0)=%d, restarts(R)=%d, threads=%d, cpp_available=%s",
-                            nrow(ed0), ncol(memb_mat1), threads_consensus, as.character(exists("consensus_on_edges_omp"))))
-        }
-        cons_w <- .consensus_on_edges(memb_mat1, ed0$i, ed0$j, n_threads = threads_consensus)
+        cons_w <- .consensus_on_edges(memb_mat1, ed0$i, ed0$j, n_threads = threads_stage1)
         keep_e <- cons_w >= consensus_thr & is.finite(cons_w)
         if (any(keep_e)) {
             g_cons_tmp1 <- igraph::graph_from_data_frame(
@@ -336,8 +340,10 @@ clusterGenes <- function(
             g_cons_tmp1 <- g0
         }
         # community on consensus graph with API fallback
-        comm1 <- .community_detect(g_cons_tmp1, algo = algo, resolution = resolution, objective = objective)
-        memb_final1 <- igraph::membership(comm1)
+        memb_final1 <- .community_detect(g_cons_tmp1, algo = algo, resolution = resolution,
+                                         objective = objective,
+                                         backend = if (algo == "leiden") leiden_backend else "igraph",
+                                         threads = threads_stage1, debug = debug)
 
         # sparse symmetric consensus matrix (only kept edges)
         if (any(keep_e)) {
@@ -551,10 +557,10 @@ clusterGenes <- function(
                     L_vals <- as.numeric(L_post[cbind(ei, ej)])
                     rule_int <- if (CI_rule == "remove_within") 0L else 1L
                     if (isTRUE(verbose) || isTRUE(debug)) {
-                        message(sprintf("[Stage2.CI95] using C++ ci95_drop_mask_edges_omp: edges=%d, threads=%d", length(ei), ncores))
+                        message(sprintf("[Stage2.CI95] using C++ ci95_drop_mask_edges_omp: edges=%d, threads=%d", length(ei), threads_stage2))
                     }
                     drop_mask <- ci95_drop_mask_edges_omp(rMat, as.integer(ridx), as.integer(ei), as.integer(ej),
-                                                          L_vals, xp, lo, hi, rule = rule_int, n_threads = threads_consensus)
+                                                          L_vals, xp, lo, hi, rule = rule_int, n_threads = threads_stage2)
                     drop_mask <- as.logical(drop_mask)
                     if (any(drop_mask, na.rm = TRUE)) {
                         ii <- ei[drop_mask]; jj <- ej[drop_mask]
@@ -602,7 +608,7 @@ clusterGenes <- function(
             ei <- idxu[, 1]; ej <- idxu[, 2]
         }
         if (length(ei)) {
-            w_vec <- .cmh_lookup_pairs(kept_genes = kept_genes, ei = ei, ej = ej, g_sim = g_sim, weight_col = cmh_col, n_threads = threads_consensus)
+            w_vec <- .cmh_lookup_pairs(kept_genes = kept_genes, ei = ei, ej = ej, g_sim = g_sim, weight_col = cmh_col, n_threads = threads_stage2)
             # scale L symmetrically
             L_post[cbind(ei, ej)] <- L_post[cbind(ei, ej)] * w_vec
             L_post[cbind(ej, ei)] <- L_post[cbind(ej, ei)] * w_vec
@@ -738,10 +744,11 @@ clusterGenes <- function(
     is_rstudio <- tryCatch(nzchar(Sys.getenv("RSTUDIO")), error = function(e) FALSE)
     can_stage2_parallel <- isTRUE(stage2_cluster_parallel) && !os_is_windows && !is_rstudio &&
         requireNamespace("future", quietly = TRUE) && requireNamespace("future.apply", quietly = TRUE)
+    threads_stage2 <- threads_for_consensus()
     if (isTRUE(debug) || isTRUE(verbose)) {
-        message(sprintf("[Stage2] cluster_parallel=%s (os_is_windows=%s, RSTUDIO=%s, workers=%d)",
+        message(sprintf("[Stage2] cluster_parallel=%s (os_is_windows=%s, RSTUDIO=%s, workers=%d, threads_per_worker=%d)",
                         can_stage2_parallel, os_is_windows, is_rstudio,
-                        tryCatch(future::nbrOfWorkers(), error=function(e) NA_integer_)))
+                        tryCatch(future::nbrOfWorkers(), error=function(e) NA_integer_), threads_stage2))
     }
 
     if (can_stage2_parallel) {
@@ -759,6 +766,7 @@ clusterGenes <- function(
                 try(future::plan(future::multisession, workers = stage2_max_workers), silent = TRUE)
             }
         }
+        threads_stage2 <- threads_for_consensus()
 
         refine_one <- function(cid) {
             idx <- which(memb_final1 == cid)
@@ -788,7 +796,11 @@ clusterGenes <- function(
                 cons_w <- as.integer(memb_sub[match(el$from, genes_c)] == memb_sub[match(el$to, genes_c)])
             } else {
                 ii <- match(el$from, genes_c); jj <- match(el$to, genes_c)
-                cons_w <- .consensus_on_edges(memb_mat, ii, jj, n_threads = ncores)
+                if (isTRUE(debug)) {
+                    message(sprintf("[Stage2] consensus on subgraph (parallel): |E|=%d, R=%d, threads=%d, cpp_available=%s",
+                                    nrow(el), ncol(memb_mat), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
+                }
+                cons_w <- .consensus_on_edges(memb_mat, ii, jj, n_threads = threads_stage2)
             }
             keep_e <- (cons_w >= consensus_thr) & is.finite(cons_w)
             if (any(keep_e)) {
@@ -800,8 +812,9 @@ clusterGenes <- function(
                 g_cons_sub <- igraph::graph_from_data_frame(el[FALSE, ], directed = FALSE, vertices = genes_c)
             }
             # One final community on consensus subgraph
-            comm_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective)
-            memb_sub <- igraph::membership(comm_sub)
+            memb_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective,
+                                          backend = if (algo == "leiden") leiden_backend else "igraph",
+                                          threads = threads_stage2, debug = debug)
             edges_df <- if (any(keep_e)) data.frame(from = el$from[keep_e], to = el$to[keep_e], weight = cons_w[keep_e], stringsAsFactors = FALSE) else data.frame(from=character(0), to=character(0), weight=numeric(0))
             list(memb = memb_sub, edges = edges_df)
         }
@@ -842,6 +855,7 @@ clusterGenes <- function(
         }
     } else {
         # Fallback: original sequential per-cluster refinement
+        threads_stage2 <- threads_for_consensus()
         next_global_id <- 1L
         for (cid in cl_ids_stage1) {
             idx <- which(memb_final1 == cid)
@@ -890,9 +904,9 @@ clusterGenes <- function(
                 ii <- match(el$from, genes_c); jj <- match(el$to, genes_c)
                 if (isTRUE(verbose) || isTRUE(debug)) {
                     message(sprintf("[Stage2] consensus on subgraph: |E|=%d, R=%d, threads=%d, cpp_available=%s",
-                                    nrow(el), ncol(memb_mat_sub), ncores, as.character(exists("consensus_on_edges_omp"))))
+                                    nrow(el), ncol(memb_mat_sub), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
                 }
-                cons_w <- .consensus_on_edges(memb_mat_sub, ii, jj, n_threads = ncores)
+                cons_w <- .consensus_on_edges(memb_mat_sub, ii, jj, n_threads = threads_stage2)
             }
             keep_e <- (cons_w >= consensus_thr) & is.finite(cons_w)
             if (any(keep_e)) {
@@ -903,8 +917,9 @@ clusterGenes <- function(
             } else {
                 g_cons_sub <- igraph::graph_from_data_frame(el[FALSE, ], directed = FALSE, vertices = genes_c)
             }
-            comm_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective)
-            memb_sub <- igraph::membership(comm_sub)
+            memb_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective,
+                                          backend = if (algo == "leiden") leiden_backend else "igraph",
+                                          threads = threads_stage2, debug = debug)
             sub_ids <- sort(unique(memb_sub))
             if (length(sub_ids) <= 1) {
                 memb_final[genes_c] <- next_global_id
@@ -929,14 +944,6 @@ clusterGenes <- function(
         } else {
             Matrix::sparseMatrix(dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
         }
-    }
-
-    # materialize sparse global consensus matrix (symmetric)
-    cons <- if (length(cons_I)) {
-        Matrix::sparseMatrix(i = c(cons_I, cons_J), j = c(cons_J, cons_I), x = c(cons_X, cons_X),
-                             dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
-    } else {
-        Matrix::sparseMatrix(dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
     }
 
     ## 8b. Stability metrics, optional conservative subclustering and QC
@@ -1003,22 +1010,20 @@ clusterGenes <- function(
             el2 <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
             ii2 <- match(el2$from, igraph::V(g_sub)$name)
             jj2 <- match(el2$to,   igraph::V(g_sub)$name)
-            cons_w2 <- .consensus_on_edges(memb_mat_sub, ii2, jj2)
+            if (isTRUE(debug)) {
+                message(sprintf("[Stage2-sub] consensus on subcluster: |E|=%d, R=%d, threads=%d, cpp_available=%s",
+                                nrow(el2), ncol(memb_mat_sub), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
+            }
+            cons_w2 <- .consensus_on_edges(memb_mat_sub, ii2, jj2, n_threads = threads_stage2)
             g_cons_sub <- igraph::graph_from_data_frame(
                 data.frame(from = el2$from, to = el2$to, weight = cons_w2),
                 directed = FALSE, vertices = igraph::V(g_sub)$name
             )
-            if (algo == "leiden") {
-                comm_sub <- try(igraph::cluster_leiden(g_cons_sub, weights = igraph::E(g_cons_sub)$weight, resolution = resolution * sub_resolution_factor, objective_function = objective), silent = TRUE)
-                if (inherits(comm_sub, "try-error")) comm_sub <- igraph::cluster_leiden(g_cons_sub, weights = igraph::E(g_cons_sub)$weight, resolution_parameter = resolution * sub_resolution_factor, objective_function = objective)
-            } else {
-                comm_sub <- try(igraph::cluster_louvain(g_cons_sub, weights = igraph::E(g_cons_sub)$weight, resolution = resolution * sub_resolution_factor, objective_function = objective), silent = TRUE)
-                if (inherits(comm_sub, "try-error")) {
-                    comm_sub <- try(igraph::cluster_louvain(g_cons_sub, weights = igraph::E(g_cons_sub)$weight, resolution_parameter = resolution * sub_resolution_factor, objective_function = objective), silent = TRUE)
-                    if (inherits(comm_sub, "try-error")) comm_sub <- igraph::cluster_louvain(g_cons_sub, weights = igraph::E(g_cons_sub)$weight)
-                }
-            }
-            memb_sub <- igraph::membership(comm_sub)
+            memb_sub <- .community_detect(g_cons_sub, algo = algo,
+                                          resolution = resolution * sub_resolution_factor,
+                                          objective = objective,
+                                          backend = if (algo == "leiden") leiden_backend else "igraph",
+                                          threads = threads_stage2, debug = debug)
 
             # evaluate split
             sub_ids <- sort(unique(memb_sub))
