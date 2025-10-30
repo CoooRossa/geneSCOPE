@@ -427,6 +427,59 @@
 }
 
 #' @noRd
+#' Unified community detection with robust fallbacks (Leiden -> Louvain).
+.community_detect <- function(graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity")) {
+    algo <- match.arg(algo)
+    objective <- match.arg(objective)
+    if (algo == "leiden") {
+        comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
+        if (inherits(comm, "try-error")) {
+            comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+        }
+        if (inherits(comm, "try-error")) {
+            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
+            if (inherits(comm, "try-error")) {
+                comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+                if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
+            }
+        }
+    } else {
+        comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
+        if (inherits(comm, "try-error")) {
+            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
+            if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
+        }
+    }
+    comm
+}
+
+#' @noRd
+#' Align an FDR matrix to L_raw and apply threshold to L (in-place semantic).
+.align_and_filter_FDR <- function(L, L_raw, FDRmat, FDR_max) {
+    if (is.null(FDRmat)) return(L)
+    FM <- FDRmat
+    if (!is.matrix(FM)) {
+        FM_try <- try(as.matrix(FM), silent = TRUE)
+        if (!inherits(FM_try, "try-error")) FM <- FM_try
+    }
+    if (is.null(dim(FM))) {
+        FM <- matrix(FM, nrow = nrow(L_raw), ncol = ncol(L_raw))
+        dimnames(FM) <- dimnames(L_raw)
+    } else if (!(identical(dim(FM), dim(L_raw)) &&
+                 identical(rownames(FM), rownames(L_raw)) &&
+                 identical(colnames(FM), colnames(L_raw)))) {
+        if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
+            all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
+            FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
+        } else {
+            dimnames(FM) <- dimnames(L_raw)
+        }
+    }
+    L[FM > FDR_max] <- 0
+    L
+}
+
+#' @noRd
 .flipCoordinates <- function(data, y_max) {
     stopifnot(is.numeric(y_max) && length(y_max) == 1)
     if (!"y" %in% names(data)) {
