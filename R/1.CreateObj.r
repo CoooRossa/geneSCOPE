@@ -1,4 +1,4 @@
-#' 1.CreateObj.r (2025-10-26)
+#' 1.CreateObj_fixed.r (2025-07-09)
 #' @title Build scope_object from Xenium Output with (Multi-)Scale Grid Aggregation - FIXED
 #' @description
 #'   Fixes Y-axis flipping issue that caused misalignment between grid heatmap and segmentation:
@@ -785,6 +785,22 @@ createSCOPE_xenium <- function(xenium_dir,
     warning("No effective grid layer generated – please check filters/parameters.")
   }
 
+  ## ---- 15. Attach platform metadata ------------------------------------
+  if (nrow(scope_obj@meta.data) > 0L) {
+    if ("platform" %in% names(scope_obj@meta.data)) {
+      scope_obj@meta.data$platform[] <- "Xenium"
+    } else {
+      scope_obj@meta.data$platform <- rep("Xenium", nrow(scope_obj@meta.data))
+    }
+  } else {
+    scope_obj@meta.data <- data.frame(
+      platform = "Xenium",
+      stringsAsFactors = FALSE
+    )
+    rownames(scope_obj@meta.data) <- "__scope_platform__"
+  }
+  scope_obj@stats$platform <- "Xenium"
+
   scope_obj
 }
 
@@ -989,14 +1005,27 @@ createSCOPE_cosmx <- function(cosmx_root,
 
   # Attach platform/dataset metadata
   if (nrow(scope_obj@meta.data) > 0L) {
-    scope_obj@meta.data$platform <- rep("CosMx", nrow(scope_obj@meta.data))
-    scope_obj@meta.data$dataset  <- rep(if (is.null(dataset_id)) NA_character_ else dataset_id,
-                                        nrow(scope_obj@meta.data))
+    if ("platform" %in% names(scope_obj@meta.data)) {
+      scope_obj@meta.data$platform[] <- "CosMx"
+    } else {
+      scope_obj@meta.data$platform <- rep("CosMx", nrow(scope_obj@meta.data))
+    }
+    if ("dataset" %in% names(scope_obj@meta.data)) {
+      scope_obj@meta.data$dataset[] <- if (is.null(dataset_id)) NA_character_ else dataset_id
+    } else {
+      scope_obj@meta.data$dataset  <- rep(if (is.null(dataset_id)) NA_character_ else dataset_id,
+                                          nrow(scope_obj@meta.data))
+    }
   } else {
-    # When meta.data is empty, record identifiers in @stats to avoid data.frame length mismatch
-    scope_obj@stats$platform <- "CosMx"
-    scope_obj@stats$dataset  <- if (is.null(dataset_id)) NA_character_ else dataset_id
+    scope_obj@meta.data <- data.frame(
+      platform = "CosMx",
+      dataset  = if (is.null(dataset_id)) NA_character_ else dataset_id,
+      stringsAsFactors = FALSE
+    )
+    rownames(scope_obj@meta.data) <- "__scope_platform__"
   }
+  scope_obj@stats$platform <- "CosMx"
+  scope_obj@stats$dataset  <- if (is.null(dataset_id)) NA_character_ else dataset_id
   scope_obj
 }
 
@@ -1502,403 +1531,4 @@ createSCOPE <- function(data_dir = NULL,
     obj <- do.call(createSCOPE_visium, dots)
     obj
   }
-}
-#' @title Seurat-first Visium pipeline to scope_object
-#' @description
-#' Read a 10x Visium run directory using Seurat, optionally run SCTransform,
-#' then construct and return a \code{scope_object}. Raw counts are kept in
-#' \code{@cells$counts}; SCTransform residuals are written to
-#' \code{@cells$SCT} if computed.
-#'
-#' This path is useful if you prefer to rely on Seurat's IO and preprocessing
-#' steps first, then switch to geneSCOPE for grid-level workflows.
-#'
-#' @param visium_dir Path to the Visium run (the Space Ranger outs directory
-#'   that contains \code{spatial/} and a feature-barcode matrix).
-#' @param run_sctransform Logical; run SCTransform on the Seurat object
-#'   (default TRUE).
-#' @param sct_return_only_var_genes Logical; pass to SCTransform (default FALSE
-#'   to keep all genes in scale.data).
-#' @param vars_to_regress Optional character vector passed to SCTransform.
-#' @param glmGamPoi Logical; use glmGamPoi backend if available (default TRUE).
-#' @param include_in_tissue Keep only spots with \code{in_tissue == 1}
-#'   (default TRUE).
-#' @param grid_multiplier Numeric; multiplier on spot diameter for grid length
-#'   (default 1).
-#' @param flip_y Logical; flip Y coordinates to bottom-left origin (default FALSE).
-#' @param verbose Logical; print progress (default TRUE).
-#'
-#' @return A \code{scope_object} with:
-#'   - \code{@cells$counts}: raw counts (dgCMatrix)
-#'   - \code{@cells$SCT}: SCTransform scale.data (if run)
-#'   - one grid layer sized to the Visium spot diameter * \code{grid_multiplier}
-#' @noRd
-.seurat_visium_to_scope <- function(visium_dir,
-                                   run_sctransform = TRUE,
-                                   sct_return_only_var_genes = FALSE,
-                                   vars_to_regress = NULL,
-                                   glmGamPoi = TRUE,
-                                   include_in_tissue = TRUE,
-                                   grid_multiplier = 1,
-                                   flip_y = FALSE,
-                                   verbose = TRUE) {
-  stopifnot(dir.exists(visium_dir))
-  if (!requireNamespace("Seurat", quietly = TRUE)) {
-    stop("Package 'Seurat' is required for .seurat_visium_to_scope(). Please install it.")
-  }
-
-  if (!is.numeric(grid_multiplier) || length(grid_multiplier) != 1L || !is.finite(grid_multiplier) || grid_multiplier <= 0) {
-    stop("grid_multiplier must be a single positive finite numeric value.")
-  }
-
-  suppressPackageStartupMessages({
-    library(Matrix)
-    library(data.table)
-  })
-
-  # 1) Read with Seurat -----------------------------------------------------
-  if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Calling Seurat::Load10X_Spatial() …")
-  # Prefer H5 if present, otherwise let Seurat handle defaults
-  h5 <- file.path(visium_dir, "filtered_feature_bc_matrix.h5")
-  has_h5 <- file.exists(h5)
-  seu <- tryCatch({
-    if (has_h5) {
-      Seurat::Load10X_Spatial(data.dir = visium_dir, filename = basename(h5))
-    } else {
-      Seurat::Load10X_Spatial(data.dir = visium_dir)
-    }
-  }, error = function(e) {
-    stop("Load10X_Spatial failed: ", conditionMessage(e))
-  })
-
-  # 2) Optional SCTransform -------------------------------------------------
-  if (isTRUE(run_sctransform)) {
-    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Calling Seurat::SCTransform() …")
-    use_ggp <- isTRUE(glmGamPoi) && requireNamespace("glmGamPoi", quietly = TRUE)
-    seu <- Seurat::SCTransform(
-      object = seu,
-      assay = "Spatial",
-      new.assay.name = "SCT",
-      return.only.var.genes = sct_return_only_var_genes,
-      vars.to.regress = vars_to_regress,
-      method = if (use_ggp) "glmGamPoi" else "poisson",
-      verbose = isTRUE(verbose)
-    )
-    Seurat::DefaultAssay(seu) <- "SCT"
-  }
-
-  # 3) Extract matrices -----------------------------------------------------
-  # Use layer=.. if available (SeuratObject >= 5) to avoid deprecation warnings; fallback to slot=..
-  getAssayLayer <- function(obj, assay, which) {
-    ga <- Seurat::GetAssayData
-    fm <- try(formals(ga), silent = TRUE)
-    if (!inherits(fm, "try-error") && "layer" %in% names(fm)) {
-      ga(object = obj, assay = assay, layer = which)
-    } else {
-      ga(object = obj, assay = assay, slot = which)
-    }
-  }
-  raw_counts <- getAssayLayer(seu, assay = "Spatial", which = "counts")
-  if (!inherits(raw_counts, "dgCMatrix")) raw_counts <- as(raw_counts, "dgCMatrix")
-
-  sct_mat <- NULL
-  if (isTRUE(run_sctransform)) {
-    # Pearson residuals (scale.data) by convention
-    sct_mat <- getAssayLayer(seu, assay = "SCT", which = "scale.data")
-  }
-
-  # 4) Positions & scalefactors --------------------------------------------
-  spatial_dir <- file.path(visium_dir, "spatial")
-  if (!dir.exists(spatial_dir)) stop("spatial/ directory not found under ", visium_dir)
-
-  pos_candidates <- c(file.path(spatial_dir, "tissue_positions_list.csv"),
-                      file.path(spatial_dir, "tissue_positions.csv"))
-  pos_path <- pos_candidates[file.exists(pos_candidates)][1]
-  if (is.na(pos_path)) stop("Could not find tissue_positions_list.csv or tissue_positions.csv under ", spatial_dir)
-
-  pos_raw <- data.table::fread(pos_path)
-  # Standardize columns similar to createSCOPE_visium
-  standardize_positions <- function(dt) {
-    if (!data.table::is.data.table(dt)) dt <- data.table::as.data.table(dt)
-    if (ncol(dt) < 6) stop("Visium position file must contain at least six columns.")
-    if (all(grepl("^V[0-9]+$", names(dt)))) {
-      cols <- c("barcode", "in_tissue", "array_row", "array_col", "pxl_col_in_fullres", "pxl_row_in_fullres")
-      data.table::setnames(dt, cols[seq_len(ncol(dt))])
-    } else {
-      lower <- tolower(names(dt))
-      rename_first <- function(target, aliases) {
-        idx <- which(lower %in% aliases)
-        if (length(idx)) {
-          data.table::setnames(dt, idx[1], target)
-          lower[idx[1]] <<- target
-        }
-      }
-      rename_first("barcode", c("barcode", "barcodes"))
-      rename_first("in_tissue", c("in_tissue", "intissue"))
-      rename_first("array_row", c("array_row", "row", "spot_row", "arrayrow"))
-      rename_first("array_col", c("array_col", "col", "spot_col", "arraycol"))
-      rename_first("pxl_col_in_fullres", c("pxl_col_in_fullres", "pixel_x", "pxl_col", "imagecol", "col_coord"))
-      rename_first("pxl_row_in_fullres", c("pxl_row_in_fullres", "pixel_y", "pxl_row", "imagerow", "row_coord"))
-    }
-    required <- c("barcode", "in_tissue", "array_row", "array_col", "pxl_col_in_fullres", "pxl_row_in_fullres")
-    missing_cols <- setdiff(required, names(dt))
-    if (length(missing_cols)) stop("Position file missing required columns: ", paste(missing_cols, collapse = ", "))
-    dt[, `:=`(
-      barcode = as.character(barcode),
-      in_tissue = as.integer(in_tissue),
-      array_row = as.integer(array_row),
-      array_col = as.integer(array_col),
-      pxl_col_in_fullres = as.numeric(pxl_col_in_fullres),
-      pxl_row_in_fullres = as.numeric(pxl_row_in_fullres)
-    )]
-    dt
-  }
-  pos_dt <- standardize_positions(pos_raw)
-  if (isTRUE(include_in_tissue)) pos_dt <- pos_dt[in_tissue == 1L]
-
-  # Align with columns in raw_counts (barcodes in Seurat object)
-  keep <- pos_dt$barcode %in% colnames(raw_counts)
-  if (!all(keep)) pos_dt <- pos_dt[keep]
-  if (nrow(pos_dt) == 0L) stop("No overlap between positions and Seurat barcodes.")
-
-  scalefactor_candidates <- c(file.path(spatial_dir, "scalefactors_json.json"),
-                              file.path(spatial_dir, "scalefactors_json_fullres.json"))
-  sf_path <- scalefactor_candidates[file.exists(scalefactor_candidates)][1]
-  if (is.na(sf_path)) stop("scalefactors_json.json not found under ", spatial_dir)
-  sf <- jsonlite::fromJSON(sf_path)
-  microns_per_pixel <- sf$microns_per_pixel
-  spot_diameter_um <- sf$spot_diameter_microns
-  spot_diameter_px <- sf$spot_diameter_fullres
-  hires_scalef <- sf$tissue_hires_scalef %||% sf$tissue_hires_scale %||% NA_real_
-  lowres_scalef <- sf$tissue_lowres_scalef %||% sf$tissue_lowres_scale %||% NA_real_
-  if (is.null(spot_diameter_um) && !is.null(spot_diameter_px) && !is.null(microns_per_pixel)) {
-    spot_diameter_um <- as.numeric(spot_diameter_px) * as.numeric(microns_per_pixel)
-  }
-  if (is.null(microns_per_pixel) && !is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
-    microns_per_pixel <- as.numeric(spot_diameter_um) / as.numeric(spot_diameter_px)
-  }
-  if (is.null(microns_per_pixel) && is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
-    default_spot_um <- getOption("geneSCOPE.default_visium_spot_um", 55)
-    microns_per_pixel <- as.numeric(default_spot_um) / as.numeric(spot_diameter_px)
-    spot_diameter_um  <- as.numeric(default_spot_um)
-    if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] microns_per_pixel missing; assumed spot_diameter_microns = ", default_spot_um,
-                                 ", computed microns_per_pixel = ", format(round(microns_per_pixel, 9), scientific = FALSE))
-  }
-  if (is.null(microns_per_pixel)) stop("scalefactors missing microns_per_pixel; cannot convert coordinates.")
-  if (is.null(spot_diameter_um) && !is.null(spot_diameter_px)) {
-    spot_diameter_um <- as.numeric(spot_diameter_px) * as.numeric(microns_per_pixel)
-  }
-  if (is.null(spot_diameter_um)) stop("scalefactors missing spot diameter information.")
-
-  microns_per_pixel <- as.numeric(microns_per_pixel)
-  base_spot_um <- as.numeric(spot_diameter_um)
-  grid_size_um <- base_spot_um * as.numeric(grid_multiplier)
-
-  # Convert pixel coordinates to microns
-  pos_dt[, `:=`(
-    x_um = pxl_col_in_fullres * microns_per_pixel,
-    y_um = pxl_row_in_fullres * microns_per_pixel
-  )]
-  if (isTRUE(flip_y)) {
-    y_max <- max(pos_dt$y_um, na.rm = TRUE)
-    pos_dt[, y_um := y_max - y_um]
-  }
-
-  # 5) Build scope_object ---------------------------------------------------
-  # Gene metadata: try features.tsv(.gz), else fallback to rownames
-  candidate_dirs <- unique(file.path(visium_dir, c("filtered_feature_bc_matrix", "raw_feature_bc_matrix")))
-  matrix_dir <- candidate_dirs[dir.exists(candidate_dirs)][1]
-  feature_file <- if (!is.na(matrix_dir)) file.path(matrix_dir, "features.tsv.gz") else NA
-  if (!is.na(feature_file) && !file.exists(feature_file)) feature_file <- file.path(matrix_dir, "features.tsv")
-  if (!is.na(feature_file) && file.exists(feature_file)) {
-    features_dt <- data.table::fread(feature_file, header = FALSE)
-    gene_ids <- as.character(features_dt[[1]])
-    gene_names <- make.unique(as.character(features_dt[[2]]))
-    feature_type <- if (ncol(features_dt) >= 3) as.character(features_dt[[3]]) else rep(NA_character_, length(gene_names))
-    # Align to matrix rows
-    idx <- match(gene_names, rownames(raw_counts))
-    ok <- !is.na(idx)
-    gene_meta <- data.frame(
-      feature_id = gene_ids[ok],
-      feature_type = feature_type[ok],
-      platform = rep("Visium", sum(ok)),
-      stringsAsFactors = FALSE,
-      row.names = gene_names[ok]
-    )
-  } else {
-    gene_meta <- data.frame(
-      feature_id = rownames(raw_counts),
-      feature_type = NA_character_,
-      platform = rep("Visium", nrow(raw_counts)),
-      stringsAsFactors = FALSE,
-      row.names = rownames(raw_counts)
-    )
-  }
-
-  # centroids data.table
-  centroids_dt <- data.table::data.table(
-    cell = pos_dt$barcode,
-    x = pos_dt$x_um,
-    y = pos_dt$y_um,
-    array_row = pos_dt$array_row,
-    array_col = pos_dt$array_col,
-    in_tissue = pos_dt$in_tissue
-  )
-
-  # grid_info using array_row/array_col ordering
-  unique_cols <- sort(unique(pos_dt$array_col))
-  unique_rows <- sort(unique(pos_dt$array_row))
-  col_map <- setNames(seq_along(unique_cols), unique_cols)
-  row_map <- setNames(seq_along(unique_rows), unique_rows)
-
-  grid_dt <- data.table::data.table(
-    grid_id = pos_dt$barcode,
-    gx = as.integer(col_map[as.character(pos_dt$array_col)]),
-    gy = as.integer(row_map[as.character(pos_dt$array_row)]),
-    xmin = pos_dt$x_um - grid_size_um / 2,
-    xmax = pos_dt$x_um + grid_size_um / 2,
-    ymin = pos_dt$y_um - grid_size_um / 2,
-    ymax = pos_dt$y_um + grid_size_um / 2,
-    center_x = pos_dt$x_um,
-    center_y = pos_dt$y_um,
-    width = rep(grid_size_um, nrow(pos_dt)),
-    height = rep(grid_size_um, nrow(pos_dt)),
-    idx = seq_len(nrow(pos_dt)),
-    array_row = pos_dt$array_row,
-    array_col = pos_dt$array_col
-  )
-  xbins_eff <- length(unique(grid_dt$gx))
-  ybins_eff <- length(unique(grid_dt$gy))
-
-  # Reorder matrices to pos_dt order (important downstream)
-  col_idx <- match(pos_dt$barcode, colnames(raw_counts))
-  raw_counts <- raw_counts[, col_idx, drop = FALSE]
-  colnames(raw_counts) <- pos_dt$barcode
-
-  if (!is.null(sct_mat)) {
-    col_idx2 <- match(pos_dt$barcode, colnames(sct_mat))
-    sct_mat <- sct_mat[, col_idx2, drop = FALSE]
-    colnames(sct_mat) <- pos_dt$barcode
-  }
-
-  # grid counts long table from raw counts
-  counts_tbl <- Matrix::summary(raw_counts)
-  counts_dt <- data.table::data.table(
-    grid_id = colnames(raw_counts)[counts_tbl$j],
-    gene = rownames(raw_counts)[counts_tbl$i],
-    count = as.numeric(counts_tbl$x)
-  )
-  counts_dt <- counts_dt[count > 0]
-
-  # Assemble scope_object
-  fmt_len <- formatC(grid_size_um, format = "fg", digits = 6)
-  fmt_len <- trimws(fmt_len)
-  fmt_len <- sub("\\.?0+$", "", fmt_len)
-  grid_name <- paste0("grid", fmt_len)
-
-  # Infer hex orientation (flat-top vs pointy-top) from adjacency angles
-  infer_hex_orientation <- function(cent, tol_deg = 15) {
-    cn <- c("x","y","array_row","array_col")
-    if (!all(cn %in% names(cent))) return(list(orientation = NA_character_, horiz_frac = NA_real_, vert_frac = NA_real_, tol_deg = tol_deg))
-    dt <- data.table::as.data.table(cent)[, .(x, y, array_row = as.integer(array_row), array_col = as.integer(array_col))]
-    get_pairs <- function(dr, dc) {
-      a <- dt
-      # Build neighbour table with unique column names to avoid x/y suffixing after merge
-      b <- dt[, .(array_row_nb = array_row - dr,
-                  array_col_nb = array_col - dc,
-                  x_nb = x,
-                  y_nb = y)]
-      m <- merge(a, b, by.x = c("array_row", "array_col"), by.y = c("array_row_nb", "array_col_nb"), all = FALSE)
-      if (!nrow(m)) return(NULL)
-      m[, .(dx = x_nb - x, dy = y_nb - y)]
-    }
-    edges <- data.table::rbindlist(list(
-      get_pairs(0, 1), get_pairs(1, 0), get_pairs(1, 1), get_pairs(1, -1)
-    ), use.names = TRUE, fill = TRUE)
-    if (is.null(edges) || !nrow(edges)) return(list(orientation = NA_character_, horiz_frac = NA_real_, vert_frac = NA_real_, tol_deg = tol_deg))
-    theta <- abs(atan2(edges$dy, edges$dx) * 180 / pi)
-    horiz <- pmin(theta, 180 - theta) <= tol_deg
-    vert  <- abs(theta - 90) <= tol_deg
-    hfrac <- mean(horiz, na.rm = TRUE)
-    vfrac <- mean(vert,  na.rm = TRUE)
-    list(orientation = ifelse(hfrac >= vfrac, "flat-top", "pointy-top"), horiz_frac = hfrac, vert_frac = vfrac, tol_deg = tol_deg)
-  }
-  ori <- infer_hex_orientation(centroids_dt, tol_deg = 15)
-
-  scope_obj <- new("scope_object",
-    coord = list(centroids = centroids_dt),
-    grid = list(),
-    meta.data = gene_meta,
-    cells = list(counts = raw_counts),
-    stats = list(),
-    density = list()
-  )
-  scope_obj@grid[[grid_name]] <- list(
-    grid_info = grid_dt,
-    counts = counts_dt,
-    grid_length = grid_size_um,
-    xbins_eff = xbins_eff,
-    ybins_eff = ybins_eff,
-    spot_diameter_um = base_spot_um,
-    microns_per_pixel = microns_per_pixel,
-    visium_orientation = ori$orientation,
-    visium_orientation_horiz_frac = ori$horiz_frac,
-    visium_orientation_vert_frac  = ori$vert_frac,
-    visium_orientation_tol_deg    = ori$tol_deg
-  )
-  ## ---- 4.x Store image paths and metadata for overlay -------------------
-  image_candidates_hires <- c(
-    file.path(spatial_dir, "aligned_tissue_image.jpg"),
-    file.path(spatial_dir, "tissue_hires_image.png"),
-    file.path(spatial_dir, "tissue_hires_image.jpg")
-  )
-  image_candidates_lowres <- c(
-    file.path(spatial_dir, "tissue_lowres_image.png"),
-    file.path(spatial_dir, "detected_tissue_image.jpg")
-  )
-  hires_path <- image_candidates_hires[file.exists(image_candidates_hires)][1]
-  lowres_path <- image_candidates_lowres[file.exists(image_candidates_lowres)][1]
-  get_img_dim <- function(p) {
-    if (is.na(p)) return(c(NA_integer_, NA_integer_))
-    ext <- tolower(tools::file_ext(p))
-    dims <- c(NA_integer_, NA_integer_)
-    try({
-      if (ext %in% c("png")) {
-        if (requireNamespace("png", quietly = TRUE)) {
-          a <- png::readPNG(p)
-          dims <- c(dim(a)[2], dim(a)[1]) # width, height
-        }
-      } else if (ext %in% c("jpg","jpeg")) {
-        if (requireNamespace("jpeg", quietly = TRUE)) {
-          a <- jpeg::readJPEG(p)
-          dims <- c(dim(a)[2], dim(a)[1])
-        }
-      }
-    }, silent = TRUE)
-    dims
-  }
-  hires_dim <- get_img_dim(hires_path)
-  lowres_dim <- get_img_dim(lowres_path)
-  scope_obj@grid[[grid_name]]$image_info <- list(
-    hires_path = if (is.na(hires_path)) NULL else hires_path,
-    lowres_path = if (is.na(lowres_path)) NULL else lowres_path,
-    hires_dim_px = hires_dim,
-    lowres_dim_px = lowres_dim,
-    positions_path = pos_path,
-    scalefactors_path = sf_path,
-    tissue_hires_scalef = hires_scalef,
-    tissue_lowres_scalef = lowres_scalef,
-    spot_diameter_fullres = spot_diameter_px,
-    y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
-  )
-  if (!is.null(sct_mat)) {
-    scope_obj@grid[[grid_name]]$SCT <- t(sct_mat)
-  }
-
-  if (isTRUE(verbose)) {
-    message("[geneSCOPE::createSCOPE visium] scope_object created with ", nrow(centroids_dt),
-            " spots and grid_length = ", round(grid_size_um, 3), " um")
-  }
-
-  scope_obj
 }
