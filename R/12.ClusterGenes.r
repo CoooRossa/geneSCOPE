@@ -4,32 +4,74 @@
 #' @noRd 
 # Lightweight worker: do NOT capture parent environment
 # Accepts 'ii' and '...' to swallow any future-specific extras
-.geneSCOPE_cluster_once <- function(ii, graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity"), ...) {
+.geneSCOPE_cluster_once <- function(ii, graph,
+                                    algo = c("leiden", "louvain"),
+                                    resolution = 1,
+                                    objective = c("CPM", "modularity"),
+                                    backend = c("igraph", "networkit"),
+                                    threads = 1,
+                                    ...) {
     # Guard against thread oversubscription inside workers
-    try({ if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1) }, silent = TRUE)
-    Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1")
+    threads <- suppressWarnings(as.integer(threads))
+    if (length(threads) == 0L || is.na(threads) || threads < 1L) threads <- 1L
+    try({
+        if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
+    }, silent = TRUE)
+    Sys.setenv(
+        OMP_NUM_THREADS = as.character(threads),
+        OPENBLAS_NUM_THREADS = "1",
+        MKL_NUM_THREADS = "1"
+    )
     try({ if (requireNamespace("data.table", quietly = TRUE)) data.table::setDTthreads(1) }, silent = TRUE)
     algo <- match.arg(algo)
     objective <- match.arg(objective)
+    backend <- match.arg(backend)
     if (algo == "leiden") {
-        comm <- try(igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
-        if (inherits(comm, "try-error")) comm <- igraph::cluster_leiden(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective)
+        memb <- .community_detect(
+            graph = graph,
+            algo = "leiden",
+            resolution = resolution,
+            objective = objective,
+            backend = backend,
+            threads = threads,
+            debug = FALSE
+        )
     } else {
-        comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution = resolution, objective_function = objective), silent = TRUE)
-        if (inherits(comm, "try-error")) {
-            comm <- try(igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight, resolution_parameter = resolution, objective_function = objective), silent = TRUE)
-            if (inherits(comm, "try-error")) comm <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
-        }
+        memb <- .community_detect(
+            graph = graph,
+            algo = "louvain",
+            resolution = resolution,
+            objective = objective,
+            backend = "igraph",
+            threads = 1,
+            debug = FALSE
+        )
     }
-    as.integer(igraph::membership(comm))
+    if (is.null(names(memb))) names(memb) <- igraph::as_ids(igraph::V(graph))
+    as.integer(memb)
 }
 #' @noRd 
 # Batch worker to avoid capturing large environments; only depends on arguments.
-.geneSCOPE_cluster_batch <- function(batch_ids, graph, algo = c("leiden", "louvain"), resolution = 1, objective = c("CPM", "modularity")) {
+.geneSCOPE_cluster_batch <- function(batch_ids,
+                                     graph,
+                                     algo = c("leiden", "louvain"),
+                                     resolution = 1,
+                                     objective = c("CPM", "modularity"),
+                                     backend = c("igraph", "networkit"),
+                                     threads = 1) {
+    backend <- match.arg(backend)
     res <- vector("list", length(batch_ids))
     for (k in seq_along(batch_ids)) {
         # Use the single-run worker to keep identical code paths and RNG behavior under future.seed
-        res[[k]] <- .geneSCOPE_cluster_once(batch_ids[[k]], graph = graph, algo = algo, resolution = resolution, objective = objective)
+        res[[k]] <- .geneSCOPE_cluster_once(
+            batch_ids[[k]],
+            graph = graph,
+            algo = algo,
+            resolution = resolution,
+            objective = objective,
+            backend = backend,
+            threads = threads
+        )
     }
     res
 }
@@ -91,9 +133,9 @@ clusterGenes <- function(
     aggressive_cpu = TRUE,
     stage2_cluster_parallel = TRUE,
     stage2_max_workers = NULL,
-    stage2_min_edges = 100,
+    stage2_min_edges = 0,
     mode = c("fast", "robust"),            # speed/memory profile
-    refine_always = TRUE,                   # run Stage-2 even if no CI95/CMH
+    refine_always = FALSE,                  # run Stage-2 even if no CI95/CMH
     adaptive_restarts = FALSE,               # do not cap restarts by default
     target_pair_ops = 2.5e8,                # total pairwise ops budget for consensus (fast mode)
     aggressive_gc = TRUE,                   # free big objects between stages
@@ -104,7 +146,13 @@ clusterGenes <- function(
     objective <- match.arg(objective)
     CI_rule <- match.arg(CI_rule)
     mode <- match.arg(mode)
-    leiden_backend <- match.arg(getOption("geneSCOPE.leiden_backend", leiden_backend))
+    backend_option <- getOption("geneSCOPE.leiden_backend", NULL)
+    if (is.null(backend_option)) {
+        backend_option <- leiden_backend
+    } else {
+        backend_option <- backend_option[1]
+    }
+    leiden_backend <- match.arg(backend_option, c("igraph", "networkit"))
     fast_mode <- identical(mode, "fast")
 
     ## 1. Select grid layer
@@ -286,73 +334,74 @@ clusterGenes <- function(
         }
     }
 
-    # Stage-1: restart batching to reduce scheduling/serialization overhead
-    rvec <- seq_len(n_restart_eff)
-    workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
-    if (is.na(workers) || workers < 1) workers <- ncores
-    if (is.null(restart_batch_size)) {
-        bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
-        if (isTRUE(aggressive_cpu)) bs <- max(3L, min(10L, bs))
-    } else bs <- as.integer(max(1L, restart_batch_size))
-    batches_stage1 <- split(rvec, ceiling(rvec / bs))
+    # Stage-1: multi-run clustering with restart consensus (legacy behaviour)
     if (isTRUE(verbose) || isTRUE(debug)) {
-        message(sprintf("[Stage1] workers=%d, n_restart=%d, batch_size=%d, n_batches=%d, scheduling=%.2f",
-                        workers, n_restart_eff, bs, length(batches_stage1), as.numeric(future_scheduling_stage1)))
+        message(sprintf("[Stage1] workers=%d, n_restart=%d", tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_), n_restart_eff))
     }
-    memb_list1 <- future.apply::future_lapply(
-        X = batches_stage1,
-        FUN = .geneSCOPE_cluster_batch,
-        graph = g0,
-        algo = algo,
-        resolution = resolution,
-        objective = objective,
+    edge_table_stage1 <- data.frame(
+        from = edges_df$from,
+        to = edges_df$to,
+        weight = edges_df$weight,
+        stringsAsFactors = FALSE
+    )
+    run_cluster <- function(graph_obj, res_value = resolution) {
+        if (algo == "leiden") {
+            comm <- igraph::cluster_leiden(
+                graph_obj,
+                weights = igraph::E(graph_obj)$weight,
+                resolution_parameter = res_value,
+                objective_function = objective
+            )
+        } else {
+            comm <- igraph::cluster_louvain(
+                graph_obj,
+                weights = igraph::E(graph_obj)$weight,
+                resolution_parameter = res_value,
+                objective_function = objective
+            )
+        }
+        memb_raw <- igraph::membership(comm)
+        nm <- names(memb_raw)
+        memb <- as.integer(memb_raw)
+        if (is.null(nm)) nm <- igraph::V(graph_obj)$name
+        names(memb) <- nm
+        memb
+    }
+    memb_mat1 <- future.apply::future_sapply(
+        X = seq_len(n_restart_eff),
+        FUN = function(ii) {
+            g_local <- igraph::graph_from_data_frame(edge_table_stage1, directed = FALSE, vertices = kept_genes)
+            memb_vec <- run_cluster(g_local, res_value = resolution)
+            memb_vec[kept_genes]
+        },
         future.seed = TRUE,
         future.globals = FALSE,
-        future.packages = c("igraph", "Matrix", "data.table"),
+        future.packages = c("igraph"),
         future.scheduling = future_scheduling_stage1
     )
-    memb_list1 <- unlist(memb_list1, recursive = FALSE, use.names = FALSE)
-    # Robust bind to matrix
-    memb_mat1 <- try(do.call(cbind, memb_list1), silent = TRUE)
-    if (inherits(memb_mat1, "try-error") || is.null(dim(memb_mat1))) {
-        memb_mat1 <- matrix(unlist(memb_list1, use.names = FALSE), nrow = length(kept_genes))
+    if (is.null(dim(memb_mat1))) {
+        memb_mat1 <- matrix(memb_mat1, nrow = length(kept_genes), dimnames = list(kept_genes, NULL))
+    } else {
+        rownames(memb_mat1) <- kept_genes
     }
-    rownames(memb_mat1) <- kept_genes
 
     if (!use_consensus) {
         memb_final1 <- memb_mat1[, 1]
-        cons <- Matrix::sparseMatrix(dims = c(length(kept_genes), length(kept_genes)))
+        cons_dense <- outer(memb_final1, memb_final1, "==") * 1
+        diag(cons_dense) <- 0
+        cons <- Matrix::drop0(Matrix::Matrix(cons_dense, sparse = TRUE))
     } else {
-        # Build consensus only on base edges (vectorized over restart blocks)
-        E0 <- nrow(ed0)
-        if (isTRUE(verbose) || isTRUE(debug)) {
-            message(sprintf("[Stage1] consensus inputs: edges(E0)=%d, restarts(R)=%d, threads=%d, cpp_available=%s",
-                            nrow(ed0), ncol(memb_mat1), threads_stage1, as.character(exists("consensus_on_edges_omp"))))
+        ng <- length(kept_genes)
+        cons_dense <- matrix(0, ng, ng)
+        for (k in seq_len(ncol(memb_mat1))) {
+            cons_dense <- cons_dense + (outer(memb_mat1[, k], memb_mat1[, k], "=="))
         }
-        cons_w <- .consensus_on_edges(memb_mat1, ed0$i, ed0$j, n_threads = threads_stage1)
-        keep_e <- cons_w >= consensus_thr & is.finite(cons_w)
-        if (any(keep_e)) {
-            g_cons_tmp1 <- igraph::graph_from_data_frame(
-                data.frame(from = kept_genes[ed0$i[keep_e]], to = kept_genes[ed0$j[keep_e]], weight = cons_w[keep_e]),
-                directed = FALSE, vertices = kept_genes
-            )
-        } else {
-            g_cons_tmp1 <- g0
-        }
-        # community on consensus graph with API fallback
-        memb_final1 <- .community_detect(g_cons_tmp1, algo = algo, resolution = resolution,
-                                         objective = objective,
-                                         backend = if (algo == "leiden") leiden_backend else "igraph",
-                                         threads = threads_stage1, debug = debug)
-
-        # sparse symmetric consensus matrix (only kept edges)
-        if (any(keep_e)) {
-            cons <- Matrix::sparseMatrix(i = ed0$i[keep_e], j = ed0$j[keep_e], x = cons_w[keep_e],
-                                         dims = c(length(kept_genes), length(kept_genes)))
-            cons <- cons + Matrix::t(cons)
-        } else {
-            cons <- Matrix::sparseMatrix(dims = c(length(kept_genes), length(kept_genes)))
-        }
+        cons_dense <- cons_dense / ncol(memb_mat1)
+        diag(cons_dense) <- 0
+        cons_dense[cons_dense < consensus_thr] <- 0
+        cons <- Matrix::drop0(Matrix::Matrix(cons_dense, sparse = TRUE))
+        g_cons_tmp1 <- igraph::graph_from_adjacency_matrix(cons_dense, mode = "undirected", weighted = TRUE, diag = FALSE)
+        memb_final1 <- run_cluster(g_cons_tmp1, res_value = resolution)
     }
 
     ## Early exit: if no post-correction requested, return stage-1 result
@@ -502,18 +551,46 @@ clusterGenes <- function(
         gc(FALSE)
     }
 
+    threads_stage2 <- threads_for_consensus()
+
     ## 6. Correct L by CI95 and/or CMH (post step)
     # start from raw L among kept genes
-    L_post <- L_raw[kept_genes, kept_genes, drop = FALSE]
+    L_post <- .ensure_numeric_matrix(
+        L_raw[kept_genes, kept_genes, drop = FALSE],
+        nrow = length(kept_genes),
+        ncol = length(kept_genes),
+        rownames_out = kept_genes,
+        colnames_out = kept_genes,
+        as_sparse = TRUE
+    )
+    if (is.null(L_post)) stop("Unable to coerce Lee matrix to numeric form for Stage-2")
     # apply baseline thresholding again to keep consistency
-    L_post[abs(L_post) < L_min] <- 0
+    if (inherits(L_post, "sparseMatrix")) {
+        if (L_min > 0) {
+            idx_min <- which(abs(L_post@x) < L_min)
+            if (length(idx_min)) {
+                L_post@x[idx_min] <- 0
+                L_post <- Matrix::drop0(L_post)
+            }
+        }
+    } else {
+        L_post[abs(L_post) < L_min] <- 0
+    }
     if (use_FDR) {
         L_post <- .align_and_filter_FDR(L_post, L_raw, FDRmat, FDR_max)
     }
-    L_post[L_post < 0] <- 0
+    if (inherits(L_post, "sparseMatrix")) {
+        neg_idx <- which(L_post@x < 0)
+        if (length(neg_idx)) {
+            L_post@x[neg_idx] <- 0
+            L_post <- Matrix::drop0(L_post)
+        }
+    } else {
+        L_post[L_post < 0] <- 0
+    }
     L_post <- .symmetric_pmax(L_post)
     L_post <- .filter_matrix_by_quantile(L_post, pct_min, "q100")
-    if (!inherits(L_post, "sparseMatrix")) L_post <- Matrix::drop0(Matrix::Matrix(L_post, sparse = TRUE)) else L_post <- Matrix::drop0(L_post)
+    L_post <- Matrix::drop0(methods::as(L_post, "CsparseMatrix"))
 
     # CI95 masking on L (if requested)
     if (CI95_filter) {
@@ -615,35 +692,17 @@ clusterGenes <- function(
 
     # ensure symmetry and zero diagonal after corrections
     L_post <- .symmetric_pmax(L_post)
-    if (!inherits(L_post, "sparseMatrix")) L_post <- Matrix::drop0(Matrix::Matrix(L_post, sparse = TRUE)) else L_post <- Matrix::drop0(L_post)
+    L_post <- Matrix::drop0(methods::as(L_post, "CsparseMatrix"))
 
     ## Apply FDR filter on corrected L if requested (robust to missing dimnames)
     if (use_FDR && is.matrix(FDRmat)) {
-        # ensure FDRmat aligned to L_raw order and subset by kept_genes
-        FM <- FDRmat
-        if (is.null(dimnames(FM))) {
-            dimnames(FM) <- dimnames(L_raw)
-        } else {
-            if (!(identical(rownames(FM), rownames(L_raw)) && identical(colnames(FM), colnames(L_raw)))) {
-                if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
-                    all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
-                    FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
-                } else {
-                    dimnames(FM) <- dimnames(L_raw)
-                }
-            }
-        }
-        # Use numeric indices as a final fallback to avoid name issues
-        ridx <- match(kept_genes, rownames(L_raw))
-        cidx <- ridx
-        FDR_sub <- FM[ridx, cidx, drop = FALSE]
-        L_post[FDR_sub > FDR_max] <- 0
+        L_post <- .align_and_filter_FDR(L_post, L_raw, FDRmat, FDR_max)
     }
 
     ## 7. Preserve an intra-cluster backbone to avoid breaking small clusters
     if (isTRUE(keep_stage1_backbone)) {
         # determine a small positive floor from current corrected L
-        pos_vals <- as.numeric(L_post[L_post > 0])
+        pos_vals <- if (inherits(L_post, "sparseMatrix")) L_post@x[L_post@x > 0] else as.numeric(L_post[L_post > 0])
         if (length(pos_vals) == 0) {
             w_floor <- 1e-6
         } else {
@@ -660,20 +719,38 @@ clusterGenes <- function(
             if (length(genes_c) < 2) next
             # prefer corrected weights within the cluster; if empty, fall back to raw L
             M <- L_post[genes_c, genes_c, drop = FALSE]
-            if (!any(M > 0, na.rm = TRUE)) {
-                M <- L_raw_pos[genes_c, genes_c, drop = FALSE]
+            if (inherits(M, "sparseMatrix")) {
+                has_pos <- any(M@x > 0)
+                M <- Matrix::drop0(methods::as(M, "dgCMatrix"))
+            } else {
+                has_pos <- any(M > 0, na.rm = TRUE)
+            }
+            if (!has_pos) {
+                M <- .ensure_numeric_matrix(
+                    L_raw_pos[genes_c, genes_c, drop = FALSE],
+                    nrow = length(genes_c),
+                    ncol = length(genes_c),
+                    rownames_out = genes_c,
+                    colnames_out = genes_c,
+                    as_sparse = TRUE
+                )
+            } else if (!inherits(M, "sparseMatrix")) {
+                M <- .ensure_numeric_matrix(
+                    M,
+                    nrow = length(genes_c),
+                    ncol = length(genes_c),
+                    rownames_out = genes_c,
+                    colnames_out = genes_c,
+                    as_sparse = TRUE
+                )
             }
             # build graph and compute MST on available positive edges
-            if (inherits(M, "sparseMatrix")) {
-                TTm <- methods::as(M, "TsparseMatrix")
-                maskm <- (TTm@x > 0) & (TTm@i < TTm@j)
-                if (any(maskm)) {
-                    idx <- cbind(TTm@i[maskm] + 1L, TTm@j[maskm] + 1L)
-                } else {
-                    idx <- matrix(numeric(0), ncol = 2)
-                }
+            TTm <- methods::as(M, "TsparseMatrix")
+            maskm <- (TTm@x > 0) & (TTm@i < TTm@j)
+            if (any(maskm)) {
+                idx <- cbind(TTm@i[maskm] + 1L, TTm@j[maskm] + 1L)
             } else {
-                idx <- which(upper.tri(M) & M > 0, arr.ind = TRUE)
+                idx <- matrix(numeric(0), ncol = 2)
             }
             if (nrow(idx) == 0) next
             edf <- data.frame(from = genes_c[idx[,1]], to = genes_c[idx[,2]], w = M[idx], stringsAsFactors = FALSE)
@@ -733,216 +810,78 @@ clusterGenes <- function(
     ng <- length(kept_genes)
     memb_final <- rep(NA_integer_, ng)
     names(memb_final) <- kept_genes
-    cons_I <- integer(0); cons_J <- integer(0); cons_X <- numeric(0)
+    cons <- matrix(0, ng, ng, dimnames = list(kept_genes, kept_genes))
 
     cl_ids_stage1 <- sort(na.omit(unique(memb_final1)))
-
-    # Determine whether to enable cluster-level parallelism (protected)
-    os_is_windows <- identical(.Platform$OS.type, "windows")
-    is_rstudio <- tryCatch(nzchar(Sys.getenv("RSTUDIO")), error = function(e) FALSE)
-    can_stage2_parallel <- isTRUE(stage2_cluster_parallel) && !os_is_windows && !is_rstudio &&
-        requireNamespace("future", quietly = TRUE) && requireNamespace("future.apply", quietly = TRUE)
     threads_stage2 <- threads_for_consensus()
-    if (isTRUE(debug) || isTRUE(verbose)) {
-        message(sprintf("[Stage2] cluster_parallel=%s (os_is_windows=%s, RSTUDIO=%s, workers=%d, threads_per_worker=%d)",
-                        can_stage2_parallel, os_is_windows, is_rstudio,
-                        tryCatch(future::nbrOfWorkers(), error=function(e) NA_integer_), threads_stage2))
-    }
+    next_global_id <- 1L
+    old_max_size <- getOption("future.globals.maxSize")
+    options(future.globals.maxSize = +Inf)
+    on.exit(options(future.globals.maxSize = old_max_size), add = TRUE)
 
-    if (can_stage2_parallel) {
-        # Optional: temporarily adjust workers if stage2_max_workers is set
-        cur_plan <- tryCatch(future::plan(), error = function(e) NULL)
-        cur_strategy <- tryCatch(attr(cur_plan, "class")[1], error = function(e) NULL)
-        restore_plan <- function() {
-            if (!is.null(cur_plan)) try(future::plan(cur_plan), silent = TRUE)
-        }
-        on.exit(restore_plan(), add = TRUE)
-        if (!is.null(stage2_max_workers)) {
-            if (grepl("multicore", cur_strategy, fixed = TRUE)) {
-                try(future::plan(future::multicore, workers = stage2_max_workers), silent = TRUE)
-            } else {
-                try(future::plan(future::multisession, workers = stage2_max_workers), silent = TRUE)
-            }
-        }
-        threads_stage2 <- threads_for_consensus()
-
-        refine_one <- function(cid) {
-            idx <- which(memb_final1 == cid)
-            genes_c <- kept_genes[idx]
-            # Build subgraph
-            g1_sub <- igraph::induced_subgraph(g1, vids = genes_c)
-            ecount <- igraph::ecount(g1_sub)
-            if (length(idx) <= 1 || ecount == 0 || ecount < stage2_min_edges) {
-                return(list(memb = setNames(rep(1L, length(genes_c)), genes_c),
-                            edges = data.frame(from=character(0), to=character(0), weight=numeric(0))))
-            }
-            el <- igraph::as_data_frame(g1_sub, what = "edges")[, c("from", "to")]
-            # Sequential restarts inside the worker to avoid nested futures
-            rvec <- seq_len(n_restart_eff)
-            # Use the same batching logic but sequential
-            bs <- if (is.null(restart_batch_size)) max(3L, min(20L, as.integer(ceiling(n_restart_eff / max(1L, ncores))))) else as.integer(max(1L, restart_batch_size))
-            if (isTRUE(aggressive_cpu)) bs <- max(3L, min(10L, bs))
-            batches <- split(rvec, ceiling(rvec / bs))
-            memb_list <- lapply(batches, .geneSCOPE_cluster_batch, graph = g1_sub, algo = algo, resolution = resolution, objective = objective)
-            memb_list <- unlist(memb_list, recursive = FALSE, use.names = FALSE)
-            memb_mat <- try(do.call(cbind, memb_list), silent = TRUE)
-            if (inherits(memb_mat, "try-error") || is.null(dim(memb_mat))) memb_mat <- matrix(unlist(memb_list, use.names = FALSE), nrow = length(genes_c))
-            rownames(memb_mat) <- igraph::V(g1_sub)$name
-            # Consensus on edges (C++/OpenMP)
-            if (!use_consensus) {
-                memb_sub <- memb_mat[, 1]
-                cons_w <- as.integer(memb_sub[match(el$from, genes_c)] == memb_sub[match(el$to, genes_c)])
-            } else {
-                ii <- match(el$from, genes_c); jj <- match(el$to, genes_c)
-                if (isTRUE(debug)) {
-                    message(sprintf("[Stage2] consensus on subgraph (parallel): |E|=%d, R=%d, threads=%d, cpp_available=%s",
-                                    nrow(el), ncol(memb_mat), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
-                }
-                cons_w <- .consensus_on_edges(memb_mat, ii, jj, n_threads = threads_stage2)
-            }
-            keep_e <- (cons_w >= consensus_thr) & is.finite(cons_w)
-            if (any(keep_e)) {
-                g_cons_sub <- igraph::graph_from_data_frame(
-                    data.frame(from = el$from[keep_e], to = el$to[keep_e], weight = cons_w[keep_e]),
-                    directed = FALSE, vertices = genes_c
-                )
-            } else {
-                g_cons_sub <- igraph::graph_from_data_frame(el[FALSE, ], directed = FALSE, vertices = genes_c)
-            }
-            # One final community on consensus subgraph
-            memb_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective,
-                                          backend = if (algo == "leiden") leiden_backend else "igraph",
-                                          threads = threads_stage2, debug = debug)
-            edges_df <- if (any(keep_e)) data.frame(from = el$from[keep_e], to = el$to[keep_e], weight = cons_w[keep_e], stringsAsFactors = FALSE) else data.frame(from=character(0), to=character(0), weight=numeric(0))
-            list(memb = memb_sub, edges = edges_df)
+    for (cid in cl_ids_stage1) {
+        idx <- which(memb_final1 == cid)
+        genes_c <- kept_genes[idx]
+        g1_sub <- igraph::induced_subgraph(g1, vids = genes_c)
+        ecount_sub <- igraph::ecount(g1_sub)
+        if (length(idx) <= 1 || ecount_sub == 0 || ecount_sub < stage2_min_edges) {
+            memb_final[genes_c] <- next_global_id
+            next_global_id <- next_global_id + 1L
+            next
         }
 
-        res_list <- future.apply::future_lapply(
-            X = cl_ids_stage1,
-            FUN = refine_one,
+        edge_table_sub <- igraph::as_data_frame(g1_sub, what = "edges")[, c("from", "to", "weight")]
+        memb_mat_sub <- future.apply::future_sapply(
+            X = seq_len(n_restart_eff),
+            FUN = function(ii) {
+                g_local <- igraph::graph_from_data_frame(edge_table_sub, directed = FALSE, vertices = genes_c)
+                memb_vec <- run_cluster(g_local, res_value = resolution)
+                memb_vec[genes_c]
+            },
             future.seed = TRUE,
             future.globals = FALSE,
-            future.packages = c("igraph", "Matrix", "data.table"),
+            future.packages = c("igraph"),
             future.scheduling = future_scheduling_stage2
         )
+        if (is.null(dim(memb_mat_sub))) {
+            memb_mat_sub <- matrix(memb_mat_sub, nrow = length(genes_c), dimnames = list(genes_c, NULL))
+        } else {
+            rownames(memb_mat_sub) <- genes_c
+        }
 
-        # Merge results: assign global ids sequentially by cluster order
-        next_global_id <- 1L
-        for (k in seq_along(cl_ids_stage1)) {
-            memb_sub <- res_list[[k]]$memb
-            genes_c <- names(memb_sub)
-            uids <- sort(unique(memb_sub))
-            if (length(uids) <= 1) {
-                memb_final[genes_c] <- next_global_id; next_global_id <- next_global_id + 1L
-            } else {
-                for (sid in uids) {
-                    gs <- names(memb_sub)[memb_sub == sid]
-                    memb_final[gs] <- next_global_id
-                    next_global_id <- next_global_id + 1L
-                }
-            }
-        }
-        # Build global consensus triplets
-        all_edges <- do.call(rbind, lapply(res_list, function(x) x$edges))
-        if (is.null(all_edges) || !nrow(all_edges)) {
-            cons <- Matrix::sparseMatrix(dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
+        if (!use_consensus) {
+            memb_sub <- memb_mat_sub[, 1]
+            cons_sub <- outer(memb_sub, memb_sub, "==") * 1
+            diag(cons_sub) <- 0
         } else {
-            gi <- match(all_edges$from, kept_genes); gj <- match(all_edges$to, kept_genes)
-            cons <- Matrix::sparseMatrix(i = c(gi, gj), j = c(gj, gi), x = c(all_edges$weight, all_edges$weight),
-                                         dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
+            ns <- length(genes_c)
+            cons_sub <- matrix(0, ns, ns)
+            for (k in seq_len(ncol(memb_mat_sub))) {
+                cons_sub <- cons_sub + (outer(memb_mat_sub[, k], memb_mat_sub[, k], "=="))
+            }
+            cons_sub <- cons_sub / ncol(memb_mat_sub)
+            diag(cons_sub) <- 0
+            cons_sub[cons_sub < consensus_thr] <- 0
+            g_cons_sub <- igraph::graph_from_adjacency_matrix(cons_sub, mode = "undirected", weighted = TRUE, diag = FALSE)
+            memb_sub <- run_cluster(g_cons_sub, res_value = resolution)
         }
-    } else {
-        # Fallback: original sequential per-cluster refinement
-        threads_stage2 <- threads_for_consensus()
-        next_global_id <- 1L
-        for (cid in cl_ids_stage1) {
-            idx <- which(memb_final1 == cid)
-            genes_c <- kept_genes[idx]
-            g1_sub <- igraph::induced_subgraph(g1, vids = genes_c)
-            if (length(idx) <= 1 || igraph::ecount(g1_sub) == 0 || igraph::ecount(g1_sub) < stage2_min_edges) {
-                memb_final[genes_c] <- next_global_id
-                next_global_id <- next_global_id + 1L
-                next
-            }
-            el <- igraph::as_data_frame(g1_sub, what = "edges")[, c("from", "to")]
-            rvec <- seq_len(n_restart_eff)
-            workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
-            if (is.na(workers) || workers < 1) workers <- ncores
-            if (is.null(restart_batch_size)) {
-                bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
-                if (isTRUE(aggressive_cpu)) bs <- max(3L, min(10L, bs))
-            } else bs <- as.integer(max(1L, restart_batch_size))
-            batches_stage2 <- split(rvec, ceiling(rvec / bs))
-            if (isTRUE(verbose) || isTRUE(debug)) {
-                message(sprintf("[Stage2] workers=%d, n_restart=%d, batch_size=%d, n_batches=%d, scheduling=%.2f",
-                                workers, n_restart_eff, bs, length(batches_stage2), as.numeric(future_scheduling_stage1)))
-            }
-            memb_list_sub <- future.apply::future_lapply(
-                X = batches_stage2,
-                FUN = .geneSCOPE_cluster_batch,
-                graph = g1_sub,
-                algo = algo,
-                resolution = resolution,
-                objective = objective,
-                future.seed = TRUE,
-                future.globals = FALSE,
-                future.packages = c("igraph", "Matrix", "data.table"),
-                future.scheduling = future_scheduling_stage1
-            )
-            memb_list_sub <- unlist(memb_list_sub, recursive = FALSE, use.names = FALSE)
-            memb_mat_sub <- try(do.call(cbind, memb_list_sub), silent = TRUE)
-            if (inherits(memb_mat_sub, "try-error") || is.null(dim(memb_mat_sub))) {
-                memb_mat_sub <- matrix(unlist(memb_list_sub, use.names = FALSE), nrow = length(genes_c))
-            }
-            rownames(memb_mat_sub) <- igraph::V(g1_sub)$name
-            if (!use_consensus) {
-                memb_sub <- memb_mat_sub[, 1]
-                cons_w <- as.integer(memb_sub[match(el$from, genes_c)] == memb_sub[match(el$to, genes_c)])
-            } else {
-                ii <- match(el$from, genes_c); jj <- match(el$to, genes_c)
-                if (isTRUE(verbose) || isTRUE(debug)) {
-                    message(sprintf("[Stage2] consensus on subgraph: |E|=%d, R=%d, threads=%d, cpp_available=%s",
-                                    nrow(el), ncol(memb_mat_sub), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
-                }
-                cons_w <- .consensus_on_edges(memb_mat_sub, ii, jj, n_threads = threads_stage2)
-            }
-            keep_e <- (cons_w >= consensus_thr) & is.finite(cons_w)
-            if (any(keep_e)) {
-                g_cons_sub <- igraph::graph_from_data_frame(
-                    data.frame(from = el$from[keep_e], to = el$to[keep_e], weight = cons_w[keep_e]),
-                    directed = FALSE, vertices = genes_c
-                )
-            } else {
-                g_cons_sub <- igraph::graph_from_data_frame(el[FALSE, ], directed = FALSE, vertices = genes_c)
-            }
-            memb_sub <- .community_detect(g_cons_sub, algo = algo, resolution = resolution, objective = objective,
-                                          backend = if (algo == "leiden") leiden_backend else "igraph",
-                                          threads = threads_stage2, debug = debug)
-            sub_ids <- sort(unique(memb_sub))
-            if (length(sub_ids) <= 1) {
-                memb_final[genes_c] <- next_global_id
-                next_global_id <- next_global_id + 1L
-            } else {
-                for (sid in sub_ids) {
-                    gs <- names(memb_sub)[memb_sub == sid]
-                    memb_final[gs] <- next_global_id
-                    next_global_id <- next_global_id + 1L
-                }
-            }
-            if (any(keep_e)) {
-                gi <- match(el$from[keep_e], kept_genes)
-                gj <- match(el$to[keep_e], kept_genes)
-                cons_I <- c(cons_I, gi); cons_J <- c(cons_J, gj); cons_X <- c(cons_X, cons_w[keep_e])
-            }
-        }
-        # materialize sparse global consensus matrix (symmetric)
-        cons <- if (length(cons_I)) {
-            Matrix::sparseMatrix(i = c(cons_I, cons_J), j = c(cons_J, cons_I), x = c(cons_X, cons_X),
-                                 dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
+
+        sub_ids <- sort(unique(memb_sub))
+        if (length(sub_ids) <= 1) {
+            memb_final[genes_c] <- next_global_id
+            next_global_id <- next_global_id + 1L
         } else {
-            Matrix::sparseMatrix(dims = c(ng, ng), dimnames = list(kept_genes, kept_genes))
+            for (sid in sub_ids) {
+                genes_sid <- names(memb_sub)[memb_sub == sid]
+                memb_final[genes_sid] <- next_global_id
+                next_global_id <- next_global_id + 1L
+            }
         }
+
+        cons[genes_c, genes_c] <- cons_sub
     }
+
+    cons <- Matrix::drop0(Matrix::Matrix(cons, sparse = TRUE))
 
     ## 8b. Stability metrics, optional conservative subclustering and QC
     # Build weighted adjacency for post-corrected graph
@@ -980,48 +919,40 @@ clusterGenes <- function(
             if (igraph::ecount(g_sub) == 0) next
             ew <- igraph::E(g_sub)$weight
             el <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
-            memb_list2 <- future.apply::future_lapply(
-                X = {
-                    rvec <- seq_len(n_restart_eff)
-                    if (is.null(restart_batch_size)) {
-                        workers <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
-                        if (is.na(workers) || workers < 1) workers <- ncores
-                        bs <- if (n_restart_eff >= 2 * workers) max(3L, min(20L, as.integer(ceiling(n_restart_eff / workers)))) else 1L
-                    } else bs <- as.integer(max(1L, restart_batch_size))
-                    split(rvec, ceiling(rvec / bs))
+            max_restart_sub <- min(n_restart_eff, 50L)
+            memb_mat_sub <- future.apply::future_sapply(
+                X = seq_len(max_restart_sub),
+                FUN = function(ii) {
+                    g_local <- igraph::graph_from_data_frame(
+                        cbind(el, weight = ew),
+                        directed = FALSE,
+                        vertices = igraph::V(g_sub)$name
+                    )
+                    memb_vec <- run_cluster(g_local, res_value = resolution * sub_resolution_factor)
+                    memb_vec[igraph::V(g_sub)$name]
                 },
-                FUN = .geneSCOPE_cluster_batch,
-                graph = g_sub,
-                algo = algo,
-                resolution = resolution * sub_resolution_factor,
-                objective = objective,
                 future.seed = TRUE,
                 future.globals = FALSE,
-                future.packages = c("igraph", "Matrix", "data.table"),
-                future.scheduling = future_scheduling_stage1
+                future.packages = c("igraph"),
+                future.scheduling = future_scheduling_stage2
             )
-            memb_mat_sub <- try(do.call(cbind, memb_list2), silent = TRUE)
-            if (inherits(memb_mat_sub, "try-error") || is.null(dim(memb_mat_sub))) memb_mat_sub <- matrix(unlist(memb_list2, use.names = FALSE), ncol = 1)
+            if (is.null(dim(memb_mat_sub))) memb_mat_sub <- matrix(memb_mat_sub, ncol = 1)
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
-            # Edge-based consensus inside parent cluster
             ns <- length(idx)
-            el2 <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
-            ii2 <- match(el2$from, igraph::V(g_sub)$name)
-            jj2 <- match(el2$to,   igraph::V(g_sub)$name)
-            if (isTRUE(debug)) {
-                message(sprintf("[Stage2-sub] consensus on subcluster: |E|=%d, R=%d, threads=%d, cpp_available=%s",
-                                nrow(el2), ncol(memb_mat_sub), threads_stage2, as.character(exists("consensus_on_edges_omp"))))
+            cons_sub <- matrix(0, ns, ns, dimnames = list(igraph::V(g_sub)$name, igraph::V(g_sub)$name))
+            for (k in seq_len(ncol(memb_mat_sub))) {
+                cons_sub <- cons_sub + (outer(memb_mat_sub[, k], memb_mat_sub[, k], "=="))
             }
-            cons_w2 <- .consensus_on_edges(memb_mat_sub, ii2, jj2, n_threads = threads_stage2)
-            g_cons_sub <- igraph::graph_from_data_frame(
-                data.frame(from = el2$from, to = el2$to, weight = cons_w2),
-                directed = FALSE, vertices = igraph::V(g_sub)$name
+            cons_sub <- cons_sub / ncol(memb_mat_sub)
+            diag(cons_sub) <- 0
+            cons_sub[cons_sub < consensus_thr] <- 0
+            g_cons_sub <- igraph::graph_from_adjacency_matrix(
+                cons_sub,
+                mode = "undirected",
+                weighted = TRUE,
+                diag = FALSE
             )
-            memb_sub <- .community_detect(g_cons_sub, algo = algo,
-                                          resolution = resolution * sub_resolution_factor,
-                                          objective = objective,
-                                          backend = if (algo == "leiden") leiden_backend else "igraph",
-                                          threads = threads_stage2, debug = debug)
+            memb_sub <- run_cluster(g_cons_sub, res_value = resolution * sub_resolution_factor)
 
             # evaluate split
             sub_ids <- sort(unique(memb_sub))
@@ -1031,9 +962,11 @@ clusterGenes <- function(
             # within-consensus improvement (weighted) – approximate by averaging
             wcons_sub <- vapply(sub_ids, function(sid) {
                 genes_sid <- names(memb_sub)[memb_sub == sid]
-                if (length(genes_sid) <= 1) return(0)
-                msk <- el2$from %in% genes_sid & el2$to %in% genes_sid
-                if (any(msk)) mean(cons_w2[msk], na.rm = TRUE) else 0
+                sub_mat <- cons_sub[genes_sid, genes_sid, drop = FALSE]
+                if (nrow(sub_mat) <= 1) return(0)
+                vals <- sub_mat[upper.tri(sub_mat)]
+                if (!length(vals)) return(0)
+                mean(vals, na.rm = TRUE)
             }, numeric(1))
             wcons_old <- wcons
             wcons_new <- sum(wcons_sub * sizes) / sum(sizes)
