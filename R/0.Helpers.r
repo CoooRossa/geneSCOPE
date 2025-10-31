@@ -269,7 +269,7 @@
 
 #' @noRd
 #' Map CMH/weight from a similarity graph to (ei,ej) edges among kept_genes.
-#' Falls back to data.table when C++ helper is unavailable.
+#' Falls back to direct lookup when C++ helper is unavailable.
 .cmh_lookup_pairs <- function(kept_genes, ei, ej, g_sim, weight_col = c("CMH", "weight"), n_threads = NULL) {
     weight_col <- match.arg(weight_col)
     if (is.null(n_threads)) n_threads <- getSafeThreadCount(8L)
@@ -278,20 +278,31 @@
     si <- match(ed_sim$from, kept_genes)
     sj <- match(ed_sim$to, kept_genes)
     ok <- which(!is.na(si) & !is.na(sj))
-    si <- as.integer(si[ok]); sj <- as.integer(sj[ok]); sw <- as.numeric(ed_sim[[wcol]][ok])
+    if (!length(ok)) {
+        return(rep_len(1, length(ei)))
+    }
+    si <- as.integer(si[ok])
+    sj <- as.integer(sj[ok])
+    sw <- as.numeric(ed_sim[[wcol]][ok])
     fallback <- stats::median(sw, na.rm = TRUE)
+    if (!is.finite(fallback)) fallback <- 1
     if (exists("cmh_lookup_rcpp", mode = "function")) {
         return(cmh_lookup_rcpp(as.integer(ei), as.integer(ej), si, sj, sw, fallback, as.integer(n_threads)))
     }
-    # R fallback: keyed join via data.table
-    dt_sim <- data.table::data.table(from = pmin(ed_sim$from, ed_sim$to), to = pmax(ed_sim$from, ed_sim$to), w = ed_sim[[wcol]])
-    data.table::setkey(dt_sim, from, to)
-    g1 <- kept_genes[ei]; g2 <- kept_genes[ej]
-    dt_lp <- data.table::data.table(from = pmin(g1, g2), to = pmax(g1, g2), idx = seq_along(ei))
-    data.table::setkey(dt_lp, from, to)
-    ans <- dt_lp[dt_sim]
-    ww <- ans$w; ww[is.na(ww)] <- fallback
-    ww
+    # R fallback: direct keyed lookup to maintain length(ei)
+    sim_names <- paste(
+        pmin(kept_genes[si], kept_genes[sj]),
+        pmax(kept_genes[si], kept_genes[sj]),
+        sep = "|"
+    )
+    w_map <- sw
+    names(w_map) <- sim_names
+    g1 <- kept_genes[ei]
+    g2 <- kept_genes[ej]
+    edge_keys <- paste(pmin(g1, g2), pmax(g1, g2), sep = "|")
+    ww <- w_map[edge_keys]
+    ww[is.na(ww)] <- fallback
+    as.numeric(ww)
 }
 
 #' @noRd
@@ -463,14 +474,54 @@
     }
 
     nk <- reticulate::import("networkit", delay_load = TRUE)
-    threads_use <- max(1L, as.integer(threads))
+    threads_use <- suppressWarnings(as.integer(threads))
+    if (length(threads_use) == 0L || is.na(threads_use) || threads_use < 1L) {
+        threads_use <- 1L
+    }
     try(nk$setNumberOfThreads(threads_use), silent = TRUE)
-    reader <- nk$graphio$EdgeListReader(weighted = TRUE, directed = FALSE)
+    reader <- tryCatch(
+        nk$graphio$EdgeListReader(" ", 0L, "#", TRUE, FALSE),
+        error = function(e_new) {
+            tryCatch(
+                nk$graphio$EdgeListReader(weighted = TRUE, directed = FALSE),
+                error = function(e_old) stop(e_old)
+            )
+        }
+    )
     G <- reader$read(tmp)
     if (debug) message(sprintf("[networkit] ParallelLeiden threads=%d, resolution=%.4f",
                                threads_use, resolution))
-    algo <- nk$community$ParallelLeiden(G, resolution = as.numeric(resolution))
-    comm <- nk$community$detectCommunities(G, algo)
+    # NetworKit ≥11 uses `gamma` argument; older releases still expect `resolution`.
+    create_algo <- function(use_gamma = TRUE) {
+        res <- as.numeric(resolution)
+        if (use_gamma) {
+            nk$community$ParallelLeiden(G, gamma = res)
+        } else {
+            nk$community$ParallelLeiden(G, resolution = res)
+        }
+    }
+    algo <- tryCatch(
+        create_algo(TRUE),
+        error = function(e_gamma) {
+            msg <- conditionMessage(e_gamma)
+            is_py_type_error <- inherits(e_gamma, "python.builtin.TypeError") ||
+                inherits(e_gamma, "reticulate.python.builtin.type_error")
+            has_gamma_kw <- grepl("unexpected keyword argument 'gamma'", msg, fixed = TRUE)
+            has_cinit_arity <- grepl("__cinit__", msg, fixed = TRUE)
+            if (is_py_type_error || has_gamma_kw || has_cinit_arity) {
+                tryCatch(
+                    create_algo(FALSE),
+                    error = function(e_resolution) {
+                        stop(e_resolution)
+                    }
+                )
+            } else {
+                stop(e_gamma)
+            }
+        }
+    )
+    algo$run()
+    comm <- algo$getPartition()
     membership <- reticulate::py_to_r(comm$getVector())
     membership <- as.integer(membership) + 1L
     names(membership) <- node_names
@@ -533,6 +584,86 @@
 }
 
 #' @noRd
+#' Coerce matrix-like object to a base numeric matrix (double storage).
+.ensure_numeric_matrix <- function(mat,
+                                   nrow = NULL,
+                                   ncol = NULL,
+                                   rownames_out = NULL,
+                                   colnames_out = NULL,
+                                   as_sparse = FALSE) {
+    if (is.null(mat)) return(NULL)
+
+    coerce_sparse_pattern <- function(x) {
+        idx <- Matrix::summary(x)
+        rr <- idx$i
+        cc <- idx$j
+        vv <- idx$x
+        if (is.null(vv)) vv <- rep(1, length(rr))
+        nr <- nrow(x)
+        nc <- ncol(x)
+        dense <- matrix(0, nrow = nr, ncol = nc)
+        dense[cbind(rr, cc)] <- vv
+        dimnames(dense) <- dimnames(x)
+        dense
+    }
+
+    out <- mat
+    orig <- mat
+    if (inherits(out, "big.matrix")) {
+        if (requireNamespace("bigmemory", quietly = TRUE)) {
+            out <- bigmemory::as.matrix(out)
+        } else {
+            stop("bigmemory package required to coerce big.matrix objects", call. = FALSE)
+        }
+    }
+    if (inherits(out, "big.matrix")) {
+        if (!requireNamespace("bigmemory", quietly = TRUE)) {
+            stop("bigmemory package required to coerce big.matrix objects", call. = FALSE)
+        }
+        out <- bigmemory::as.matrix(out)
+    }
+
+    if (inherits(out, "Matrix")) {
+        if (inherits(out, "nMatrix")) {
+            out <- coerce_sparse_pattern(out)
+        } else {
+            out <- tryCatch(as.matrix(out), error = function(e) NULL)
+            if (is.null(out)) {
+                out <- coerce_sparse_pattern(methods::as(orig, "ngCMatrix"))
+            }
+        }
+    } else if (!is.matrix(out)) {
+        out <- tryCatch(as.matrix(out), error = function(e) NULL)
+        if (is.null(out) && is.atomic(mat)) {
+            if (is.null(nrow) || is.null(ncol)) stop("Cannot reshape atomic vector without target dimensions")
+            out <- matrix(as.numeric(mat), nrow = nrow, ncol = ncol)
+        } else if (is.null(out)) {
+            dm <- dim(mat)
+            if (!is.null(dm) && length(dm) == 2L) {
+                out <- matrix(as.numeric(mat), nrow = dm[1], ncol = dm[2])
+            }
+        }
+    }
+
+    if (is.null(out)) {
+        cls <- paste(class(orig), collapse = ", ")
+        stop(sprintf("Failed to coerce object of class [%s] to numeric matrix", cls), call. = FALSE)
+    }
+    storage.mode(out) <- "double"
+    if (!is.null(rownames_out)) rownames(out) <- rownames_out
+    if (!is.null(colnames_out)) colnames(out) <- colnames_out
+    if (as_sparse) {
+        if (inherits(out, "sparseMatrix")) {
+            out <- methods::as(out, "CsparseMatrix")
+        } else {
+            out <- methods::as(Matrix::Matrix(out, sparse = TRUE), "CsparseMatrix")
+        }
+        out <- Matrix::drop0(out)
+    }
+    out
+}
+
+#' @noRd
 #' Align an FDR matrix to L_raw and apply threshold to L (in-place semantic).
 .align_and_filter_FDR <- function(L, L_raw, FDRmat, FDR_max) {
     if (is.null(FDRmat)) return(L)
@@ -564,6 +695,19 @@
         FM <- FM[idx, idx, drop = FALSE]
     } else if (nrow(FM) != nrow(L) || ncol(FM) != ncol(L)) {
         stop("FDR matrix dimensions do not match current subset", call. = FALSE)
+    }
+
+    if (inherits(L, "sparseMatrix")) {
+        LT <- methods::as(L, "TsparseMatrix")
+        if (length(LT@x)) {
+            rows <- LT@i + 1L
+            cols <- LT@j + 1L
+            mask <- (FM[cbind(rows, cols)] > FDR_max)
+            if (any(mask)) {
+                LT@x[mask] <- 0
+            }
+        }
+        return(Matrix::drop0(methods::as(LT, "CsparseMatrix")))
     }
 
     L[FM > FDR_max] <- 0
@@ -760,6 +904,45 @@
     pmax <- .parse_q(pct_max)
     if (pmin > pmax) stop("pct_min > pct_max")
 
+    legacy_mode <- !identical(getOption("geneSCOPE.filter_sparse_mode", "legacy"), "sparse")
+
+    include_zero_mass <- !identical(getOption("geneSCOPE.filter_sparse_ignore_zero", FALSE), TRUE)
+
+    adjust_quantile_with_zeros <- function(vec, p, zero_frac) {
+        if (!length(vec)) return(NA_real_)
+        if (!is.finite(zero_frac) || zero_frac <= 0) {
+            return(as.numeric(stats::quantile(vec, p, na.rm = TRUE, type = 7)))
+        }
+        if (zero_frac >= 1) return(0)
+        if (p <= zero_frac) return(0)
+        adj_p <- (p - zero_frac) / (1 - zero_frac)
+        as.numeric(stats::quantile(vec, adj_p, na.rm = TRUE, type = 7))
+    }
+
+    if (legacy_mode) {
+        dense_mat <- as.matrix(mat)
+        vec <- as.vector(dense_mat)
+        pos_mask <- vec >= 0
+        neg_mask <- vec < 0
+
+        res <- dense_mat * 0
+        if (any(pos_mask, na.rm = TRUE)) {
+            pos_vec <- vec[pos_mask]
+            thrL <- stats::quantile(pos_vec, pmin, na.rm = TRUE, type = 7)
+            thrU <- stats::quantile(pos_vec, pmax, na.rm = TRUE, type = 7)
+            keep <- pos_mask & vec >= thrL & vec <= thrU
+            res[keep] <- dense_mat[keep]
+        }
+        if (any(neg_mask, na.rm = TRUE)) {
+            neg_vec <- abs(vec[neg_mask])
+            thrL <- stats::quantile(neg_vec, pmin, na.rm = TRUE, type = 7)
+            thrU <- stats::quantile(neg_vec, pmax, na.rm = TRUE, type = 7)
+            keep <- neg_mask & abs(vec) >= thrL & abs(vec) <= thrU
+            res[keep] <- dense_mat[keep]
+        }
+        return(Matrix::drop0(Matrix::Matrix(res, sparse = TRUE)))
+    }
+
     # Fast path for sparse matrices: operate only on existing (upper-tri) entries
     if (inherits(mat, "sparseMatrix")) {
         TT <- methods::as(mat, "TsparseMatrix")
@@ -779,8 +962,17 @@
             if (length(pos_vec) == 1L) {
                 pos_thrL <- pos_vec; pos_thrU <- pos_vec
             } else {
-                pos_thrL <- as.numeric(stats::quantile(pos_vec, pmin, na.rm = TRUE, type = 7))
-                pos_thrU <- as.numeric(stats::quantile(pos_vec, pmax, na.rm = TRUE, type = 7))
+                if (include_zero_mass) {
+                    n_nodes <- nrow(mat)
+                    total_pairs <- (as.double(n_nodes) * (n_nodes - 1)) / 2
+                    zero_count <- max(total_pairs - length(pos_vec), 0)
+                    zero_frac <- if (total_pairs > 0) zero_count / (zero_count + length(pos_vec)) else 0
+                    pos_thrL <- adjust_quantile_with_zeros(pos_vec, pmin, zero_frac)
+                    pos_thrU <- adjust_quantile_with_zeros(pos_vec, pmax, zero_frac)
+                } else {
+                    pos_thrL <- as.numeric(stats::quantile(pos_vec, pmin, na.rm = TRUE, type = 7))
+                    pos_thrU <- as.numeric(stats::quantile(pos_vec, pmax, na.rm = TRUE, type = 7))
+                }
             }
             keep_idx[pos_m] <- (pos_vec >= pos_thrL) & (pos_vec <= pos_thrU)
         }
