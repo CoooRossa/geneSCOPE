@@ -137,20 +137,23 @@ computeWeights <- function(scope_obj,
     is_xenium <- grepl("xenium", as.character(scope_obj@stats$platform), ignore.case = TRUE)
   }
 
-  if (!identical(topology, "auto")) {
+  force_topology <- !identical(topology, "auto")
+
+  if (force_topology) {
     if (verbose) {
       message("[geneSCOPE::computeWeights] Topology forced by argument: ", chosen_topology)
     }
   } else if (is_xenium) {
     chosen_topology <- "queen"
+    force_topology <- TRUE
     if (verbose) message("[geneSCOPE::computeWeights] Platform flagged as Xenium; forcing queen adjacency.")
   }
 
-  if (!identical(topology, "auto")) {
-    # Skip auto detection when user forced a topology
+  if (force_topology) {
     detected_by_auto <- FALSE
   } else if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
     warning("[geneSCOPE::computeWeights] grid_info lacks centre coordinates; using Queen adjacency.")
+    # Skip auto detection when user forced a topology
     detected_by_auto <- FALSE
   } else {
     # 1a) Angle-based detection first (more reliable for hex): build neighbour vectors
