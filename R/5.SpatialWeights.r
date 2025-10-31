@@ -61,7 +61,9 @@ computeWeights <- function(scope_obj,
                            store_mat = TRUE,
                            zero_policy = TRUE,
                            store_listw = TRUE,
-                           verbose = TRUE) {
+                           verbose = TRUE,
+                           topology = c("auto", "queen", "rook", "hex-oddr", "hex-evenr", "hex-oddq", "hex-evenq")) {
+  topology <- match.arg(topology)
   if (verbose) message("[geneSCOPE::computeWeights] Computing spatial weights for grid layer")
 
   # Use OpenMP-only configuration for C++ spatial operations
@@ -116,22 +118,40 @@ computeWeights <- function(scope_obj,
   }
 
   ## ---------- 1. Auto-detect / force topology ---------------------------------
-  chosen_topology <- "queen"
+  chosen_topology <- if (identical(topology, "auto")) "queen" else topology
   gi <- data.table::as.data.table(grid_info)
 
   # Detect platform tag (optionally stored in meta.data or stats) to force hex for Visium
   is_visium <- FALSE
+  is_xenium <- FALSE
   if (!is.null(scope_obj@meta.data) && nrow(scope_obj@meta.data) > 0L &&
       "platform" %in% names(scope_obj@meta.data)) {
     plat_vals <- unique(as.character(scope_obj@meta.data$platform))
     is_visium <- any(grepl("visium", plat_vals, ignore.case = TRUE))
+    is_xenium <- any(grepl("xenium", plat_vals, ignore.case = TRUE))
   }
   if (!is_visium && !is.null(scope_obj@stats$platform)) {
     is_visium <- grepl("visium", as.character(scope_obj@stats$platform), ignore.case = TRUE)
   }
+  if (!is_xenium && !is.null(scope_obj@stats$platform)) {
+    is_xenium <- grepl("xenium", as.character(scope_obj@stats$platform), ignore.case = TRUE)
+  }
 
-  if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
+  if (!identical(topology, "auto")) {
+    if (verbose) {
+      message("[geneSCOPE::computeWeights] Topology forced by argument: ", chosen_topology)
+    }
+  } else if (is_xenium) {
+    chosen_topology <- "queen"
+    if (verbose) message("[geneSCOPE::computeWeights] Platform flagged as Xenium; forcing queen adjacency.")
+  }
+
+  if (!identical(topology, "auto")) {
+    # Skip auto detection when user forced a topology
+    detected_by_auto <- FALSE
+  } else if (!all(c("gx","gy","center_x","center_y") %in% names(gi))) {
     warning("[geneSCOPE::computeWeights] grid_info lacks centre coordinates; using Queen adjacency.")
+    detected_by_auto <- FALSE
   } else {
     # 1a) Angle-based detection first (more reliable for hex): build neighbour vectors
     a <- gi[, .(gx, gy, cx = center_x, cy = center_y)]
@@ -148,9 +168,13 @@ computeWeights <- function(scope_obj,
       horiz <- mean(pmin(th, 180 - th) <= 15, na.rm = TRUE)
       vert  <- mean(abs(th - 90) <= 15, na.rm = TRUE)
       # If either horizontal or vertical alignment is clearly present, treat as hex
-      if (is.finite(horiz) && is.finite(vert) && max(horiz, vert) >= 0.15) {
+      # Require evidence of 60° structures to avoid false positive on square grids
+      hex_like <- mean(abs(th - 60) <= 15 | abs(th - 120) <= 15, na.rm = TRUE)
+      if (is.finite(hex_like) && hex_like >= 0.15 && max(horiz, vert) < 0.8) {
         chosen_topology <- if (horiz >= vert) "hex-oddr" else "hex-oddq"
         detect_by_angle <- TRUE
+      } else {
+        detect_by_angle <- FALSE
       }
     }
     # If platform is Visium, force hex even when angle evidence is weak
@@ -181,10 +205,16 @@ computeWeights <- function(scope_obj,
         chosen_topology <- if (is_visium) "hex-oddr" else "queen"
       }
     }
-    if (verbose) message("[geneSCOPE::computeWeights] Auto-detected topology: ", chosen_topology,
-                         if (is_visium) " (forced for Visium)" else "")
+    detected_by_auto <- TRUE
+    if (verbose) {
+      msg <- "[geneSCOPE::computeWeights] Auto-detected topology: "
+      forced_tag <- if (is_visium) " (forced for Visium)" else ""
+      message(msg, chosen_topology, forced_tag)
+    }
   }
-  
+
+  if (identical(topology, "auto") && !exists("detected_by_auto")) detected_by_auto <- FALSE
+
 
   ## ---------- 2. Full-grid neighbourhood per (possibly auto) topology ---------
   if (chosen_topology == "queen" || chosen_topology == "rook") {
