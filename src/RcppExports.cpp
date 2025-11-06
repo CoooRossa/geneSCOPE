@@ -25,57 +25,6 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// ci95_drop_mask_edges_omp
-LogicalVector ci95_drop_mask_edges_omp(NumericMatrix rMat, IntegerVector ridx, IntegerVector ei, IntegerVector ej, NumericVector L_vals, NumericVector xp, NumericVector lo95, NumericVector hi95, int rule, int n_threads);
-RcppExport SEXP _geneSCOPE_ci95_drop_mask_edges_omp(SEXP rMatSEXP, SEXP ridxSEXP, SEXP eiSEXP, SEXP ejSEXP, SEXP L_valsSEXP, SEXP xpSEXP, SEXP lo95SEXP, SEXP hi95SEXP, SEXP ruleSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< NumericMatrix >::type rMat(rMatSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type ridx(ridxSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type L_vals(L_valsSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type xp(xpSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type lo95(lo95SEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type hi95(hi95SEXP);
-    Rcpp::traits::input_parameter< int >::type rule(ruleSEXP);
-    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(ci95_drop_mask_edges_omp(rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// consensus_on_edges_omp
-IntegerVector consensus_on_edges_omp(IntegerVector ei, IntegerVector ej, IntegerMatrix memb, int n_threads);
-RcppExport SEXP _geneSCOPE_consensus_on_edges_omp(SEXP eiSEXP, SEXP ejSEXP, SEXP membSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
-    Rcpp::traits::input_parameter< IntegerMatrix >::type memb(membSEXP);
-    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(consensus_on_edges_omp(ei, ej, memb, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// cmh_lookup_rcpp
-NumericVector cmh_lookup_rcpp(IntegerVector ei, IntegerVector ej, IntegerVector si, IntegerVector sj, NumericVector sw, double fallback, int n_threads);
-RcppExport SEXP _geneSCOPE_cmh_lookup_rcpp(SEXP eiSEXP, SEXP ejSEXP, SEXP siSEXP, SEXP sjSEXP, SEXP swSEXP, SEXP fallbackSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< IntegerVector >::type ei(eiSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type ej(ejSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type si(siSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type sj(sjSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type sw(swSEXP);
-    Rcpp::traits::input_parameter< double >::type fallback(fallbackSEXP);
-    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(cmh_lookup_rcpp(ei, ej, si, sj, sw, fallback, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
 // grid_nb_hex_omp
 List grid_nb_hex_omp(const int nrow, const int ncol, const bool oddr);
 RcppExport SEXP _geneSCOPE_grid_nb_hex_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
@@ -281,6 +230,63 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// spmm_dgc_dense_f64
+arma::mat spmm_dgc_dense_f64(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f64(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f64(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spmm_dgc_dense_f32
+arma::mat spmm_dgc_dense_f32(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f32(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f32(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rp_sign_bits
+CharacterMatrix rp_sign_bits(const arma::mat& X, const int bits, const int n_tables, const int seed, const int n_threads);
+RcppExport SEXP _geneSCOPE_rp_sign_bits(SEXP XSEXP, SEXP bitsSEXP, SEXP n_tablesSEXP, SEXP seedSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const int >::type bits(bitsSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_tables(n_tablesSEXP);
+    Rcpp::traits::input_parameter< const int >::type seed(seedSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rp_sign_bits(X, bits, n_tables, seed, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// leeL_topk_candidates
+Rcpp::List leeL_topk_candidates(const arma::mat& X, const arma::mat& WX, const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& indices, const int K_keep, const int n_threads);
+RcppExport SEXP _geneSCOPE_leeL_topk_candidates(SEXP XSEXP, SEXP WXSEXP, SEXP row_ptrSEXP, SEXP indicesSEXP, SEXP K_keepSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type WX(WXSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type indices(indicesSEXP);
+    Rcpp::traits::input_parameter< const int >::type K_keep(K_keepSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(leeL_topk_candidates(X, WX, row_ptr, indices, K_keep, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // morisita_horn_sparse
 arma::vec morisita_horn_sparse(const arma::sp_mat& G, const arma::umat& edges, bool use_chao, int nthreads);
 RcppExport SEXP _geneSCOPE_morisita_horn_sparse(SEXP GSEXP, SEXP edgesSEXP, SEXP use_chaoSEXP, SEXP nthreadsSEXP) {
@@ -402,6 +408,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// consensus_coo_cpp
+Rcpp::List consensus_coo_cpp(Rcpp::IntegerMatrix memb, double thr, int n_threads);
+RcppExport SEXP _geneSCOPE_consensus_coo_cpp(SEXP membSEXP, SEXP thrSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::IntegerMatrix >::type memb(membSEXP);
+    Rcpp::traits::input_parameter< double >::type thr(thrSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(consensus_coo_cpp(memb, thr, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // test_64bit_support
 bool test_64bit_support();
 RcppExport SEXP _geneSCOPE_test_64bit_support() {
@@ -409,64 +428,6 @@ BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     rcpp_result_gen = Rcpp::wrap(test_64bit_support());
-    return rcpp_result_gen;
-END_RCPP
-}
-
-// spmm_dgc_dense_f64
-arma::mat spmm_dgc_dense_f64(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
-RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f64(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f64(X, W, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// spmm_dgc_dense_f32
-arma::mat spmm_dgc_dense_f32(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
-RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f32(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f32(X, W, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rp_sign_bits
-CharacterMatrix rp_sign_bits(const arma::mat& X, const int bits, const int n_tables, const int seed, const int n_threads);
-RcppExport SEXP _geneSCOPE_rp_sign_bits(SEXP XSEXP, SEXP bitsSEXP, SEXP n_tablesSEXP, SEXP seedSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const int >::type bits(bitsSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_tables(n_tablesSEXP);
-    Rcpp::traits::input_parameter< const int >::type seed(seedSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(rp_sign_bits(X, bits, n_tables, seed, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// leeL_topk_candidates
-Rcpp::List leeL_topk_candidates(const arma::mat& X, const arma::mat& WX, const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& indices, const int K_keep, const int n_threads);
-RcppExport SEXP _geneSCOPE_leeL_topk_candidates(SEXP XSEXP, SEXP WXSEXP, SEXP row_ptrSEXP, SEXP indicesSEXP, SEXP K_keepSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type WX(WXSEXP);
-    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
-    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type indices(indicesSEXP);
-    Rcpp::traits::input_parameter< const int >::type K_keep(K_keepSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_topk_candidates(X, WX, row_ptr, indices, K_keep, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -488,6 +449,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_pearson_block_cpp", (DL_FUNC) &_geneSCOPE_pearson_block_cpp, 3},
     {"_geneSCOPE_pearson_cor", (DL_FUNC) &_geneSCOPE_pearson_cor, 3},
     {"_geneSCOPE_loess_residual_bootstrap", (DL_FUNC) &_geneSCOPE_loess_residual_bootstrap, 13},
+    {"_geneSCOPE_spmm_dgc_dense_f64", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f64, 3},
+    {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
+    {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
+    {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
     {"_geneSCOPE_morisita_horn_sparse", (DL_FUNC) &_geneSCOPE_morisita_horn_sparse, 4},
     {"_geneSCOPE_delta_lr_perm_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_tiny, 6},
     {"_geneSCOPE_delta_lr_perm_block_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block_tiny, 7},
@@ -495,14 +460,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_delta_lr_perm_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block, 8},
     {"_geneSCOPE_delta_lr_perm_csr", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr, 9},
     {"_geneSCOPE_delta_lr_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr_block, 10},
+    {"_geneSCOPE_consensus_coo_cpp", (DL_FUNC) &_geneSCOPE_consensus_coo_cpp, 3},
     {"_geneSCOPE_test_64bit_support", (DL_FUNC) &_geneSCOPE_test_64bit_support, 0},
-    {"_geneSCOPE_spmm_dgc_dense_f64", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f64, 3},
-    {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
-    {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
-    {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
-    {"_geneSCOPE_ci95_drop_mask_edges_omp", (DL_FUNC) &_geneSCOPE_ci95_drop_mask_edges_omp, 10},
-    {"_geneSCOPE_consensus_on_edges_omp", (DL_FUNC) &_geneSCOPE_consensus_on_edges_omp, 4},
-    {"_geneSCOPE_cmh_lookup_rcpp", (DL_FUNC) &_geneSCOPE_cmh_lookup_rcpp, 7},
     {NULL, NULL, 0}
 };
 
