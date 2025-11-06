@@ -217,6 +217,79 @@ leeL_subset <- function(Xz, W, cols0, n_threads = 1L) {
     lee_L_cols(Xz, W, cols0, n_threads)
 }
 
+safe_thread_count <- function() {
+    # Base heuristic first
+    core_guess <- tryCatch(parallel::detectCores(), error = function(e) 1L)
+    n_req <- max(1L, min(8L, as.integer(core_guess) - 1L))
+
+    if (exists("getSafeThreadCount", mode = "function", inherits = TRUE)) {
+        f <- get("getSafeThreadCount", mode = "function")
+        an <- tryCatch(names(formals(f)), error = function(e) character(0))
+        # Support both old and new signatures
+        if ("max_requested" %in% an) {
+            return(tryCatch(f(max_requested = n_req), error = function(e) n_req))
+        } else if ("requested_cores" %in% an) {
+            return(tryCatch(f(requested_cores = n_req), error = function(e) n_req))
+        } else {
+            return(tryCatch(f(n_req), error = function(e) n_req))
+        }
+    }
+    n_req
+}
+
+#' @title Consensus co-occurrence (sparse COO via C++)
+#' @description
+#'   Works in two modes:
+#'   - Package mode: calls registered symbol `_geneSCOPE_consensus_coo_cpp`.
+#'   - Sourced mode: if you ran `Rcpp::sourceCpp('src/9.ConsensusAccel.cpp')`,
+#'     calls the Rcpp-exposed function `consensus_coo_cpp()` directly.
+#' @param memb Integer matrix (genes × runs), each column a run's cluster labels
+#' @param thr  Numeric in [0,1]. Threshold on fraction across runs (default 0)
+#' @param n_threads Integer. Threads (ignored if OpenMP not available)
+#' @return list(i,j,x,n) with 1-based COO
+#' @export
+consensus_coo <- function(memb, thr = 0, n_threads = NULL) {
+    if (is.null(n_threads)) n_threads <- safe_thread_count()
+    # Try package-registered symbol
+    call_sym_ok <- FALSE
+    res <- try({
+        .Call(`_geneSCOPE_consensus_coo_cpp`, memb, thr, as.integer(n_threads), PACKAGE = "geneSCOPE")
+    }, silent = TRUE)
+    if (!inherits(res, "try-error")) return(res)
+    # Try direct Rcpp function if sourceCpp() was used
+    if (exists("consensus_coo_cpp", mode = "function", inherits = TRUE)) {
+        return(consensus_coo_cpp(memb, thr, as.integer(n_threads)))
+    }
+    stop("consensus_coo: C++ backend not found. Install/load geneSCOPE or run Rcpp::sourceCpp('genescope/src/9.ConsensusAccel.cpp').")
+}
+
+#' @title Consensus sparse matrix (dgCMatrix)
+#' @description
+#'   Convenience wrapper building a symmetric sparse matrix with edge weights
+#'   equal to fraction of co-occurrence across runs for pairs meeting `thr`.
+#' @inheritParams consensus_coo
+#' @return A symmetric `dgCMatrix` with zero diagonal
+#' @export
+consensus_sparse <- function(memb, thr = 0, n_threads = NULL) {
+    if (is.null(n_threads)) n_threads <- safe_thread_count()
+    coo <- consensus_coo(memb, thr = thr, n_threads = n_threads)
+    # Build symmetric sparse matrix
+    M <- if (length(coo$i) == 0L) {
+        Matrix::sparseMatrix(i = integer(0), j = integer(0), x = numeric(0), dims = c(coo$n, coo$n), symmetric = TRUE)
+    } else {
+        Matrix::sparseMatrix(i = coo$i, j = coo$j, x = coo$x, dims = c(coo$n, coo$n), symmetric = TRUE)
+    }
+    # Propagate dimnames from membership matrix when available to enable name-based indexing
+    rn <- try(if (is.matrix(memb) || inherits(memb, "Matrix")) rownames(memb) else rownames(as.matrix(memb)), silent = TRUE)
+    if (!inherits(rn, "try-error") && !is.null(rn) && length(rn) == nrow(M)) {
+        # Guard against rare cases where dimnames<- is applied to non-arrays
+        try({
+            if (is.matrix(M) || inherits(M, "Matrix")) dimnames(M) <- list(rn, rn)
+        }, silent = TRUE)
+    }
+    M
+}
+
 delta_perm_pairs <- function(Xz, W, idx_mat, gene_pairs, delta_ref,
                              block_ids = NULL, csr = NULL,
                              n_threads = 1L,
@@ -253,7 +326,6 @@ delta_perm_pairs <- function(Xz, W, idx_mat, gene_pairs, delta_ref,
         }
     }
 }
-
 # Thin R wrappers for Visium-specific C++ accelerators
 
 #' Sparse × dense multiply: WX = W %*% X
@@ -295,4 +367,3 @@ rp_sign_bits <- function(X, bits = 12L, n_tables = 6L, seed = 1L, n_threads = 1L
 leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threads = 1L) {
     .Call(`_geneSCOPE_leeL_topk_candidates`, X, WX, as.integer(row_ptr), as.integer(indices), as.integer(K_keep), as.integer(n_threads), PACKAGE = "geneSCOPE")
 }
-
