@@ -1045,6 +1045,10 @@
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
 
         if (use_networkit_leiden || use_networkit_plm) {
+            if (isTRUE(verbose)) {
+                message("[cluster]   Stage-1 backend: NetworKit (",
+                    if (use_networkit_leiden) "Leiden" else "PLM/louvain", ")")
+            }
             seeds <- seq_len(config$n_restart)
             chunk_size <- config$aggr_batch_size
             if (is.null(chunk_size) || chunk_size <= 0) {
@@ -1088,6 +1092,9 @@
             }
             restart_memberships <- do.call(cbind, membership_blocks)
         } else {
+            if (isTRUE(verbose)) {
+                message("[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
+            }
             # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
             restart_memberships <- future.apply::future_sapply(
                 seq_len(config$n_restart),
@@ -1128,8 +1135,15 @@
                 dims = c(length(kept_genes), length(kept_genes)),
                 dimnames = list(kept_genes, kept_genes))
         } else {
-            stage1_consensus_matrix <- try(consensus_sparse(restart_memberships, thr = config$consensus_thr, n_threads = n_threads), silent = TRUE)
-            if (inherits(stage1_consensus_matrix, "try-error")) {
+            stage1_consensus_matrix <- try(consensus_sparse(restart_memberships,
+                thr = config$consensus_thr,
+                n_threads = n_threads
+            ), silent = TRUE)
+            if (!inherits(stage1_consensus_matrix, "try-error")) {
+                if (isTRUE(verbose)) {
+                    message("[cluster]   consensus backend: C++ (consensus_sparse)")
+                }
+            } else {
                 if (isTRUE(verbose)) message("[cluster]   consensus_sparse failed; using R fallback.")
                 stage1_consensus_matrix <- .compute_consensus_sparse_R(restart_memberships, thr = config$consensus_thr)
             }
@@ -1566,8 +1580,18 @@
                     }
                 }
             } else {
-                cons_sub <- try(consensus_sparse(memb_mat_sub, thr = consensus_thr, n_threads = n_threads), silent = TRUE)
-                if (inherits(cons_sub, "try-error")) {
+                cons_sub <- try(consensus_sparse(memb_mat_sub,
+                    thr = consensus_thr,
+                    n_threads = n_threads
+                ), silent = TRUE)
+                if (!inherits(cons_sub, "try-error")) {
+                    if (isTRUE(verbose)) {
+                        message("[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
+                    }
+                } else {
+                    if (isTRUE(verbose)) {
+                        message("[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R)")
+                    }
                     cons_sub <- .compute_consensus_sparse_R(memb_mat_sub, thr = consensus_thr)
                 }
                 if (length(cons_sub@i)) Matrix::diag(cons_sub) <- 0
@@ -2105,4 +2129,3 @@ clusterGenes <- function(
     }
     scope_obj
 }
-
