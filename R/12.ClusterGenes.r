@@ -260,6 +260,58 @@
     igraph::cluster_louvain(g, weights = w)
 }
 
+`%||%` <- function(x, y) {
+    if (!is.null(x)) x else y
+}
+
+.run_single_partition <- function(graph,
+                                  backend = c("igraph", "networkit"),
+                                  algo_name = c("leiden", "louvain"),
+                                  res_param,
+                                  objective,
+                                  threads = 1L,
+                                  nk_opts = list()) {
+    backend <- match.arg(backend)
+    algo_name <- match.arg(algo_name)
+    vertex_names <- igraph::V(graph)$name
+
+    if (backend == "networkit") {
+        edge_df <- igraph::as_data_frame(graph, what = "edges")[, c("from", "to"), drop = FALSE]
+        weights <- igraph::E(graph)$weight
+        seeds <- nk_opts$seeds %||% 1L
+        if (identical(algo_name, "leiden")) {
+            memb_mat <- .networkit_parallel_leiden_runs(
+                vertex_names = vertex_names,
+                edge_table = edge_df,
+                edge_weights = weights,
+                gamma = as.numeric(res_param),
+                iterations = nk_opts$iterations %||% 10L,
+                randomize = nk_opts$randomize %||% TRUE,
+                threads = threads,
+                seeds = as.integer(seeds)
+            )
+        } else {
+            memb_mat <- .networkit_plm_runs(
+                vertex_names = vertex_names,
+                edge_table = edge_df,
+                edge_weights = weights,
+                gamma = as.numeric(res_param),
+                refine = nk_opts$refine %||% TRUE,
+                threads = threads,
+                seeds = as.integer(seeds)
+            )
+        }
+        membership <- as.integer(memb_mat[, 1])
+        names(membership) <- vertex_names
+        return(membership)
+    }
+
+    clustering <- .run_graph_algorithm(graph, algo_name, res_param, objective)
+    membership <- igraph::membership(clustering)
+    if (is.null(names(membership))) names(membership) <- vertex_names
+    membership
+}
+
 #' Compute consensus matrix in pure R (sparse).
 #'
 #' @param memb Integer matrix of memberships (genes x runs).
@@ -1001,8 +1053,11 @@
     stage1_consensus_matrix <- NULL
     stage1_membership_labels <- NULL
     restart_memberships <- NULL
+    stage1_backend <- "igraph"
+    stage1_backend <- "igraph"
 
     if (identical(algo, "hotspot-like")) {
+        if (isTRUE(verbose)) message("[cluster]   Stage-1 backend: hotspot-like")
         hotspot_k <- config$hotspot_k
         if (is.null(hotspot_k) || !is.finite(hotspot_k)) {
             hotspot_k <- max(1L, min(20L, length(kept_genes)))
@@ -1012,6 +1067,7 @@
         stage1_consensus_matrix <- hotspot_result$consensus
         restart_memberships <- matrix(as.integer(stage1_membership_labels), ncol = 1,
             dimnames = list(kept_genes, "hotspot"))
+        stage1_backend <- "hotspot"
     } else {
         n_threads <- tryCatch({
             if (is.null(config$n_threads)) {
@@ -1049,6 +1105,7 @@
                 message("[cluster]   Stage-1 backend: NetworKit (",
                     if (use_networkit_leiden) "Leiden" else "PLM/louvain", ")")
             }
+            stage1_backend <- "networkit"
             seeds <- seq_len(config$n_restart)
             chunk_size <- config$aggr_batch_size
             if (is.null(chunk_size) || chunk_size <= 0) {
@@ -1140,9 +1197,7 @@
                 n_threads = n_threads
             ), silent = TRUE)
             if (!inherits(stage1_consensus_matrix, "try-error")) {
-                if (isTRUE(verbose)) {
-                    message("[cluster]   consensus backend: C++ (consensus_sparse)")
-                }
+                if (isTRUE(verbose)) message("[cluster]   Stage-1 consensus backend: C++ (consensus_sparse)")
             } else {
                 if (isTRUE(verbose)) message("[cluster]   consensus_sparse failed; using R fallback.")
                 stage1_consensus_matrix <- .compute_consensus_sparse_R(restart_memberships, thr = config$consensus_thr)
@@ -1153,8 +1208,30 @@
             } else {
                 consensus_graph_view <- igraph::graph_from_adjacency_matrix(stage1_consensus_matrix,
                     mode = "undirected", weighted = TRUE, diag = FALSE)
-                consensus_partition <- .run_graph_algorithm(consensus_graph_view, algo, res_param, objective)
-                stage1_membership_labels <- igraph::membership(consensus_partition)
+                consensus_backend <- if (identical(stage1_backend, "networkit")) "networkit" else "igraph"
+                if (isTRUE(verbose)) {
+                    backend_label <- if (identical(consensus_backend, "networkit")) {
+                        paste0("NetworKit (", algo, ")")
+                    } else {
+                        paste0("igraph (", algo, ")")
+                    }
+                    message("[cluster]   Stage-1 consensus graph backend: ", backend_label)
+                }
+                nk_opts <- list(
+                    iterations = config$nk_leiden_iterations,
+                    randomize = config$nk_leiden_randomize,
+                    refine = TRUE,
+                    seeds = 1L
+                )
+                stage1_membership_labels <- .run_single_partition(
+                    consensus_graph_view,
+                    backend = consensus_backend,
+                    algo_name = algo,
+                    res_param = res_param,
+                    objective = objective,
+                    threads = n_threads,
+                    nk_opts = nk_opts
+                )
             }
         }
     }
@@ -1195,7 +1272,10 @@
         stage1_membership_matrix = restart_memberships,
         stage1_consensus = stage1_consensus_matrix,
         stage1_membership = stage1_membership_labels,
-        stage1_consensus_graph = stage1_cons_graph
+        stage1_consensus_graph = stage1_cons_graph,
+        stage1_backend = stage1_backend,
+        stage1_algo = algo,
+        stage1_algo_per_run = if (exists("algo_per_run")) algo_per_run else algo
     )
 }
 
@@ -1233,10 +1313,25 @@
     stage1_mode_selected <- stage1$mode_selected
     if (is.null(stage1_mode_selected)) stage1_mode_selected <- "safe"
     stage1_membership_matrix <- stage1$stage1_membership_matrix
+    stage1_backend <- stage1$stage1_backend %||% "igraph"
+    stage1_algo_effective <- stage1$stage1_algo_per_run %||% stage1$stage1_algo %||% config$algo
 
     stage2_algo_final <- tryCatch({
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
+    if (isTRUE(verbose)) message("[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
+    stage2_backend <- if (!is.null(config$stage2_algo)) {
+        if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
+    } else {
+        if (identical(stage2_algo_final, "hotspot-like")) {
+            "hotspot"
+        } else if (identical(stage1_backend, "networkit")) {
+            "networkit"
+        } else {
+            "igraph"
+        }
+    }
+    if (isTRUE(verbose)) message("[cluster]   Stage-2 target backend: ", stage2_backend)
 
     if (!config$use_mh_weight && !config$CI95_filter) {
         if (isTRUE(verbose)) message("[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
@@ -1473,18 +1568,20 @@
             mode_sub <- if (identical(mode_setting, "auto")) {
                 if (length(genes_c) > large_n_threshold) "aggressive" else stage1_mode_selected
             } else stage1_mode_selected
-            algo_per_run_sub <- if (identical(stage2_algo_final, "leiden") && identical(mode_sub, "aggressive")) "louvain" else stage2_algo_final
+            algo_per_run_sub <- stage2_algo_final
             ew <- igraph::E(g_sub)$weight
             el <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
-            aggressive_sub <- identical(mode_sub, "aggressive")
-            if (aggressive_sub && !.nk_available()) {
-                stop("Aggressive Stage-2 subclustering requires the NetworKit backend; please configure reticulate/networkit before running clusterGenes_new.", call. = FALSE)
-            }
-            use_nk_leiden_sub <- aggressive_sub && identical(algo_per_run_sub, "leiden")
-            use_plm_sub <- aggressive_sub && identical(algo_per_run_sub, "louvain")
             res_param_sub <- res_param_base
 
-            if (use_nk_leiden_sub || use_plm_sub) {
+            backend_sub <- if (identical(stage2_backend, "networkit")) "networkit" else "igraph"
+            if (backend_sub == "networkit" && !stage2_algo_final %in% c("leiden", "louvain")) {
+                backend_sub <- "igraph"
+            }
+            if (backend_sub == "networkit" && !.nk_available()) {
+                stop("Stage-2 NetworKit backend requested but NetworKit is unavailable.", call. = FALSE)
+            }
+
+            if (backend_sub == "networkit") {
                 seeds <- seq_len(n_restart)
                 chunk_size <- aggr_batch_size
                 if (is.null(chunk_size) || chunk_size <= 0) {
@@ -1498,7 +1595,7 @@
                 threads_per_worker <- max(1L, floor(n_threads / max(1L, aggr_future_workers)))
                 vertex_names_sub <- igraph::V(g_sub)$name
                 worker_fun <- function(ss) {
-                    if (use_nk_leiden_sub) {
+                    if (identical(stage2_algo_final, "leiden")) {
                         .nk_parallel_leiden_mruns(
                             vertex_names = vertex_names_sub,
                             edge_table = el,
@@ -1528,7 +1625,6 @@
                 }
                 memb_mat_sub <- do.call(cbind, memb_blocks)
             } else {
-                # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
                 memb_mat_sub <- future.apply::future_sapply(
                     seq_len(n_restart),
                     function(ii) {
@@ -1554,6 +1650,7 @@
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
 
             if (!use_consensus) {
+                if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
                 n_loc <- length(labs)
@@ -1585,9 +1682,7 @@
                     n_threads = n_threads
                 ), silent = TRUE)
                 if (!inherits(cons_sub, "try-error")) {
-                    if (isTRUE(verbose)) {
-                        message("[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
-                    }
+                    if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
                 } else {
                     if (isTRUE(verbose)) {
                         message("[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R)")
@@ -1599,8 +1694,31 @@
                     memb_sub <- memb_mat_sub[, 1]
                 } else {
                     g_cons_sub <- igraph::graph_from_adjacency_matrix(cons_sub, mode = "undirected", weighted = TRUE, diag = FALSE)
-                    comm_sub <- .run_graph_algorithm(g_cons_sub, stage2_algo_final, res_param_base, objective)
-                    memb_sub <- igraph::membership(comm_sub)
+                    backend_consensus_sub <- backend_sub
+                    if (!backend_consensus_sub %in% c("networkit", "igraph")) backend_consensus_sub <- "igraph"
+                    if (isTRUE(verbose)) {
+                        backend_label <- if (identical(backend_consensus_sub, "networkit")) {
+                            paste0("NetworKit (", stage2_algo_final, ")")
+                        } else {
+                            paste0("igraph (", stage2_algo_final, ")")
+                        }
+                        message("[cluster]   Stage-2 consensus graph backend: ", backend_label)
+                    }
+                    nk_opts_cons <- list(
+                        iterations = config$nk_leiden_iterations,
+                        randomize = config$nk_leiden_randomize,
+                        refine = TRUE,
+                        seeds = 1L
+                    )
+                    memb_sub <- .run_single_partition(
+                        g_cons_sub,
+                        backend = backend_consensus_sub,
+                        algo_name = stage2_algo_final,
+                        res_param = res_param_base,
+                        objective = objective,
+                        threads = n_threads,
+                        nk_opts = nk_opts_cons
+                    )
                 }
             }
         }
@@ -1820,7 +1938,8 @@
         genes_before = genes_before,
         genes_after = genes_after,
         corrected_graph = corrected_similarity_graph,
-        weights_matrix = W
+        weights_matrix = W,
+        stage2_backend = stage2_backend
     )
 }
 
