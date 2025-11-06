@@ -30,6 +30,49 @@ grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
     .Call(`_geneSCOPE_grid_nb_omp`, nrow, ncol, queen)
 }
 
+#' @title Build Hexagonal (6-neighbour) Neighbourhood List in Parallel
+#'
+#' @description
+#'   Creates a spatial neighbourhood list for a hex tiling laid out on a
+#'   rectangular index with row-wise offsets (odd-r or even-r). See
+#'   https://www.redblobgames.com/grids/hex-grids/ for conventions.
+#'
+#' @param nrow Integer. Number of rows in the logical lattice.
+#' @param ncol Integer. Number of columns in the logical lattice.
+#' @param oddr Logical. If TRUE, use odd-r layout (odd rows shifted right);
+#'   otherwise use even-r layout (even rows shifted right).
+#'
+#' @return A list of integer vectors of class \code{nb}. Indices are 1-based
+#'   and attributes \code{region.id} and \code{topology} ("hex-oddr" or
+#'   "hex-evenr") are set. Attribute \code{queen} is set to FALSE for
+#'   compatibility with existing code expecting a boolean.
+#'
+#' @examples
+#' \dontrun{
+#' nb_hex <- grid_nb_hex_omp(256, 512, oddr = TRUE)
+#' }
+grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hex_omp`, nrow, ncol, oddr)
+}
+
+#' @title Build Hexagonal (6-neighbour) Neighbour List with column-offset (odd-q/even-q)
+#'
+#' @description
+#'   Convenience wrapper that reuses the row-offset builder on a transposed
+#'   lattice to implement pointy-top hex coordinates with column offsets
+#'   (odd-q/even-q). Region indices are 1..(nrow*ncol) in column-major order
+#'   consistent with mapping id = (gx-1)*nrow + gy.
+#'
+#' @param nrow Integer. Number of rows in the logical lattice.
+#' @param ncol Integer. Number of columns in the logical lattice.
+#' @param oddq Logical. If TRUE, odd columns are shifted; otherwise even.
+#'
+#' @return An \code{nb} list with attributes \code{region.id}, \code{queen}=FALSE,
+#'   and \code{topology} set to \code{"hex-oddq"} or \code{"hex-evenq"}.
+grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hexq_omp`, nrow, ncol, oddq)
+}
+
 #' @title Convert Neighbour List to Binary Sparse Matrix (dgCMatrix)
 #'
 #' @description
@@ -54,9 +97,9 @@ grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' nb <- grid_nb_omp(512, 512, queen = FALSE)
-#' W <- listw_B_omp(nb)
-#' Matrix::nnzero(W) / length(nb) # average degree
+#' nb  <- grid_nb_omp(512, 512, queen = FALSE)
+#' W   <- listw_B_omp(nb)
+#' Matrix::nnzero(W) / length(nb)  # average degree
 #' }
 listw_B_omp <- function(nb) {
     .Call(`_geneSCOPE_listw_B_omp`, nb)
@@ -68,23 +111,6 @@ grid_nb <- function(nrow, ncol, queen = TRUE) {
 
 nb2mat <- function(nb) {
     .Call(`_geneSCOPE_nb2mat`, nb)
-}
-
-#' @title Build Hex (6-neighbour) nb with odd-r/even-r layout (OpenMP)
-#' @param nrow Integer rows; ncol Integer cols on the logical rectangular lattice.
-#' @param oddr Logical; TRUE for odd-r (odd rows shifted right), FALSE for even-r.
-#' @return An nb list with attributes topology="hex-oddr" or "hex-evenr".
-grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
-    .Call(`_geneSCOPE_grid_nb_hex_omp`, nrow, ncol, oddr)
-}
-
-#' Build hex nb with column-offset (odd-q/even-q) in OpenMP
-#'
-#' @param nrow Integer rows; ncol Integer cols
-#' @param oddq Logical; TRUE for odd-q, FALSE for even-q
-#' @return nb list with topology attribute set
-grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
-    .Call(`_geneSCOPE_grid_nb_hexq_omp`, nrow, ncol, oddq)
 }
 
 #' @title Lee's L (single pass)
@@ -233,6 +259,22 @@ loess_residual_bootstrap <- function(x, y, strat, grid, B = 1000L, span = 0.45, 
     .Call(`_geneSCOPE_loess_residual_bootstrap`, x, y, strat, grid, B, span, deg, n_threads, k_max, keep_boot, adjust_mode, ci_type, level)
 }
 
+spmm_dgc_dense_f64 <- function(X, W, n_threads = 1L) {
+    .Call(`_geneSCOPE_spmm_dgc_dense_f64`, X, W, n_threads)
+}
+
+spmm_dgc_dense_f32 <- function(X, W, n_threads = 1L) {
+    .Call(`_geneSCOPE_spmm_dgc_dense_f32`, X, W, n_threads)
+}
+
+rp_sign_bits <- function(X, bits = 12L, n_tables = 6L, seed = 1L, n_threads = 1L) {
+    .Call(`_geneSCOPE_rp_sign_bits`, X, bits, n_tables, seed, n_threads)
+}
+
+leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threads = 1L) {
+    .Call(`_geneSCOPE_leeL_topk_candidates`, X, WX, row_ptr, indices, K_keep, n_threads)
+}
+
 #' @title Optimised sparse Morisita–Horn similarity
 #'
 #' @description
@@ -264,10 +306,9 @@ loess_residual_bootstrap <- function(x, y, strat, grid, B = 1000L, span = 0.45, 
 #'
 #' @examples
 #' \dontrun{
-#' sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
-#' summary(sim)
+#'   sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
+#'   summary(sim)
 #' }
-#' @name morisita_horn_sparse
 NULL
 
 morisita_horn_sparse <- function(G, edges, use_chao = TRUE, nthreads = 1L) {
@@ -316,21 +357,6 @@ delta_lr_perm_block_tiny <- function(Xz, W, idx_mat, block_ids, gene_pairs, delt
 #' @return Integer vector of exceedance counts for each gene pair.
 delta_lr_perm <- function(Xz, W, idx_mat, gene_pairs, delta_ref, n_threads = 1L, chunk_size = 1000L) {
     .Call(`_geneSCOPE_delta_lr_perm`, Xz, W, idx_mat, gene_pairs, delta_ref, n_threads, chunk_size)
-}
-
-# Fast consensus on edges (counts across restarts)
-consensus_on_edges_omp <- function(ei, ej, memb, n_threads = 1L) {
-    .Call(`_geneSCOPE_consensus_on_edges_omp`, ei, ej, memb, n_threads)
-}
-
-# Fast CMH weight lookup for (ei,ej) from similarity edges (si,sj,sw)
-cmh_lookup_rcpp <- function(ei, ej, si, sj, sw, fallback = NA_real_, n_threads = 1L) {
-    .Call(`_geneSCOPE_cmh_lookup_rcpp`, ei, ej, si, sj, sw, fallback, n_threads)
-}
-
-# CI95 drop mask (parallel over edges)
-ci95_drop_mask_edges_omp <- function(rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule = 0L, n_threads = 1L) {
-    .Call(`_geneSCOPE_ci95_drop_mask_edges_omp`, rMat, ridx, ei, ej, L_vals, xp, lo95, hi95, rule, n_threads)
 }
 
 #' @title Block-wise permutation counts for Lee's L minus Pearson r difference
@@ -383,6 +409,10 @@ delta_lr_perm_csr_block <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat,
     .Call(`_geneSCOPE_delta_lr_perm_csr_block`, Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, n_threads, clamp_nonneg_r)
 }
 
+consensus_coo_cpp <- function(memb, thr = 0.0, n_threads = 1L) {
+    .Call(`_geneSCOPE_consensus_coo_cpp`, memb, thr, n_threads)
+}
+
 #' @title 检测当前编译/运行环境 64 位索引支持
 #' @description 返回是否具备典型 64 位指针与 size_t (>=8 字节)，
 #'   供在 R 端决定是否安全处理超大矩阵/稀疏结构（>2^31 行/列时需要）。
@@ -391,3 +421,4 @@ delta_lr_perm_csr_block <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat,
 test_64bit_support <- function() {
     .Call(`_geneSCOPE_test_64bit_support`)
 }
+
