@@ -1376,3 +1376,222 @@ build_segmentation_geometries <- function(path,
     }
     data.frame(gene = kept_genes, cluster = members, p_in = p_in, p_best_out = p_best_out, w_in = w_in, stringsAsFactors = FALSE)
 }
+## Compatibility layer for NetworKit wrappers
+## Provides .nk_available(), .nk_parallel_leiden_mruns(), .nk_plm_mruns()
+## If NetworKit (via reticulate) is available, use it; otherwise fall back to igraph.
+
+if (!exists(".nk_available", mode = "function", inherits = TRUE)) {
+  .nk_available <- function() {
+    if (!requireNamespace("reticulate", quietly = TRUE)) return(FALSE)
+    ok <- FALSE
+    try({ ok <- isTRUE(reticulate::py_module_available("networkit")) }, silent = TRUE)
+    isTRUE(ok)
+  }
+}
+
+if (!exists(".nk_parallel_leiden_mruns", mode = "function", inherits = TRUE)) {
+  .nk_parallel_leiden_mruns <- function(vertices, edges_df, weights, gamma = 1.0,
+                                        iterations = 10L, randomize = TRUE,
+                                        threads = 1L, seeds = 1L) {
+    if (.nk_available()) {
+      nk <- reticulate::import("networkit", delay_load = TRUE)
+      threads <- as.integer(threads)
+      if (!is.na(threads) && threads > 0) try(nk$setNumberOfThreads(threads), silent = TRUE)
+
+      vcount <- length(vertices)
+      g <- nk$Graph(as.integer(vcount), weighted = TRUE, directed = FALSE)
+      if (!is.null(edges_df) && nrow(edges_df)) {
+        vid <- seq_len(vcount) - 1L
+        map <- structure(vid, names = as.character(vertices))
+        u <- map[as.character(edges_df$from)]
+        v <- map[as.character(edges_df$to)]
+        w <- as.numeric(weights)
+        keep <- !is.na(u) & !is.na(v) & is.finite(w)
+        if (any(keep)) {
+          u <- as.integer(u[keep]); v <- as.integer(v[keep]); w <- as.numeric(w[keep])
+          for (i in seq_along(u)) g$addEdge(u[[i]], v[[i]], w[[i]])
+        }
+      }
+
+      seeds <- as.integer(seeds)
+      memb_list <- vector("list", length(seeds))
+      for (i in seq_along(seeds)) {
+        if (!is.na(seeds[i])) try(nk$random$setSeed(seeds[i], TRUE), silent = TRUE)
+        pl <- nk$community$ParallelLeiden(g,
+          iterations = as.integer(iterations),
+          randomize  = isTRUE(randomize),
+          gamma      = as.numeric(gamma)
+        )
+        pl$run()
+        part <- pl$getPartition()
+        mv <- as.integer(unlist(part$getVector())) + 1L
+        memb_list[[i]] <- mv
+      }
+      mm <- do.call(cbind, memb_list)
+      rownames(mm) <- vertices
+      colnames(mm) <- paste0("r", seq_along(seeds))
+      return(mm)
+    }
+
+    # Fallback: igraph Leiden (weights only; resolution fallback handled by igraph)
+    g_local <- igraph::graph_from_data_frame(cbind(edges_df, weight = weights), directed = FALSE, vertices = vertices)
+    memb_list <- lapply(seq_along(seeds), function(i) {
+      set.seed(as.integer(seeds[i]))
+      res <- try(igraph::cluster_leiden(g_local, weights = igraph::E(g_local)$weight, resolution = as.numeric(gamma)), silent = TRUE)
+      if (inherits(res, "try-error")) res <- try(igraph::cluster_leiden(g_local, weights = igraph::E(g_local)$weight, resolution_parameter = as.numeric(gamma)), silent = TRUE)
+      if (inherits(res, "try-error")) res <- igraph::cluster_leiden(g_local, weights = igraph::E(g_local)$weight)
+      memb <- igraph::membership(res)
+      if (is.null(names(memb))) names(memb) <- igraph::V(g_local)$name
+      as.integer(memb[as.character(vertices)])
+    })
+    mm <- do.call(cbind, memb_list)
+    rownames(mm) <- vertices
+    colnames(mm) <- paste0("r", seq_along(seeds))
+    mm
+  }
+}
+
+if (!exists(".nk_plm_mruns", mode = "function", inherits = TRUE)) {
+  .nk_plm_mruns <- function(vertices, edges_df, weights, gamma = 1.0,
+                            refine = TRUE, threads = 1L, seeds = 1L) {
+    if (.nk_available()) {
+      nk <- reticulate::import("networkit", delay_load = TRUE)
+      threads <- as.integer(threads)
+      if (!is.na(threads) && threads > 0) try(nk$setNumberOfThreads(threads), silent = TRUE)
+
+      vcount <- length(vertices)
+      g <- nk$Graph(as.integer(vcount), weighted = TRUE, directed = FALSE)
+      if (!is.null(edges_df) && nrow(edges_df)) {
+        vid <- seq_len(vcount) - 1L
+        map <- structure(vid, names = as.character(vertices))
+        u <- map[as.character(edges_df$from)]
+        v <- map[as.character(edges_df$to)]
+        w <- as.numeric(weights)
+        keep <- !is.na(u) & !is.na(v) & is.finite(w)
+        if (any(keep)) {
+          u <- as.integer(u[keep]); v <- as.integer(v[keep]); w <- as.numeric(w[keep])
+          for (i in seq_along(u)) g$addEdge(u[[i]], v[[i]], w[[i]])
+        }
+      }
+
+      seeds <- as.integer(seeds)
+      memb_list <- vector("list", length(seeds))
+      for (i in seq_along(seeds)) {
+        if (!is.na(seeds[i])) try(nk$random$setSeed(seeds[i], TRUE), silent = TRUE)
+        algo <- nk$community$PLM(g, refine = isTRUE(refine), gamma = as.numeric(gamma))
+        algo$run()
+        part <- algo$getPartition()
+        mv <- as.integer(unlist(part$getVector())) + 1L
+        memb_list[[i]] <- mv
+      }
+      mm <- do.call(cbind, memb_list)
+      rownames(mm) <- vertices
+      colnames(mm) <- paste0("r", seq_along(seeds))
+      return(mm)
+    }
+
+    # Fallback: igraph Louvain
+    g_local <- igraph::graph_from_data_frame(cbind(edges_df, weight = weights), directed = FALSE, vertices = vertices)
+    memb_list <- lapply(seq_along(seeds), function(i) {
+      set.seed(as.integer(seeds[i]))
+      res <- try(igraph::cluster_louvain(g_local, weights = igraph::E(g_local)$weight, resolution = as.numeric(gamma)), silent = TRUE)
+      if (inherits(res, "try-error")) res <- igraph::cluster_louvain(g_local, weights = igraph::E(g_local)$weight)
+      memb <- igraph::membership(res)
+      if (is.null(names(memb))) names(memb) <- igraph::V(g_local)$name
+      as.integer(memb[as.character(vertices)])
+    })
+    mm <- do.call(cbind, memb_list)
+    rownames(mm) <- vertices
+    colnames(mm) <- paste0("r", seq_along(seeds))
+    mm
+  }
+}
+
+# Utilities to store CMH/Morisita similarity both as igraph and sparse matrix
+
+#' Convert an igraph similarity graph to a symmetric sparse matrix
+#' @param g igraph with vertex names and an edge attribute (default 'CMH' then 'weight')
+#' @param genes character vector of gene names to define row/col order. If NULL, uses V(g)$name.
+#' @param weight_cols candidate edge attribute names in priority order
+#' @return dgCMatrix with dimnames set to `genes` and zeros dropped
+cmh_igraph_to_matrix <- function(g, genes = NULL, weight_cols = c("CMH","weight")) {
+  stopifnot(inherits(g, "igraph"))
+  ed <- igraph::as_data_frame(g, what = "edges")
+  wcol <- intersect(weight_cols, colnames(ed))
+  if (!length(wcol)) stop("cmh_igraph_to_matrix: edge table lacks CMH/weight attribute")
+  wcol <- wcol[1]
+  if (is.null(genes)) {
+    genes <- igraph::V(g)$name
+  }
+  if (is.null(genes) || !length(genes)) stop("cmh_igraph_to_matrix: cannot determine gene order")
+  i <- match(ed$from, genes)
+  j <- match(ed$to, genes)
+  ok <- !is.na(i) & !is.na(j) & is.finite(ed[[wcol]])
+  i <- as.integer(i[ok]); j <- as.integer(j[ok]); x <- as.numeric(ed[[wcol]][ok])
+  M <- Matrix::sparseMatrix(i = c(i, j), j = c(j, i), x = c(x, x),
+                            dims = c(length(genes), length(genes)),
+                            dimnames = list(genes, genes))
+  Matrix::drop0(methods::as(M, "dgCMatrix"))
+}
+
+#' Ensure a CMH matrix slot exists in LeeStats_Xz
+#' Creates `dst_matrix_slot` from `src_graph_slot` if missing or overwrite=TRUE
+#' @return updated scope_obj
+ensure_cmh_matrix <- function(scope_obj, grid_name,
+                              lee_stats_layer = "LeeStats_Xz",
+                              src_graph_slot = NULL,
+                              dst_matrix_slot = NULL,
+                              overwrite = FALSE,
+                              verbose = TRUE) {
+  if (is.null(src_graph_slot)) src_graph_slot <- paste0("g_morisita_", grid_name)
+  if (is.null(dst_matrix_slot)) dst_matrix_slot <- paste0("m_morisita_", grid_name)
+  if (is.null(scope_obj@stats[[grid_name]]) || is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+    stop("ensure_cmh_matrix: layer not found: ", grid_name, "/", lee_stats_layer)
+  }
+  ls <- scope_obj@stats[[grid_name]][[lee_stats_layer]]
+  if (!overwrite && !is.null(ls[[dst_matrix_slot]]) && (inherits(ls[[dst_matrix_slot]], "Matrix") || is.matrix(ls[[dst_matrix_slot]]))) {
+    if (verbose) message("[ensure_cmh_matrix] Found existing ", dst_matrix_slot, "; skip.")
+    return(scope_obj)
+  }
+  g <- ls[[src_graph_slot]]
+  if (is.null(g)) stop("ensure_cmh_matrix: source graph slot missing: ", src_graph_slot)
+  genes <- try(rownames(ls$L), silent = TRUE)
+  if (inherits(genes, "try-error") || is.null(genes)) genes <- igraph::V(g)$name
+  M <- cmh_igraph_to_matrix(g, genes = genes)
+  scope_obj@stats[[grid_name]][[lee_stats_layer]][[dst_matrix_slot]] <- M
+  if (verbose) message("[ensure_cmh_matrix] Wrote ", dst_matrix_slot, " (", nrow(M), "×", ncol(M), "; nnz=", Matrix::nnzero(M), ")")
+  scope_obj
+}
+
+#' Ensure FDR matrix has dimnames matching Lee's L
+#' If FDR exists but lacks dimnames, set them to dimnames(L)
+#' Optionally coerce to base matrix when needed
+ensure_fdr_dimnames <- function(scope_obj, grid_name,
+                                lee_stats_layer = "LeeStats_Xz",
+                                verbose = TRUE) {
+  if (is.null(scope_obj@stats[[grid_name]]) || is.null(scope_obj@stats[[grid_name]][[lee_stats_layer]])) {
+    stop("ensure_fdr_dimnames: layer not found: ", grid_name, "/", lee_stats_layer)
+  }
+  ls <- scope_obj@stats[[grid_name]][[lee_stats_layer]]
+  L <- ls$L
+  F <- ls$FDR
+  if (is.null(F)) return(scope_obj)
+  # coerce to base matrix if needed
+  if (!is.matrix(F)) {
+    F_try <- try(as.matrix(F), silent = TRUE)
+    if (!inherits(F_try, "try-error") && is.matrix(F_try)) F <- F_try
+  }
+  if (is.matrix(F) && is.null(dimnames(F))) {
+    dn <- dimnames(L)
+    if (!is.null(dn) && !is.null(dn[[1]]) && !is.null(dn[[2]])) {
+      dimnames(F) <- dn
+      scope_obj@stats[[grid_name]][[lee_stats_layer]]$FDR <- F
+      if (isTRUE(verbose)) message("[ensure_fdr_dimnames] Set FDR dimnames from L (", grid_name, ")")
+    } else if (!is.null(rownames(L))) {
+      rn <- rownames(L); dimnames(F) <- list(rn, rn)
+      scope_obj@stats[[grid_name]][[lee_stats_layer]]$FDR <- F
+      if (isTRUE(verbose)) message("[ensure_fdr_dimnames] Set FDR dimnames from rownames(L) (", grid_name, ")")
+    }
+  }
+  scope_obj
+}
