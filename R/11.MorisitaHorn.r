@@ -47,11 +47,14 @@ computeMH <- function(scope_obj,
                       lee_layer = "LeeStats_Xz",
                       graph_slot = "g_consensus",
                       graph_slot_mh = "g_morisita",
+                      matrix_slot_mh = NULL,
+                      out = c("matrix", "igraph", "both"),
                       L_min = 0,
                       area_norm = TRUE,
                       ncore = 8,
                       use_chao = TRUE,
                       verbose = TRUE) {
+    out <- match.arg(out)
     if (verbose) {
         message("[geneSCOPE::computeMH] Starting Morisita-Horn similarity computation on gene network")
         message("[geneSCOPE::computeMH]   Lee layer: ", lee_layer)
@@ -59,6 +62,7 @@ computeMH <- function(scope_obj,
         message("[geneSCOPE::computeMH]   Area normalization: ", area_norm)
         message("[geneSCOPE::computeMH]   Chao correction: ", use_chao)
         message("[geneSCOPE::computeMH]   OpenMP threads: ", ncore)
+        message("[geneSCOPE::computeMH]   Output: ", out)
     }
 
     ## —— 1. Select and check grid layer —— ##
@@ -220,19 +224,62 @@ computeMH <- function(scope_obj,
         }
     }
 
-    igraph::edge_attr(gnet, "CMH") <- mh_vec
+    if (out %in% c("igraph", "both")) {
+        igraph::edge_attr(gnet, "CMH") <- mh_vec
+    }
 
-    ## —— 7. Write to @stats —— ##
-    if (verbose) message("[geneSCOPE::computeMH] Storing network with Morisita-Horn similarities")
+    ## —— 7. Build sparse CMH matrix aligned to Lee's L gene set —— ##
+    gene_all <- rownames(Lmat)
+    if (is.null(gene_all)) {
+        # Fallback to vertex names if Lmat lacks dimnames
+        gene_all <- igraph::V(gnet)$name
+    }
+    ed_names <- igraph::as_edgelist(gnet, names = TRUE)
+    ii <- match(ed_names[,1], gene_all)
+    jj <- match(ed_names[,2], gene_all)
+    ok <- !is.na(ii) & !is.na(jj)
+    if (!all(ok)) {
+        if (verbose) message("[geneSCOPE::computeMH] Note: ", sum(!ok), " edges not in L gene set; skipped in matrix build.")
+    }
+    ii <- as.integer(ii[ok]); jj <- as.integer(jj[ok]); xv <- as.numeric(mh_vec[ok])
+    MH <- Matrix::sparseMatrix(i = c(ii, jj), j = c(jj, ii), x = c(xv, xv),
+                               dims = c(length(gene_all), length(gene_all)),
+                               dimnames = list(gene_all, gene_all))
+    MH <- Matrix::drop0(methods::as(MH, "dgCMatrix"))
+    if (verbose) {
+        message("[geneSCOPE::computeMH]   CMH matrix built: ", nrow(MH), "×", ncol(MH), "; nnz=", Matrix::nnzero(MH))
+    }
+
+    ## —— 8. Write to @stats —— ##
+    if (verbose) message("[geneSCOPE::computeMH] Storing CMH outputs to stats layer")
     if (is.null(scope_obj@stats)) scope_obj@stats <- list()
     if (is.null(scope_obj@stats[[gname]])) scope_obj@stats[[gname]] <- list()
     if (is.null(scope_obj@stats[[gname]][[lee_layer]])) scope_obj@stats[[gname]][[lee_layer]] <- list()
-    scope_obj@stats[[gname]][[lee_layer]][[graph_slot_mh]] <- gnet
+
+    # Determine matrix slot name if not provided
+    if (is.null(matrix_slot_mh) || !nzchar(matrix_slot_mh)) {
+        if (startsWith(graph_slot_mh, "g_")) {
+            matrix_slot_mh <- sub("^g_", "m_", graph_slot_mh)
+        } else {
+            matrix_slot_mh <- paste0("m_", graph_slot_mh)
+        }
+    }
+
+    if (out %in% c("igraph", "both")) {
+        scope_obj@stats[[gname]][[lee_layer]][[graph_slot_mh]] <- gnet
+    }
+    if (out %in% c("matrix", "both")) {
+        scope_obj@stats[[gname]][[lee_layer]][[matrix_slot_mh]] <- MH
+    }
 
     if (verbose) {
         message("[geneSCOPE::computeMH] Analysis completed successfully")
-        message("[geneSCOPE::computeMH]   Network stored in slot: ", graph_slot_mh)
-        message("[geneSCOPE::computeMH]   Edge attribute 'CMH' contains Morisita-Horn similarities")
+        if (out %in% c("igraph","both")) {
+            message("[geneSCOPE::computeMH]   Graph stored in slot: ", graph_slot_mh, " (edge attr 'CMH')")
+        }
+        if (out %in% c("matrix","both")) {
+            message("[geneSCOPE::computeMH]   Matrix stored in slot: ", matrix_slot_mh)
+        }
     }
 
     invisible(scope_obj)
