@@ -1,6 +1,183 @@
+#' @title Shared spatial utilities for scope creation pipelines
+#' @description
+#'   A lightweight collection of geometry helpers extracted from legacy
+#'   `0.Helpers.r` so that Xenium, CosMx, and Visium loaders can share a
+#'   consistent toolkit without duplicating logic.
+
+#' Flip Y coordinates around a maximum bound.
+#' Useful for mirroring image-based coordinate systems to mathematical axes.
+#'
+#' @param coords data.frame/data.table with a numeric column `y`.
+#' @param y_max Numeric scalar; the reference maximum used for flipping.
+#' @return The same object with `y` replaced by `y_max - y`.
+#' @noRd
+flip_y_coordinates <- function(coords, y_max) {
+    stopifnot(is.numeric(y_max), length(y_max) == 1L)
+    if (!"y" %in% names(coords)) {
+        stop("Input data must expose a 'y' column.")
+    }
+    if (data.table::is.data.table(coords)) {
+        coords[, y := y_max - y]
+        coords
+    } else {
+        coords$y <- y_max - coords$y
+        coords
+    }
+}
+
+#' Clip point cloud to an sf/sfc region.
+#' Keeps only spatial points that fall within the specified polygonal footprint.
+#'
+#' @param points data.frame/data.table with columns `x` and `y`.
+#' @param region sf/sfc geometry describing the region of interest.
+#' @param chunk_size Integer; number of rows per spatial join chunk.
+#' @param workers Integer; parallel workers (mclapply on POSIX, snow on Windows).
+#' @return A data.table containing only points inside the region.
+#' @noRd
+clip_points_to_region <- function(points,
+                                  region,
+                                  chunk_size = 5e5,
+                                  workers = 1L) {
+    if (is.null(region) || nrow(points) == 0L) {
+        return(points)
+    }
+    if (inherits(region, "sf")) {
+        region <- sf::st_geometry(region)
+    }
+    if (!inherits(region, "sfc")) {
+        if (all(vapply(region, inherits, logical(1), "sfg"))) {
+            region <- sf::st_sfc(region)
+        } else {
+            stop("`region` must be an sf/sfc object (or list of sfg).")
+        }
+    }
+    if (length(region) == 0L) {
+        return(points[0])
+    }
+    if (length(region) > 1L) {
+        region <- sf::st_union(region)
+    }
+    if (length(region) == 0L) {
+        return(points[0])
+    }
+
+    stopifnot(all(c("x", "y") %in% names(points)))
+    dt_pts <- data.table::as.data.table(points)
+    crs_use <- sf::st_crs(region) %||% NA
+    chunk_ids <- split(seq_len(nrow(dt_pts)),
+        ceiling(seq_len(nrow(dt_pts)) / chunk_size)
+    )
+
+    clip_worker <- function(idx) {
+        subset_dt <- dt_pts[idx]
+        inside_flag <- lengths(sf::st_within(
+            sf::st_as_sf(subset_dt,
+                coords = c("x", "y"),
+                crs = crs_use, remove = FALSE
+            ),
+            region
+        )) > 0
+        subset_dt[inside_flag]
+    }
+
+    if (workers > 1L && .Platform$OS.type != "windows") {
+        res_list <- parallel::mclapply(chunk_ids, clip_worker, mc.cores = workers)
+    } else if (workers > 1L) {
+        cluster <- parallel::makeCluster(workers)
+        on.exit(parallel::stopCluster(cluster), add = TRUE)
+        parallel::clusterEvalQ(cluster, library(sf))
+        parallel::clusterExport(cluster,
+            c("dt_pts", "region", "crs_use", "clip_worker"),
+            envir = environment()
+        )
+        res_list <- parallel::parLapply(cluster, chunk_ids, clip_worker)
+    } else {
+        res_list <- lapply(chunk_ids, clip_worker)
+    }
+    data.table::rbindlist(res_list)
+}
+
+#' Read segmentation vertices and rebuild polygons.
+#' Converts raw vertex listings into usable point clouds and boundary polygons.
+#'
+#' @param path Character; Parquet file containing segmentation vertices.
+#' @param label Character tag written to output list names.
+#' @param flip Logical; whether to flip Y coordinates using `y_max`.
+#' @param y_max Numeric scalar; mandatory when `flip = TRUE`.
+#' @param keep_ids Optional character vector of cell IDs to retain.
+#' @param workers Integer; parallel workers during polygon construction.
+#' @return A list with `points` (data.table) and `polygons` (sfc).
+#' @noRd
+build_segmentation_geometries <- function(path,
+                                          label = "cell",
+                                          flip = FALSE,
+                                          y_max = NULL,
+                                          keep_ids = NULL,
+                                          workers = 1L) {
+    if (!file.exists(path)) {
+        stop("Segmentation file not found: ", path)
+    }
+    raw_dt <- data.table::as.data.table(arrow::read_parquet(path))
+    if ("fov" %in% names(raw_dt)) {
+        seg_dt <- raw_dt[, .(
+            cell = paste0(as.character(cell_id), "_", as.character(fov)),
+            x = vertex_x,
+            y = vertex_y,
+            label_id = paste0(as.character(cell_id), "_", as.character(fov))
+        )]
+    } else {
+        seg_dt <- raw_dt[, .(
+            cell = as.character(cell_id),
+            x = vertex_x,
+            y = vertex_y,
+            label_id = as.character(label_id)
+        )]
+    }
+
+    if (flip) {
+        if (is.null(y_max)) stop("`y_max` must be supplied when `flip = TRUE`.")
+        seg_dt[, y := y_max - y]
+    }
+    if (!is.null(keep_ids)) {
+        seg_dt <- seg_dt[cell %in% keep_ids]
+    }
+
+    index_map <- split(seq_len(nrow(seg_dt)), seg_dt$label_id)
+    polygon_builder <- function(idx) {
+        sub_dt <- seg_dt[idx, .(x, y)]
+        sub_dt <- sub_dt[complete.cases(sub_dt)]
+        if (nrow(sub_dt) < 3L) return(NULL)
+        coords <- as.matrix(sub_dt)
+        storage.mode(coords) <- "double"
+        if (!all(coords[1, ] == coords[nrow(coords), ])) {
+            coords <- rbind(coords, coords[1, ])
+        }
+        tryCatch(sf::st_polygon(list(coords)), error = function(e) {
+            message("[build_segmentation_geometries] Invalid polygon in ", label, ": ", conditionMessage(e))
+            NULL
+        })
+    }
+
+    if (workers > 1L && .Platform$OS.type != "windows") {
+        poly_list <- parallel::mclapply(index_map, polygon_builder, mc.cores = workers)
+    } else if (workers > 1L) {
+        cluster <- parallel::makeCluster(workers)
+        on.exit(parallel::stopCluster(cluster), add = TRUE)
+        parallel::clusterEvalQ(cluster, library(sf))
+        parallel::clusterExport(cluster, c("seg_dt", "polygon_builder"),
+            envir = environment()
+        )
+        poly_list <- parallel::parLapply(cluster, index_map, polygon_builder)
+    } else {
+        poly_list <- lapply(index_map, polygon_builder)
+    }
+    list(points = seg_dt, polygons = sf::st_sfc(poly_list[!vapply(poly_list, is.null, logical(1L))]))
+}
 #' @title Helper Functions for geneSCOPE Package
 #' @description Internal helper functions used throughout the package
 
+#' Select a grid layer from the scope object, ensuring valid input.
+#' Centralizes layer-naming checks so downstream helpers can assume consistent inputs.
 #' @noRd
 .selectGridLayer <- function(scope_obj, grid_name = NULL, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
@@ -26,6 +203,8 @@
     return(scope_obj@grid[[grid_name]])
 }
 
+#' Confirm that a grid layer contains the required data slots.
+#' Guards against incomplete preprocessing before expensive computations run.
 #' @noRd
 .checkGridContent <- function(scope_obj, grid_name, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
@@ -45,6 +224,8 @@
     invisible(TRUE)
 }
 
+#' Decide which genes to use based on explicit lists or cluster labels.
+#' Provides a single entry-point for deriving analysis subsets from flexible inputs.
 #' @noRd
 .getGeneSubset <- function(scope_obj, genes = NULL, cluster_col = NULL, cluster_num = NULL, verbose = FALSE) {
     # Removed verbose message to avoid redundancy with main functions
@@ -78,6 +259,8 @@
     stop("No gene subset specified and no meta.data available")
 }
 
+#' Retrieve the Lee's L matrix for a grid layer, resolving default names.
+#' Normalizes the various storage locations used across versions of geneSCOPE objects.
 #' @noRd
 .getLeeMatrix <- function(scope_obj, grid_name = NULL, lee_layer = NULL, verbose = FALSE) {
     ## ---- 0. Select grid sub-layer ------------------------------------------------
@@ -137,14 +320,15 @@
     Lmat <- leeStat$L
 
     ## ---- 3. If Pearson correlation matrix exists, take intersection ---------------------------------
-    if (!is.null(g_layer$pearson_cor)) {
-        common <- intersect(rownames(Lmat), rownames(g_layer$pearson_cor))
-        Lmat <- Lmat[common, common, drop = FALSE]
-    }
+    # Note: do NOT intersect Lee's L with Pearson gene set here.
+    # This keeps the full L matrix as provided by the LeeStats layer
+    # and avoids unintended shrinkage of the gene set during Stage-1.
 
     Lmat
 }
 
+#' Fetch the Pearson correlation matrix and align it with Lee's L when possible.
+#' Handles both grid-level and cell-level storage patterns with sensible fallbacks.
 #' @noRd
 .getPearsonMatrix <- function(scope_obj,
                               grid_name = NULL,
@@ -235,8 +419,9 @@
     return(rmat)
 }
 
+#' Summarize how often each edge co-clusters across runs.
+#' Computes consensus weights on the provided edge list without allocating a dense N×N matrix.
 #' @noRd
-#' Compute consensus weights on a given edge list without allocating a dense N×N matrix.
 #' @param memb_mat Integer matrix (genes × runs), each column is a community assignment.
 #' @param edge_i Integer vector (1-based) indices of edge endpoints (length m).
 #' @param edge_j Integer vector (1-based) indices of edge endpoints (length m).
@@ -267,12 +452,27 @@
     counts / runs
 }
 
+#' Transfer CMH or edge weights from a similarity graph to requested pairs.
+#' Maps precomputed weights onto requested edges and falls back to pure R when C++ helpers are absent.
 #' @noRd
-#' Map CMH/weight from a similarity graph to (ei,ej) edges among kept_genes.
-#' Falls back to direct lookup when C++ helper is unavailable.
 .cmh_lookup_pairs <- function(kept_genes, ei, ej, g_sim, weight_col = c("CMH", "weight"), n_threads = NULL) {
     weight_col <- match.arg(weight_col)
-    if (is.null(n_threads)) n_threads <- getSafeThreadCount(8L)
+    if (is.null(n_threads)) {
+        # Robust threads selection across versions
+        n_threads <- tryCatch({
+            if (exists("safe_thread_count", mode = "function", inherits = TRUE)) {
+                safe_thread_count()
+            } else if (exists("getSafeThreadCount", mode = "function", inherits = TRUE)) {
+                f <- get("getSafeThreadCount", mode = "function")
+                an <- tryCatch(names(formals(f)), error = function(e) character(0))
+                if ("max_requested" %in% an) f(max_requested = 8L)
+                else if ("requested_cores" %in% an) f(requested_cores = 8L)
+                else f(8L)
+            } else {
+                max(1L, min(8L, as.integer(parallel::detectCores()) - 1L))
+            }
+        }, error = function(e) 1L)
+    }
     ed_sim <- igraph::as_data_frame(g_sim, what = "edges")
     wcol <- if (!is.null(ed_sim[[weight_col]])) weight_col else if (!is.null(ed_sim$weight)) "weight" else stop("CMH graph lacks weight column")
     si <- match(ed_sim$from, kept_genes)
@@ -305,8 +505,9 @@
     as.numeric(ww)
 }
 
+#' Count intra-cluster degrees using existing edge endpoints only.
+#' Tallies within-cluster degrees without materializing a full adjacency structure.
 #' @noRd
-#' Compute per-gene intra-cluster degree using only existing edges.
 #' @param edge_i,j Integer endpoint indices (1-based) within the kept gene set.
 #' @param memb Integer cluster labels (length = number of kept genes), may contain NA.
 #' @return Integer vector of intra-cluster degrees per gene.
@@ -320,9 +521,9 @@
     i_tab + j_tab
 }
 
+#' Extract Pearson correlations for specific edge pairs without densifying.
+#' Computes only the requested pairwise correlations, keeping large Pearson matrices in sparse form.
 #' @noRd
-#' Extract Pearson correlations only for the requested gene pairs without
-#' constructing a full kept_genes × kept_genes dense submatrix.
 #' @param scope_obj scope_object
 #' @param grid_name character grid layer name
 #' @param level "grid" or "cell" (default used by cluster code is "cell")
@@ -347,8 +548,9 @@
     rMat[cbind(ridx[edge_i], ridx[edge_j])]
 }
 
+#' Symmetrize a matrix via pmax while preserving sparse representations.
+#' Provides a sparse-friendly alternative when `pmax` is unavailable or dense conversion is costly.
 #' @noRd
-#' Sparse-safe symmetric pmax for matrices. Keeps sparse structure when possible.
 .symmetric_pmax <- function(M) {
     if (inherits(M, "sparseMatrix")) {
         # Robust to Matrix versions without exported pmax(): use algebraic identity
@@ -365,10 +567,9 @@
     }
 }
 
+#' Compute cluster-level quality metrics while keeping matrices sparse.
+#' Summarizes within-cluster consensus and conductance without converting matrices to dense form.
 #' @noRd
-#' Cluster-level metrics without densifying matrices.
-#' within_cons: mean consensus weight on intra-cluster edges.
-#' conductance: Wcut/(Wcut+Win) using weighted adjacency W (sparse).
 .cluster_metrics_sparse <- function(members, cons_mat, W_mat, genes) {
     cl_ids <- sort(na.omit(unique(members)))
     if (!inherits(cons_mat, "sparseMatrix")) cons_mat <- methods::as(cons_mat, "dgCMatrix")
@@ -396,8 +597,9 @@
     do.call(rbind, res)
 }
 
+#' Derive per-gene metrics (p_in, w_in, etc.) using sparse matrices.
+#' Quantifies intra- and inter-cluster affinities while avoiding dense memory usage.
 #' @noRd
-#' Gene-level metrics without densifying: p_in, p_best_out, w_in
 .gene_metrics_sparse <- function(members, cons_mat, W_mat, genes) {
     if (!inherits(cons_mat, "sparseMatrix")) cons_mat <- methods::as(cons_mat, "dgCMatrix")
     if (!inherits(W_mat, "sparseMatrix")) W_mat <- methods::as(W_mat, "dgCMatrix")
@@ -437,9 +639,9 @@
     data.frame(gene = genes, cluster = members, p_in = p_in, p_best_out = p_best_out, w_in = w_in, stringsAsFactors = FALSE)
 }
 
+#' Run Leiden community detection through NetworKit with reticulate.
+#' Provides a high-performance parallel backend while keeping a pure-R fallback.
 #' @noRd
-#' @noRd
-#' Networkit-based Leiden wrapper (multi-thread CPU via reticulate).
 .community_detect_networkit <- function(graph, resolution = 1, threads = 1, debug = FALSE) {
     if (!requireNamespace("reticulate", quietly = TRUE)) {
         stop("reticulate package required for networkit backend", call. = FALSE)
@@ -528,8 +730,9 @@
     membership
 }
 
+#' Provide a backend-agnostic wrapper around Leiden/Louvain clustering.
+#' Switches between igraph and NetworKit implementations with graceful fallbacks.
 #' @noRd
-#' Unified community detection with backend switch (igraph / networkit).
 .community_detect <- function(graph, algo = c("leiden", "louvain"), resolution = 1,
                                objective = c("CPM", "modularity"),
                                backend = c("igraph", "networkit"),
@@ -583,8 +786,9 @@
     stop("Unsupported backend", call. = FALSE)
 }
 
+#' Coerce diverse matrix-like inputs into base numeric matrices.
+#' Standardizes sparse, bigmemory, and other exotic structures into plain numeric arrays.
 #' @noRd
-#' Coerce matrix-like object to a base numeric matrix (double storage).
 .ensure_numeric_matrix <- function(mat,
                                    nrow = NULL,
                                    ncol = NULL,
@@ -663,29 +867,90 @@
     out
 }
 
+#' Attempt to reshape an object safely to target dimensions.
+#' Performs guarded `dim<-` assignment and falls back to matrix coercion if needed.
 #' @noRd
-#' Align an FDR matrix to L_raw and apply threshold to L (in-place semantic).
+.safe_set_dim <- function(M, target_dim) {
+    if (is.null(target_dim)) return(M)
+    ok <- tryCatch({
+        dim(M) <- target_dim
+        TRUE
+    }, error = function(e) FALSE)
+    if (ok) return(M)
+    M_coerced <- try(as.matrix(M), silent = TRUE)
+    if (inherits(M_coerced, "try-error")) {
+        stop("Failed to coerce object to requested dimensions when aligning FDR matrix", call. = FALSE)
+    }
+    dim(M_coerced) <- target_dim
+    M_coerced
+}
+
+#' Assign dimension names defensively, honoring debug options.
+#' Applies `dimnames<-` but tolerates failures when debugging overrides are set.
+#' @noRd
+.safe_set_dimnames <- function(M, target_dn) {
+    if (is.null(target_dn)) return(M)
+    ok <- tryCatch({
+        dimnames(M) <- target_dn
+        TRUE
+    }, error = function(e) FALSE)
+    if (!ok && isTRUE(getOption("geneSCOPE.debug_dimnames", FALSE))) {
+        message("[align_and_filter_FDR] dimnames assignment skipped; proceeding without named FDR matrix.")
+    }
+    M
+}
+
+#' Align an FDR matrix with L and zero out edges above threshold.
+#' Keeps Lee statistics and FDR control matrices synchronized before masking edges.
+#' @noRd
 .align_and_filter_FDR <- function(L, L_raw, FDRmat, FDR_max) {
     if (is.null(FDRmat)) return(L)
     FM <- FDRmat
-    if (!is.matrix(FM)) {
+
+    # 1) Robust coercion to base matrix
+    if (inherits(FM, "big.matrix")) {
+        FM <- try({
+            if (requireNamespace("bigmemory", quietly = TRUE)) bigmemory::as.matrix(FM) else FM[, ]
+        }, silent = TRUE)
+        if (inherits(FM, "try-error")) {
+            warning("[align_and_filter_FDR] FDR is big.matrix but cannot coerce to base matrix; disabling FDR filter.")
+            return(L)
+        }
+    } else if (!is.matrix(FM)) {
         FM_try <- try(as.matrix(FM), silent = TRUE)
-        if (!inherits(FM_try, "try-error")) FM <- FM_try
-    }
-    if (is.null(dim(FM))) {
-        FM <- matrix(FM, nrow = nrow(L_raw), ncol = ncol(L_raw))
-        dimnames(FM) <- dimnames(L_raw)
-    } else if (!(identical(dim(FM), dim(L_raw)) &&
-                 identical(rownames(FM), rownames(L_raw)) &&
-                 identical(colnames(FM), colnames(L_raw)))) {
-        if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
-            all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
-            FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
+        if (!inherits(FM_try, "try-error") && is.matrix(FM_try)) {
+            FM <- FM_try
         } else {
-            dimnames(FM) <- dimnames(L_raw)
+            warning("[align_and_filter_FDR] FDR object cannot be coerced to matrix (class=", paste(class(FDRmat), collapse=","), "); disabling FDR filter.")
+            return(L)
         }
     }
 
+    # 2) Align by names (preferred) or by shape
+    policy <- getOption("geneSCOPE.fdr_align_policy", "by_name")
+    if (is.null(dim(FM))) {
+        FM <- matrix(FM, nrow = nrow(L_raw), ncol = ncol(L_raw))
+        FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+    } else if (!(identical(dim(FM), dim(L_raw)) &&
+                 identical(rownames(FM), rownames(L_raw)) &&
+                 identical(colnames(FM), colnames(L_raw)))) {
+        if (identical(policy, "by_shape")) {
+            FM <- .safe_set_dim(FM, dim(L_raw))
+            FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+        } else {
+            if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
+                all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
+                FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
+            } else {
+                # fall back to shape-only alignment, but keep numeric matrix where possible
+                FM <- .safe_set_dim(FM, dim(L_raw))
+                FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+            }
+        }
+    }
+    FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+
+    # 3) Subset FDR to current kept rows of L
     target_rows <- rownames(L)
     if (!is.null(target_rows) && !is.null(rownames(FM))) {
         idx <- match(target_rows, rownames(FM))
@@ -697,23 +962,23 @@
         stop("FDR matrix dimensions do not match current subset", call. = FALSE)
     }
 
+    # 4) Apply mask
     if (inherits(L, "sparseMatrix")) {
         LT <- methods::as(L, "TsparseMatrix")
         if (length(LT@x)) {
             rows <- LT@i + 1L
             cols <- LT@j + 1L
             mask <- (FM[cbind(rows, cols)] > FDR_max)
-            if (any(mask)) {
-                LT@x[mask] <- 0
-            }
+            if (any(mask)) LT@x[mask] <- 0
         }
         return(Matrix::drop0(methods::as(LT, "CsparseMatrix")))
     }
-
     L[FM > FDR_max] <- 0
     L
 }
 
+#' Flip y-coordinates in-place for data frames or data.tables.
+#' Provides a lightweight mirror transform while preserving data.table semantics.
 #' @noRd
 .flipCoordinates <- function(data, y_max) {
     stopifnot(is.numeric(y_max) && length(y_max) == 1)
@@ -729,6 +994,8 @@
     return(data)
 }
 
+#' Clip point coordinates to an sf polygon in chunks for memory safety.
+#' Processes large point clouds in parallel-friendly batches to avoid memory spikes.
 #' @noRd
 .clipPointsToPolygon <- function(points, polygon,
                                  chunk_size = 5e5, ncores = 1) {
@@ -804,6 +1071,8 @@
     data.table::rbindlist(res_list)
 }
 
+#' Convert segmentation vertices into point tables and polygons.
+#' Handles optional axis flips and ID filtering so downstream workflows see clean geometry.
 #' @noRd
 .processSegmentation <- function(seg_file, tag = "cell",
                                  flip_y = FALSE, y_max = NULL,
@@ -884,6 +1153,8 @@
     list(points = seg_dt, polygons = polygons)
 }
 
+#' Parse a quantile shorthand (e.g., q95) into a probability.
+#' Supports the qXX notation used throughout geneSCOPE configuration parameters.
 #' @noRd
 .parse_q <- function(qstr) {
     if (!is.character(qstr) || length(qstr) != 1 ||
@@ -897,6 +1168,8 @@
     val
 }
 
+#' Retain matrix entries that fall within chosen quantile bounds.
+#' Applies percentile-based masking to both dense and sparse matrices with zero-awareness.
 #' @noRd
 .filter_matrix_by_quantile <- function(mat, pct_min = "q0", pct_max = "q100") {
     stopifnot(is.matrix(mat) || inherits(mat, "Matrix"))
@@ -1038,6 +1311,8 @@
     return(res)
 }
 
+#' Compute block identifiers from grid coordinates and block size.
+#' Groups grid tiles into coarse blocks so block-aware statistics can be aggregated quickly.
 #' @noRd
 .assign_block_id <- function(grid_info, block_side = 8) {
     # gx / gy start at 1
@@ -1049,6 +1324,8 @@
     block_id
 }
 
+#' Summarize cluster metrics using dense matrices for smaller cases.
+#' Provides a simple dense fallback when sparse machinery is unnecessary.
 #' @noRd
 .cluster_metrics <- function(members, cons_mat, W_mat) {
     cl_ids <- sort(na.omit(unique(members)))
@@ -1065,6 +1342,8 @@
     })
     do.call(rbind, res)
 }
+#' Produce per-gene metrics when dense consensus/weight matrices are available.
+#' Reports intra-cluster strength and the strongest external attraction per gene.
 #' @noRd
 .gene_metrics <- function(members, cons_mat, W_mat) {
     cl_ids <- sort(na.omit(unique(members)))
