@@ -1531,6 +1531,10 @@
     stage1_backend <- stage1$stage1_backend %||% "igraph"
     stage1_algo_effective <- stage1$stage1_algo_per_run %||% stage1$stage1_algo %||% config$algo
 
+    large_n_threshold <- if (is.null(config$large_n_threshold)) length(kept_genes) else as.integer(config$large_n_threshold)
+    stage2_consensus_min_size <- max(2L, as.integer(config$stage2_consensus_min_size %||% 3L))
+    stage2_aggressive_min_size <- max(stage2_consensus_min_size, as.integer(config$stage2_aggressive_min_size %||% 500L))
+
     stage2_algo_final <- tryCatch({
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
@@ -1737,7 +1741,6 @@
     res_param_base <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
     if (!is.finite(res_param_base)) res_param_base <- 1
     mode_setting <- config$mode
-    large_n_threshold <- if (is.null(config$large_n_threshold)) length(kept_genes) else as.integer(config$large_n_threshold)
     aggr_future_workers <- if (is.null(config$aggr_future_workers)) 1L else max(1L, as.integer(config$aggr_future_workers))
     aggr_batch_size <- config$aggr_batch_size
     nk_leiden_iterations <- if (is.null(config$nk_leiden_iterations)) 10L else as.integer(config$nk_leiden_iterations)
@@ -1750,8 +1753,6 @@
     sub_conductance_min <- config$sub_conductance_min
     sub_improve_within_cons_min <- config$sub_improve_within_cons_min
     sub_max_groups <- max(1L, as.integer(config$sub_max_groups))
-    stage2_consensus_min_size <- max(2L, as.integer(config$stage2_consensus_min_size %||% 3L))
-    stage2_aggressive_min_size <- max(stage2_consensus_min_size, as.integer(config$stage2_aggressive_min_size %||% 500L))
     enable_qc_filter <- isTRUE(config$enable_qc_filter)
     qc_gene_intra_cons_min <- config$qc_gene_intra_cons_min
     qc_gene_best_out_cons_min <- config$qc_gene_best_out_cons_min
