@@ -23,11 +23,12 @@
 #' @param use_consensus Logical; enable consensus stage.
 #' @param consensus_thr Numeric consensus threshold.
 #' @param n_restart Integer number of restarts.
+#' @param n_restart_stage2 Optional Stage-2 restart count (defaults to Stage-1 when `NULL`).
 #' @param n_threads Integer thread count.
 #' @param mode Character mode flag.
 #' @param large_n_threshold Integer node threshold for aggressive mode.
-#' @param nk_leiden_iterations Integer NetworKit iteration count.
-#' @param nk_leiden_randomize Logical; randomize NetworKit initialisation.
+#' @param nk_leiden_iterations Integer iteration cap for the NetworKit backend (legacy option name).
+#' @param nk_leiden_randomize Logical flag mapped to NetworKit's ParallelLeiden randomize option (legacy name).
 #' @param aggr_future_workers Integer future workers.
 #' @param aggr_batch_size Integer restart batch size.
 #' @param enable_subcluster Logical; attempt Stage-2 subclustering.
@@ -74,6 +75,7 @@
     use_consensus = TRUE,
     consensus_thr = 0.95,
     n_restart = 100,
+    n_restart_stage2 = NULL,
     n_threads = NULL,
     mode = "auto",
     large_n_threshold = 1000L,
@@ -133,7 +135,8 @@
         use_log1p_weight = use_log1p_weight,
         use_consensus = use_consensus,
         consensus_thr = consensus_thr,
-        n_restart = n_restart,
+        n_restart = as.integer(n_restart),
+        n_restart_stage2 = if (is.null(n_restart_stage2)) NA_integer_ else as.integer(n_restart_stage2),
         n_threads = n_threads,
         mode = mode,
         large_n_threshold = as.integer(large_n_threshold),
@@ -448,6 +451,10 @@
     if (!is.matrix(memb)) memb <- as.matrix(memb)
     storage.mode(memb) <- "integer"
     n <- nrow(memb); r <- ncol(memb)
+    max_dense_n <- getOption("genescope.consensus_r_fallback_max_n", 5000L)
+    if (is.finite(max_dense_n) && n > max_dense_n) {
+        stop(sprintf("R consensus fallback skipped: n=%d exceeds safe dense limit (%d).", n, max_dense_n), call. = FALSE)
+    }
     if (!is.finite(r) || r < 1L) return(Matrix::Matrix(0, n, n, sparse = TRUE))
     acc <- Matrix::Matrix(0, n, n, sparse = FALSE)
     for (jj in seq_len(r)) {
@@ -1149,6 +1156,7 @@
 
 # ---------------------------------------------------------------------------
 # Step 1: Threshold Lee's L matrix and build base adjacency
+# --------------------------------------------------------------------------- Lee's L matrix and build base adjacency
 # ---------------------------------------------------------------------------
 #' Threshold similarity matrix and prepare adjacency structures.
 #'
@@ -1214,7 +1222,7 @@
 #' @param threshold Output list from `.threshold_similarity_graph_2()`.
 #' @param config Configuration list.
 #' @param verbose Logical; emit progress messages.
-#' @param networkit_config Optional list describing NetworKit runtime configuration.
+#' @param networkit_config Optional list describing NetworKit runtime configuration (legacy argument name).
 #'
 #' @return A list containing Stage-1 memberships, consensus matrix, and graphs.
 #' @noRd
@@ -1285,7 +1293,6 @@
     stage1_membership_labels <- NULL
     restart_memberships <- NULL
     stage1_backend <- "igraph"
-    stage1_backend <- "igraph"
 
     if (identical(algo, "hotspot-like")) {
         .cluster_message_2(verbose, "[cluster]   Stage-1 backend: hotspot-like")
@@ -1313,14 +1320,14 @@
         edge_pairs <- nk_inputs_stage1$edge_table
 
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
-        algo_per_run <- if (identical(backend_mode, "aggressive") && identical(algo, "leiden")) "louvain" else algo
+        algo_per_run <- algo
 
         future_guard <- .adjust_future_globals_maxsize_2(config$future_globals_min_bytes %||% (2 * 1024^3))
         on.exit(future_guard(), add = TRUE)
 
         aggressive_requested <- identical(backend_mode, "aggressive")
         if (aggressive_requested && !.networkit_available_2()) {
-            stop("Aggressive mode requires the NetworKit backend; please configure reticulate/networkit before running clusterGenes_new.", call. = FALSE)
+            stop("Aggressive mode requires the NetworKit backend; please configure reticulate with a Python interpreter that can import networkit before running clusterGenes_3.", call. = FALSE)
         }
         use_networkit_leiden <- aggressive_requested && identical(algo_per_run, "leiden")
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
@@ -1329,48 +1336,31 @@
             backend_label <- if (use_networkit_leiden) "Leiden" else "PLM/louvain"
             .cluster_message_2(verbose, "[cluster]   Stage-1 backend: NetworKit (", backend_label, ")")
             stage1_backend <- "networkit"
-            seeds <- seq_len(config$n_restart)
-            chunk_size <- config$aggr_batch_size
-            if (is.null(chunk_size) || chunk_size <= 0) {
-                chunk_size <- ceiling(config$n_restart / max(1L, as.integer(config$aggr_future_workers)))
-            }
-            split_chunks <- function(x, k) {
-                if (k <= 0) return(list(x))
-                split(x, ceiling(seq_along(x) / k))
-            }
-            chunks <- split_chunks(seeds, chunk_size)
-            threads_per_worker <- max(1L, floor(n_threads / max(1L, as.integer(config$aggr_future_workers))))
-
-            worker_fun <- function(ss) {
-                if (use_networkit_leiden) {
-                    .networkit_parallel_leiden_runs_2(
-                        vertex_names = vertex_names,
-                        edge_table = edge_pairs,
-                        edge_weights = edge_weights,
-                        gamma = as.numeric(res_param),
-                        iterations = as.integer(config$nk_leiden_iterations),
-                        randomize = isTRUE(config$nk_leiden_randomize),
-                        threads = threads_per_worker,
-                        seeds = as.integer(ss)
-                    )
-                } else {
-                    .networkit_plm_runs_2(
-                        vertex_names = vertex_names,
-                        edge_table = edge_pairs,
-                        edge_weights = edge_weights,
-                        gamma = as.numeric(res_param),
-                        refine = TRUE,
-                        threads = threads_per_worker,
-                        seeds = as.integer(ss)
-                    )
-                }
-            }
-            membership_blocks <- if (config$aggr_future_workers > 1L) {
-                future.apply::future_lapply(chunks, worker_fun, future.seed = TRUE)
+            seeds <- as.integer(seq_len(config$n_restart))
+            if (!length(seeds)) seeds <- 1L
+            threads_networkit <- max(1L, as.integer(config$n_threads %||% n_threads))
+            restart_memberships <- if (use_networkit_leiden) {
+                .networkit_parallel_leiden_runs_2(
+                    vertex_names = vertex_names,
+                    edge_table = edge_pairs,
+                    edge_weights = edge_weights,
+                    gamma = as.numeric(res_param),
+                    iterations = as.integer(config$nk_leiden_iterations),
+                    randomize = isTRUE(config$nk_leiden_randomize),
+                    threads = threads_networkit,
+                    seeds = seeds
+                )
             } else {
-                lapply(chunks, worker_fun)
+                .networkit_plm_runs_2(
+                    vertex_names = vertex_names,
+                    edge_table = edge_pairs,
+                    edge_weights = edge_weights,
+                    gamma = as.numeric(res_param),
+                    refine = TRUE,
+                    threads = threads_networkit,
+                    seeds = seeds
+                )
             }
-            restart_memberships <- do.call(cbind, membership_blocks)
         } else {
             .cluster_message_2(verbose, "[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
             # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
@@ -1550,6 +1540,9 @@
             "igraph"
         }
     }
+    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot")) {
+        stage2_backend <- "igraph"
+    }
     .cluster_message_2(verbose, "[cluster]   Stage-2 target backend: ", stage2_backend)
 
     if (!config$use_mh_weight && !config$CI95_filter) {
@@ -1726,6 +1719,12 @@
     use_consensus <- isTRUE(config$use_consensus)
     consensus_thr <- config$consensus_thr
     n_restart <- max(1L, as.integer(config$n_restart))
+    raw_stage2_restarts <- config$n_restart_stage2
+    if (is.null(raw_stage2_restarts) || is.na(raw_stage2_restarts) || !is.finite(raw_stage2_restarts)) {
+        n_restart_stage2 <- n_restart
+    } else {
+        n_restart_stage2 <- max(1L, as.integer(raw_stage2_restarts))
+    }
     n_threads <- if (is.null(config$n_threads)) 1L else max(1L, as.integer(config$n_threads))
     objective <- config$objective
     res_param_base <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
@@ -1787,6 +1786,7 @@
             mode_sub <- if (identical(mode_setting, "auto")) {
                 if (length(genes_c) > large_n_threshold) "aggressive" else stage1_mode_selected
             } else stage1_mode_selected
+            size_sub <- length(genes_c)
             algo_per_run_sub <- stage2_algo_final
             nk_inputs_sub <- .nk_prepare_graph_input_2(g_sub)
             g_sub <- nk_inputs_sub$graph
@@ -1799,55 +1799,46 @@
             if (backend_sub == "networkit" && !stage2_algo_final %in% c("leiden", "louvain")) {
                 backend_sub <- "igraph"
             }
+            if (isTRUE(config$prefer_fast)) backend_sub <- "igraph"
+            if (backend_sub == "networkit" && size_sub < large_n_threshold) {
+                backend_sub <- "igraph"
+            }
             if (backend_sub == "networkit" && !.nk_available_2()) {
                 stop("Stage-2 NetworKit backend requested but NetworKit is unavailable.", call. = FALSE)
             }
 
+            multi_restart_sub <- identical(mode_sub, "aggressive")
+            n_restart_sub <- if (multi_restart_sub) n_restart_stage2 else 1L
+
             if (backend_sub == "networkit") {
-                seeds <- seq_len(n_restart)
-                chunk_size <- aggr_batch_size
-                if (is.null(chunk_size) || chunk_size <= 0) {
-                    chunk_size <- ceiling(n_restart / max(1L, aggr_future_workers))
-                }
-                split_chunks <- function(x, k) {
-                    if (k <= 0) return(list(x))
-                    split(x, ceiling(seq_along(x) / k))
-                }
-                chunks <- split_chunks(seeds, chunk_size)
-                threads_per_worker <- max(1L, floor(n_threads / max(1L, aggr_future_workers)))
-                worker_fun <- function(ss) {
-                    if (identical(stage2_algo_final, "leiden")) {
-                        .nk_parallel_leiden_mruns_2(
-                            vertex_names = vertex_names_sub,
-                            edge_table = el,
-                            edge_weights = ew,
-                            gamma = as.numeric(res_param_sub),
-                            iterations = nk_leiden_iterations,
-                            randomize = nk_leiden_randomize,
-                            threads = threads_per_worker,
-                            seeds = as.integer(ss)
-                        )
-                    } else {
-                        .nk_plm_mruns_2(
-                            vertex_names = vertex_names_sub,
-                            edge_table = el,
-                            edge_weights = ew,
-                            gamma = as.numeric(res_param_sub),
-                            refine = TRUE,
-                            threads = threads_per_worker,
-                            seeds = as.integer(ss)
-                        )
-                    }
-                }
-                memb_blocks <- if (aggr_future_workers > 1L) {
-                    future.apply::future_lapply(chunks, worker_fun, future.seed = TRUE)
+                seeds <- seq_len(n_restart_sub)
+                if (!length(seeds)) seeds <- 1L
+                threads_networkit <- max(1L, as.integer(n_threads))
+                memb_mat_sub <- if (identical(stage2_algo_final, "leiden")) {
+                    .nk_parallel_leiden_mruns_2(
+                        vertex_names = vertex_names_sub,
+                        edge_table = el,
+                        edge_weights = ew,
+                        gamma = as.numeric(res_param_sub),
+                        iterations = nk_leiden_iterations,
+                        randomize = nk_leiden_randomize,
+                        threads = threads_networkit,
+                        seeds = seeds
+                    )
                 } else {
-                    lapply(chunks, worker_fun)
+                    .nk_plm_mruns_2(
+                        vertex_names = vertex_names_sub,
+                        edge_table = el,
+                        edge_weights = ew,
+                        gamma = as.numeric(res_param_sub),
+                        refine = TRUE,
+                        threads = threads_networkit,
+                        seeds = seeds
+                    )
                 }
-                memb_mat_sub <- do.call(cbind, memb_blocks)
             } else {
                 memb_mat_sub <- future.apply::future_sapply(
-                    seq_len(n_restart),
+                    seq_len(n_restart_sub),
                     function(ii) {
                         g_local <- igraph::graph_from_data_frame(
                             cbind(el, weight = ew),
@@ -1870,8 +1861,10 @@
             }
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
 
-            if (!use_consensus) {
-                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
+            use_consensus_sub <- use_consensus && multi_restart_sub
+            if (!use_consensus_sub) {
+                skip_reason <- if (multi_restart_sub) "disabled" else sprintf("mode_sub=%s", mode_sub)
+                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus skipped (", skip_reason, ")")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
                 n_loc <- length(labs)
@@ -1991,7 +1984,7 @@
             ew <- igraph::E(g_sub)$weight
             el <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
             memb_mat_sub <- future.apply::future_sapply(
-                seq_len(min(n_restart, 50)),
+                seq_len(min(n_restart_stage2, 50)),
                 function(ii) {
                     g_local <- igraph::graph_from_data_frame(cbind(el, weight = ew), directed = FALSE, vertices = igraph::V(g_sub)$name)
                     res <- .run_graph_algorithm_2(
@@ -2187,6 +2180,7 @@
 #' @param graph_slot_name Stats-layer slot to store consensus graph.
 #' @param n_restart Number of Stage-1 restarts.
 #' @param consensus_thr Consensus threshold applied to co-occurrence matrix.
+#' @param n_restart_stage2 Optional Stage-2 restarts (defaults to Stage-1 count when `NULL`).
 #' @param keep_cross_stable Logical; retain cross-cluster stable edges.
 #' @param CI95_filter Logical; enable CI95-based edge filtering.
 #' @param curve_layer Name of curve layer for CI95 filtering.
@@ -2218,9 +2212,9 @@
 #' @param ncores Parallel threads for consensus routines.
 #' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`, `"fast"`).
 #' @param large_n_threshold Node threshold for switching to aggressive mode.
-#' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit configuration.
-#' @param nk_leiden_iterations Iterations for NetworKit Leiden backend.
-#' @param nk_leiden_randomize Logical; randomize NetworKit Leiden.
+#' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit (Python) runtime configuration (legacy option names).
+#' @param nk_leiden_iterations Iterations for the NetworKit ParallelLeiden backend (legacy option name).
+#' @param nk_leiden_randomize Logical; whether to randomize NetworKit ParallelLeiden (legacy option name).
 #' @param aggr_future_workers Future workers for batched restarts.
 #' @param aggr_batch_size Batch size for restart aggregation.
 #' @param future_globals_min_bytes Minimum `future.globals.maxSize` (bytes) to request;
@@ -2231,7 +2225,7 @@
 #' @return Modified `scope_obj`, or list with `scope_obj` and diagnostics when
 #'   `return_report = TRUE`.
 #' @export
-clusterGenes_2 <- function(
+clusterGenes_3 <- function(
     scope_obj,
     grid_name = NULL,
     stats_layer = "LeeStats_Xz",
@@ -2257,6 +2251,7 @@ clusterGenes_2 <- function(
     graph_slot_name = "g_consensus",
     n_restart = 100,
     consensus_thr = 0.95,
+    n_restart_stage2 = NULL,
     K = NULL,
     min_module_size = 5,
     CI95_filter = FALSE,
@@ -2319,14 +2314,7 @@ clusterGenes_2 <- function(
     }
 
     sys_mem_bytes <- .detect_system_memory_bytes_2()
-    future_bytes_arg <- future_globals_min_bytes
-    if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) {
-        future_bytes_arg <- sys_mem_bytes
-        current_fg <- getOption("future.globals.maxSize")
-        if (is.null(current_fg) || (!is.infinite(current_fg) && current_fg < sys_mem_bytes)) {
-            options(future.globals.maxSize = sys_mem_bytes)
-        }
-    }
+    future_bytes_arg <- as.numeric(future_globals_min_bytes)
 
     cfg <- .build_pipeline_config_2(
         min_cutoff = min_cutoff,
@@ -2343,6 +2331,7 @@ clusterGenes_2 <- function(
         use_consensus = use_consensus,
         consensus_thr = consensus_thr,
         n_restart = n_restart,
+        n_restart_stage2 = n_restart_stage2,
         n_threads = ncores,
         mode = mode,
         large_n_threshold = large_n_threshold,
@@ -2409,6 +2398,11 @@ clusterGenes_2 <- function(
     if (fast_allowed && (fast_requested || auto_requested)) {
         cfg$prefer_fast <- TRUE
         cfg$mode <- "fast"
+        if (is.finite(fast_est) && fast_est > 0) {
+            fg_multiplier <- getOption("genescope.fast_mode_fg_multiplier", 1.2)
+            if (!is.finite(fg_multiplier) || fg_multiplier <= 0) fg_multiplier <- 1.2
+            cfg$future_globals_min_bytes <- max(cfg$future_globals_min_bytes, fast_est * fg_multiplier)
+        }
     } else if (fast_requested && !fast_allowed) {
         limit_gb <- if (is.finite(fast_limit)) fast_limit / 1024^3 else NA_real_
         est_gb <- if (is.finite(fast_est)) fast_est / 1024^3 else NA_real_
