@@ -109,7 +109,8 @@
     backbone_floor_q = 0.02,
     hotspot_k = NULL,
     hotspot_min_module_size = 5L,
-    future_globals_min_bytes = 2 * 1024^3) {
+    future_globals_min_bytes = 2 * 1024^3,
+    system_memory_bytes = NA_real_) {
 
     algo <- match.arg(algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
     if (identical(algo, "hotspot")) algo <- "hotspot-like"
@@ -168,7 +169,8 @@
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(hotspot_k)) NULL else as.integer(hotspot_k),
         hotspot_min_module_size = as.integer(hotspot_min_module_size),
-        future_globals_min_bytes = as.numeric(future_globals_min_bytes)
+        future_globals_min_bytes = as.numeric(future_globals_min_bytes),
+        system_memory_bytes = as.numeric(system_memory_bytes)
     )
 }
 
@@ -321,6 +323,50 @@
     on.exit(guard(), add = TRUE)
     legacy_fn <- .resolve_legacy_cluster_fn_2()
     do.call(legacy_fn, arg_list)
+}
+
+.detect_system_memory_bytes_2 <- function() {
+    total <- NA_real_
+    if (requireNamespace("ps", quietly = TRUE)) {
+        total <- tryCatch(as.numeric(ps::ps_system_memory()["total"]), error = function(e) NA_real_)
+    }
+    if (!is.na(total) && is.finite(total) && total > 0) return(total)
+    sysname <- tolower(Sys.info()[["sysname"]] %||% "")
+    if (identical(.Platform$OS.type, "windows")) {
+        lim <- suppressWarnings(utils::memory.limit(size = NA))
+        if (is.finite(lim) && lim > 0) {
+            total <- lim * 1024^2
+        }
+    } else if (sysname == "darwin") {
+        out <- suppressWarnings(system("/usr/sbin/sysctl -n hw.memsize", intern = TRUE))
+        total <- suppressWarnings(as.numeric(out))
+    } else {
+        if (file.exists("/proc/meminfo")) {
+            meminfo <- tryCatch(readLines("/proc/meminfo"), error = function(e) character(0))
+            line <- meminfo[grepl("^MemTotal", meminfo)][1]
+            if (!is.na(line)) {
+                value <- as.numeric(gsub("[^0-9]", "", line))
+                total <- value * 1024
+            }
+        }
+    }
+    if (!is.na(total) && is.finite(total) && total > 0) total else NA_real_
+}
+
+.estimate_fast_mode_memory_2 <- function(similarity_matrix, config) {
+    if (is.null(similarity_matrix)) return(NA_real_)
+    base <- suppressWarnings(as.numeric(object.size(similarity_matrix)))
+    if (!is.finite(base)) base <- 0
+    n <- nrow(similarity_matrix)
+    restarts <- as.numeric(config$n_restart %||% 1L)
+    if (!is.finite(restarts) || restarts < 1) restarts <- 1
+    seed_buf <- as.numeric(n) * restarts * 16
+    consensus_buf <- if (isTRUE(config$use_consensus)) {
+        as.numeric(n) * as.numeric(n) * 8
+    } else 0
+    overhead <- base * 0.5
+    total <- base + seed_buf + consensus_buf + overhead
+    if (!is.finite(total)) NA_real_ else total
 }
 
 .nk_prepare_graph_input_2 <- function(graph) {
@@ -2306,6 +2352,16 @@ clusterGenes_2 <- function(
         stage2_algo <- "hotspot-like"
     }
 
+    sys_mem_bytes <- .detect_system_memory_bytes_2()
+    future_bytes_arg <- future_globals_min_bytes
+    if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) {
+        future_bytes_arg <- sys_mem_bytes
+        current_fg <- getOption("future.globals.maxSize")
+        if (is.null(current_fg) || (!is.infinite(current_fg) && current_fg < sys_mem_bytes)) {
+            options(future.globals.maxSize = sys_mem_bytes)
+        }
+    }
+
     cfg <- .build_pipeline_config_2(
         min_cutoff = min_cutoff,
         use_significance = use_significance,
@@ -2356,10 +2412,35 @@ clusterGenes_2 <- function(
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(K)) NULL else K,
         hotspot_min_module_size = min_module_size,
-        future_globals_min_bytes = future_globals_min_bytes
+        future_globals_min_bytes = future_bytes_arg,
+        system_memory_bytes = sys_mem_bytes
     )
+    cfg$system_memory_bytes <- if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) sys_mem_bytes else cfg$system_memory_bytes
 
-    if (identical(cfg$mode, "fast")) {
+    timing <- list()
+    .tic <- function() proc.time()
+    .toc <- function(t0) as.numeric((proc.time() - t0)["elapsed"])
+    t_all0 <- .tic()
+
+    inputs <- .extract_scope_layers_2(scope_obj, grid_name,
+        stats_layer = stats_layer,
+        similarity_slot = cfg$similarity_slot,
+        significance_slot = cfg$significance_slot,
+        use_significance = cfg$use_significance,
+        verbose = verbose)
+
+    fast_candidate <- identical(cfg$mode, "fast") || identical(cfg$mode, "auto")
+    fast_limit <- cfg$system_memory_bytes
+    if (!is.finite(fast_limit) || fast_limit <= 0) fast_limit <- cfg$future_globals_min_bytes
+    fast_est <- if (fast_candidate) .estimate_fast_mode_memory_2(inputs$similarity, cfg) else NA_real_
+    margin <- getOption("genescope.fast_mode_mem_margin", 0.9)
+    if (!is.finite(margin) || margin <= 0 || margin > 1) margin <- 0.9
+    finite_limit <- is.finite(fast_limit) && fast_limit > 0
+    fast_allowed <- fast_candidate && (
+        (!finite_limit && is.finite(fast_est) && fast_est > 0) ||
+            (finite_limit && is.finite(fast_est) && fast_est <= fast_limit * margin)
+    )
+    if (fast_allowed) {
         fast_args <- list(
             scope_obj = scope_obj,
             grid_name = grid_name,
@@ -2407,19 +2488,14 @@ clusterGenes_2 <- function(
         )
         fast_result <- .clusterGenes_fast_mode_2(fast_args, cfg$future_globals_min_bytes)
         return(fast_result)
+    } else if (fast_candidate && identical(cfg$mode, "fast")) {
+        limit_gb <- if (is.finite(fast_limit)) fast_limit / 1024^3 else NA_real_
+        est_gb <- if (is.finite(fast_est)) fast_est / 1024^3 else NA_real_
+        warning(sprintf("[cluster] fast mode requires %.2f GB but limit is %.2f GB; falling back to safe mode.", est_gb, limit_gb))
+        cfg$mode <- "safe"
+    } else if (fast_candidate && identical(cfg$mode, "auto")) {
+        cfg$mode <- "safe"
     }
-
-    timing <- list()
-    .tic <- function() proc.time()
-    .toc <- function(t0) as.numeric((proc.time() - t0)["elapsed"])
-    t_all0 <- .tic()
-
-    inputs <- .extract_scope_layers_2(scope_obj, grid_name,
-        stats_layer = stats_layer,
-        similarity_slot = cfg$similarity_slot,
-        significance_slot = cfg$significance_slot,
-        use_significance = cfg$use_significance,
-        verbose = verbose)
 
     th <- .threshold_similarity_graph_2(inputs$similarity, inputs$significance, cfg, verbose = verbose)
     stage1 <- .stage1_consensus_workflow_2(inputs$similarity, th, cfg, verbose = verbose,
