@@ -197,7 +197,7 @@
                                         significance_slot = "FDR",
                                         use_significance = TRUE,
                                         verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Prep: extracting container layers…")
+    .cluster_message_2(verbose, "[cluster] Prep: extracting container layers…")
 
     g_layer <- .selectGridLayer(scope_obj, grid_name)
     gname <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
@@ -268,6 +268,14 @@
     if (!is.null(x)) x else y
 }
 
+.cluster_timestamp_2 <- function() format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
+.cluster_message_2 <- function(verbose, ...) {
+    if (!isTRUE(verbose)) return(invisible(NULL))
+    txt <- paste0(...)
+    message(sprintf("[%s] %s", .cluster_timestamp_2(), txt))
+}
+
 .future_maxsize_env_override_2 <- function() {
     env_bytes <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_BYTES", "")))
     env_gb <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_GB", "")))
@@ -292,37 +300,6 @@
         }
         invisible(NULL)
     }
-}
-
-.resolve_legacy_cluster_fn_2 <- function() {
-    if (exists("clusterGenes_old", mode = "function", inherits = TRUE)) {
-        return(get("clusterGenes_old", mode = "function", inherits = TRUE))
-    }
-    candidate_paths <- getOption("genescope.clusterGenes_old_paths",
-        default = c(
-            file.path("genescope", "R", "12.ClusterGenes_old copy.rscript"),
-            file.path("genescope", "R", "12.ClusterGenes_old.r"),
-            file.path("genescope", "R", "12.ClusterGenes_old.R"),
-            file.path("genescope copy", "geneSCOPE-main", "R", "12.ClusterGenes_old copy.rscript")
-        )
-    )
-    for (cand in candidate_paths) {
-        if (is.null(cand) || !nzchar(cand)) next
-        if (file.exists(cand)) {
-            try(sys.source(cand, envir = .GlobalEnv), silent = TRUE)
-            if (exists("clusterGenes_old", mode = "function", inherits = TRUE)) {
-                return(get("clusterGenes_old", mode = "function", inherits = TRUE))
-            }
-        }
-    }
-    stop("fast mode requires clusterGenes_old(); set options('genescope.clusterGenes_old_paths') or ensure the legacy script is sourced before calling clusterGenes_2(mode = 'fast').", call. = FALSE)
-}
-
-.clusterGenes_fast_mode_2 <- function(arg_list, future_globals_min_bytes = 2 * 1024^3) {
-    guard <- .adjust_future_globals_maxsize_2(future_globals_min_bytes %||% (2 * 1024^3))
-    on.exit(guard(), add = TRUE)
-    legacy_fn <- .resolve_legacy_cluster_fn_2()
-    do.call(legacy_fn, arg_list)
 }
 
 .detect_system_memory_bytes_2 <- function() {
@@ -1186,7 +1163,7 @@
                                   significance_matrix = NULL,
                                   config,
                                   verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Step1: thresholding similarity matrix…")
+    .cluster_message_2(verbose, "[cluster] Step1: thresholding similarity matrix…")
 
     genes_all <- rownames(similarity_matrix)
     if (is.null(genes_all)) stop("Input similarity matrix must have rownames/colnames for node IDs.")
@@ -1215,10 +1192,8 @@
     if (length(kept_genes) < 2) stop("Fewer than 2 genes after filtering.")
 
     similarity_kept <- similarity_filtered[kept_genes, kept_genes, drop = FALSE]
-    if (isTRUE(verbose)) {
-        message(sprintf("[cluster]   retained %d/%d nodes; |E|=%d",
+    .cluster_message_2(verbose, sprintf("[cluster]   retained %d/%d nodes; |E|=%d",
                         length(kept_genes), length(genes_all), Matrix::nnzero(similarity_kept) / 2))
-    }
 
     list(
         similarity = similarity_filtered,
@@ -1248,7 +1223,7 @@
                                       config,
                                       verbose = TRUE,
                                       networkit_config = list()) {
-    if (isTRUE(verbose)) message("[cluster] Step2: running Stage-1 consensus…")
+    .cluster_message_2(verbose, "[cluster] Step2: running Stage-1 consensus…")
 
     kept_genes <- threshold$kept_genes
     similarity_sub <- threshold$similarity_sub
@@ -1292,15 +1267,16 @@
 
     algo <- match.arg(config$algo, c("leiden", "louvain", "hotspot-like"))
     objective <- match.arg(config$objective, c("CPM", "modularity"))
+    prefer_fast <- isTRUE(config$prefer_fast)
     mode_selected <- switch(config$mode,
-        auto = if (length(kept_genes) > config$large_n_threshold) "aggressive" else "safe",
+        fast = "fast",
+        auto = if (prefer_fast) "fast" else if (length(kept_genes) > config$large_n_threshold) "aggressive" else "safe",
         safe = "safe",
         aggressive = "aggressive"
     )
-    if (isTRUE(verbose)) {
-        message(sprintf("[cluster]   Stage-1 mode=%s (nodes=%d)", mode_selected, length(kept_genes)))
-    }
-    if (identical(mode_selected, "aggressive") && identical(objective, "CPM")) {
+    backend_mode <- if (identical(mode_selected, "fast")) "safe" else mode_selected
+    .cluster_message_2(verbose, sprintf("[cluster]   Stage-1 mode=%s (nodes=%d)", mode_selected, length(kept_genes)))
+    if (identical(backend_mode, "aggressive") && identical(objective, "CPM")) {
         warning("[cluster] CPM objective not supported in aggressive mode; falling back to 'modularity'.")
         objective <- "modularity"
     }
@@ -1312,7 +1288,7 @@
     stage1_backend <- "igraph"
 
     if (identical(algo, "hotspot-like")) {
-        if (isTRUE(verbose)) message("[cluster]   Stage-1 backend: hotspot-like")
+        .cluster_message_2(verbose, "[cluster]   Stage-1 backend: hotspot-like")
         hotspot_k <- config$hotspot_k
         if (is.null(hotspot_k) || !is.finite(hotspot_k)) {
             hotspot_k <- max(1L, min(20L, length(kept_genes)))
@@ -1337,12 +1313,12 @@
         edge_pairs <- nk_inputs_stage1$edge_table
 
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
-        algo_per_run <- if (identical(mode_selected, "aggressive") && identical(algo, "leiden")) "louvain" else algo
+        algo_per_run <- if (identical(backend_mode, "aggressive") && identical(algo, "leiden")) "louvain" else algo
 
         future_guard <- .adjust_future_globals_maxsize_2(config$future_globals_min_bytes %||% (2 * 1024^3))
         on.exit(future_guard(), add = TRUE)
 
-        aggressive_requested <- identical(mode_selected, "aggressive")
+        aggressive_requested <- identical(backend_mode, "aggressive")
         if (aggressive_requested && !.networkit_available_2()) {
             stop("Aggressive mode requires the NetworKit backend; please configure reticulate/networkit before running clusterGenes_new.", call. = FALSE)
         }
@@ -1350,10 +1326,8 @@
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
 
         if (use_networkit_leiden || use_networkit_plm) {
-            if (isTRUE(verbose)) {
-                message("[cluster]   Stage-1 backend: NetworKit (",
-                    if (use_networkit_leiden) "Leiden" else "PLM/louvain", ")")
-            }
+            backend_label <- if (use_networkit_leiden) "Leiden" else "PLM/louvain"
+            .cluster_message_2(verbose, "[cluster]   Stage-1 backend: NetworKit (", backend_label, ")")
             stage1_backend <- "networkit"
             seeds <- seq_len(config$n_restart)
             chunk_size <- config$aggr_batch_size
@@ -1398,9 +1372,7 @@
             }
             restart_memberships <- do.call(cbind, membership_blocks)
         } else {
-            if (isTRUE(verbose)) {
-                message("[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
-            }
+            .cluster_message_2(verbose, "[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
             # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
             restart_memberships <- future.apply::future_sapply(
                 seq_len(config$n_restart),
@@ -1446,9 +1418,9 @@
                 n_threads = n_threads
             ), silent = TRUE)
             if (!inherits(stage1_consensus_matrix, "try-error")) {
-                if (isTRUE(verbose)) message("[cluster]   Stage-1 consensus backend: C++ (consensus_sparse)")
+                .cluster_message_2(verbose, "[cluster]   Stage-1 consensus backend: C++ (consensus_sparse)")
             } else {
-                if (isTRUE(verbose)) message("[cluster]   consensus_sparse failed; using R fallback.")
+                .cluster_message_2(verbose, "[cluster]   consensus_sparse failed; using R fallback.")
                 stage1_consensus_matrix <- .compute_consensus_sparse_R_2(restart_memberships, thr = config$consensus_thr)
             }
             try({ if (length(stage1_consensus_matrix@i)) diag(stage1_consensus_matrix) <- 0 }, silent = TRUE)
@@ -1458,14 +1430,12 @@
                 consensus_graph_view <- igraph::graph_from_adjacency_matrix(stage1_consensus_matrix,
                     mode = "undirected", weighted = TRUE, diag = FALSE)
                 consensus_backend <- if (identical(stage1_backend, "networkit")) "networkit" else "igraph"
-                if (isTRUE(verbose)) {
-                    backend_label <- if (identical(consensus_backend, "networkit")) {
-                        paste0("NetworKit (", algo, ")")
-                    } else {
-                        paste0("igraph (", algo, ")")
-                    }
-                    message("[cluster]   Stage-1 consensus graph backend: ", backend_label)
+                backend_label <- if (identical(consensus_backend, "networkit")) {
+                    paste0("NetworKit (", algo, ")")
+                } else {
+                    paste0("igraph (", algo, ")")
                 }
+                .cluster_message_2(verbose, "[cluster]   Stage-1 consensus graph backend: ", backend_label)
                 nk_opts <- list(
                     iterations = config$nk_leiden_iterations,
                     randomize = config$nk_leiden_randomize,
@@ -1552,7 +1522,7 @@
                                    aux_stats = NULL,
                                    pearson_matrix = NULL,
                                    verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Step3: Stage-2 correction & clustering…")
+    .cluster_message_2(verbose, "[cluster] Step3: Stage-2 correction & clustering…")
 
     kept_genes <- stage1$kept_genes
     genes_all <- stage1$genes_all
@@ -1568,7 +1538,7 @@
     stage2_algo_final <- tryCatch({
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
-    if (isTRUE(verbose)) message("[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
+    .cluster_message_2(verbose, "[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
     stage2_backend <- if (!is.null(config$stage2_algo)) {
         if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
     } else {
@@ -1580,10 +1550,10 @@
             "igraph"
         }
     }
-    if (isTRUE(verbose)) message("[cluster]   Stage-2 target backend: ", stage2_backend)
+    .cluster_message_2(verbose, "[cluster]   Stage-2 target backend: ", stage2_backend)
 
     if (!config$use_mh_weight && !config$CI95_filter) {
-        if (isTRUE(verbose)) message("[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
+        .cluster_message_2(verbose, "[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
@@ -1605,7 +1575,7 @@
         L_post <- tryCatch(
             .align_and_filter_FDR(L_post, similarity_matrix, FDR, config$significance_max),
             error = function(e) {
-                if (isTRUE(verbose)) message("[cluster]   significance subset disabled: ", conditionMessage(e))
+                .cluster_message_2(verbose, "[cluster]   significance subset disabled: ", conditionMessage(e))
                 L_post
             }
         )
@@ -1901,7 +1871,7 @@
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
 
             if (!use_consensus) {
-                if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
+                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
                 n_loc <- length(labs)
@@ -1933,11 +1903,9 @@
                     n_threads = n_threads
                 ), silent = TRUE)
                 if (!inherits(cons_sub, "try-error")) {
-                    if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
                 } else {
-                    if (isTRUE(verbose)) {
-                        message("[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R_2)")
-                    }
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R_2)")
                     cons_sub <- .compute_consensus_sparse_R_2(memb_mat_sub, thr = consensus_thr)
                 }
                 if (length(cons_sub@i)) Matrix::diag(cons_sub) <- 0
@@ -1947,14 +1915,12 @@
                     g_cons_sub <- igraph::graph_from_adjacency_matrix(cons_sub, mode = "undirected", weighted = TRUE, diag = FALSE)
                     backend_consensus_sub <- backend_sub
                     if (!backend_consensus_sub %in% c("networkit", "igraph")) backend_consensus_sub <- "igraph"
-                    if (isTRUE(verbose)) {
-                        backend_label <- if (identical(backend_consensus_sub, "networkit")) {
-                            paste0("NetworKit (", stage2_algo_final, ")")
-                        } else {
-                            paste0("igraph (", stage2_algo_final, ")")
-                        }
-                        message("[cluster]   Stage-2 consensus graph backend: ", backend_label)
+                    backend_label <- if (identical(backend_consensus_sub, "networkit")) {
+                        paste0("NetworKit (", stage2_algo_final, ")")
+                    } else {
+                        paste0("igraph (", stage2_algo_final, ")")
                     }
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus graph backend: ", backend_label)
                     nk_opts_cons <- list(
                         iterations = config$nk_leiden_iterations,
                         randomize = config$nk_leiden_randomize,
@@ -2429,71 +2395,24 @@ clusterGenes_2 <- function(
         use_significance = cfg$use_significance,
         verbose = verbose)
 
-    fast_candidate <- identical(cfg$mode, "fast") || identical(cfg$mode, "auto")
+    fast_requested <- identical(cfg$mode, "fast")
+    auto_requested <- identical(cfg$mode, "auto")
+    fast_candidate <- fast_requested || auto_requested
     fast_limit <- cfg$system_memory_bytes
     if (!is.finite(fast_limit) || fast_limit <= 0) fast_limit <- cfg$future_globals_min_bytes
     fast_est <- if (fast_candidate) .estimate_fast_mode_memory_2(inputs$similarity, cfg) else NA_real_
     margin <- getOption("genescope.fast_mode_mem_margin", 0.9)
     if (!is.finite(margin) || margin <= 0 || margin > 1) margin <- 0.9
     finite_limit <- is.finite(fast_limit) && fast_limit > 0
-    fast_allowed <- fast_candidate && (
-        (!finite_limit && is.finite(fast_est) && fast_est > 0) ||
-            (finite_limit && is.finite(fast_est) && fast_est <= fast_limit * margin)
-    )
-    if (fast_allowed) {
-        fast_args <- list(
-            scope_obj = scope_obj,
-            grid_name = grid_name,
-            lee_stats_layer = stats_layer,
-            L_min = cfg$min_cutoff,
-            use_FDR = cfg$use_significance,
-            FDR_max = cfg$significance_max,
-            pct_min = cfg$pct_min,
-            drop_isolated = cfg$drop_isolated,
-            algo = cfg$algo,
-            resolution = cfg$resolution,
-            objective = cfg$objective,
-            cluster_name = cluster_name,
-            use_log1p_weight = cfg$use_log1p_weight,
-            use_consensus = cfg$use_consensus,
-            graph_slot_name = graph_slot_name,
-            n_restart = cfg$n_restart,
-            consensus_thr = cfg$consensus_thr,
-            keep_cross_stable = cfg$keep_cross_stable,
-            CI95_filter = cfg$CI95_filter,
-            curve_layer = cfg$curve_layer,
-            CI_rule = cfg$CI_rule,
-            use_cmh_weight = cfg$use_mh_weight,
-            cmh_slot = cfg$mh_slot,
-            post_smooth = cfg$post_smooth,
-            post_smooth_quant = cfg$post_smooth_quant,
-            post_smooth_power = cfg$post_smooth_power,
-            enable_subcluster = cfg$enable_subcluster,
-            sub_min_size = cfg$sub_min_size,
-            sub_min_child_size = cfg$sub_min_child_size,
-            sub_resolution_factor = cfg$sub_resolution_factor,
-            sub_within_cons_max = cfg$sub_within_cons_max,
-            sub_conductance_min = cfg$sub_conductance_min,
-            sub_improve_within_cons_min = cfg$sub_improve_within_cons_min,
-            sub_max_groups = cfg$sub_max_groups,
-            enable_qc_filter = cfg$enable_qc_filter,
-            qc_gene_intra_cons_min = cfg$qc_gene_intra_cons_min,
-            qc_gene_best_out_cons_min = cfg$qc_gene_best_out_cons_min,
-            qc_gene_intra_weight_q = cfg$qc_gene_intra_weight_q,
-            keep_stage1_backbone = cfg$keep_stage1_backbone,
-            backbone_floor_q = cfg$backbone_floor_q,
-            min_cluster_size = cfg$min_cluster_size,
-            return_report = return_report,
-            verbose = verbose
-        )
-        fast_result <- .clusterGenes_fast_mode_2(fast_args, cfg$future_globals_min_bytes)
-        return(fast_result)
-    } else if (fast_candidate && identical(cfg$mode, "fast")) {
+    fast_allowed <- fast_candidate && (!finite_limit || !is.finite(fast_est) || fast_est <= fast_limit * margin)
+    cfg$prefer_fast <- FALSE
+    if (fast_allowed && (fast_requested || auto_requested)) {
+        cfg$prefer_fast <- TRUE
+        cfg$mode <- "fast"
+    } else if (fast_requested && !fast_allowed) {
         limit_gb <- if (is.finite(fast_limit)) fast_limit / 1024^3 else NA_real_
         est_gb <- if (is.finite(fast_est)) fast_est / 1024^3 else NA_real_
         warning(sprintf("[cluster] fast mode requires %.2f GB but limit is %.2f GB; falling back to safe mode.", est_gb, limit_gb))
-        cfg$mode <- "safe"
-    } else if (fast_candidate && identical(cfg$mode, "auto")) {
         cfg$mode <- "safe"
     }
 
@@ -2553,7 +2472,8 @@ clusterGenes_2 <- function(
 
     if (isTRUE(verbose)) {
         nz <- sum(!is.na(scope_obj@meta.data[genes_all, cluster_name]))
-        message("[clusterGenes] Written clustering column '", cluster_name, "': ",
+        .cluster_message_2(TRUE,
+            "[clusterGenes] Written clustering column '", cluster_name, "': ",
             nz, "/", length(genes_all), " genes (",
             sprintf("%.1f%%", 100 * nz / length(genes_all)), ")")
     }
