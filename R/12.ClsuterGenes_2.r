@@ -39,6 +39,8 @@
 #' @param sub_conductance_min Minimum conductance for subclustering.
 #' @param sub_improve_within_cons_min Minimum within-consensus gain.
 #' @param sub_max_groups Maximum Stage-2 splits.
+#' @param stage2_consensus_min_size Minimum Stage-2 cluster size that should trigger consensus/multi-restart logic.
+#' @param stage2_aggressive_min_size Minimum Stage-2 cluster size that should be treated as “aggressive” (force NetworKit + multi-restart).
 #' @param enable_qc_filter Logical; enable QC pruning.
 #' @param qc_gene_intra_cons_min Minimum within-consensus per gene.
 #' @param qc_gene_best_out_cons_min Maximum best-out consensus per gene.
@@ -91,6 +93,8 @@
     sub_conductance_min = 0.6,
     sub_improve_within_cons_min = 0.07,
     sub_max_groups = 3,
+    stage2_consensus_min_size = 3L,
+    stage2_aggressive_min_size = 500L,
     enable_qc_filter = TRUE,
     qc_gene_intra_cons_min = 0.25,
     qc_gene_best_out_cons_min = 0.6,
@@ -152,6 +156,8 @@
         sub_conductance_min = sub_conductance_min,
         sub_improve_within_cons_min = sub_improve_within_cons_min,
         sub_max_groups = sub_max_groups,
+        stage2_consensus_min_size = as.integer(stage2_consensus_min_size),
+        stage2_aggressive_min_size = as.integer(stage2_aggressive_min_size),
         enable_qc_filter = enable_qc_filter,
         qc_gene_intra_cons_min = qc_gene_intra_cons_min,
         qc_gene_best_out_cons_min = qc_gene_best_out_cons_min,
@@ -1529,18 +1535,19 @@
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
     .cluster_message_2(verbose, "[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
-    stage2_backend <- if (!is.null(config$stage2_algo)) {
-        if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
+    mode_flag_aggressive <- identical(config$mode, "aggressive") || identical(stage1_mode_selected, "aggressive")
+    global_nodes <- length(kept_genes)
+    if (!is.null(config$stage2_algo)) {
+        stage2_backend <- if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
+        stage2_backend_force_networkit <- FALSE
+    } else if (identical(stage2_algo_final, "hotspot-like")) {
+        stage2_backend <- "hotspot"
+        stage2_backend_force_networkit <- FALSE
     } else {
-        if (identical(stage2_algo_final, "hotspot-like")) {
-            "hotspot"
-        } else if (identical(stage1_backend, "networkit")) {
-            "networkit"
-        } else {
-            "igraph"
-        }
+        stage2_backend_force_networkit <- mode_flag_aggressive || global_nodes >= large_n_threshold || identical(stage1_backend, "networkit")
+        stage2_backend <- if (stage2_backend_force_networkit) "networkit" else "igraph"
     }
-    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot")) {
+    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot") && !isTRUE(stage2_backend_force_networkit)) {
         stage2_backend <- "igraph"
     }
     .cluster_message_2(verbose, "[cluster]   Stage-2 target backend: ", stage2_backend)
@@ -1743,6 +1750,8 @@
     sub_conductance_min <- config$sub_conductance_min
     sub_improve_within_cons_min <- config$sub_improve_within_cons_min
     sub_max_groups <- max(1L, as.integer(config$sub_max_groups))
+    stage2_consensus_min_size <- max(2L, as.integer(config$stage2_consensus_min_size %||% 3L))
+    stage2_aggressive_min_size <- max(stage2_consensus_min_size, as.integer(config$stage2_aggressive_min_size %||% 500L))
     enable_qc_filter <- isTRUE(config$enable_qc_filter)
     qc_gene_intra_cons_min <- config$qc_gene_intra_cons_min
     qc_gene_best_out_cons_min <- config$qc_gene_best_out_cons_min
@@ -1783,9 +1792,6 @@
                     dimnames = list(names(memb_sub), names(memb_sub)))
             }
         } else {
-            mode_sub <- if (identical(mode_setting, "auto")) {
-                if (length(genes_c) > large_n_threshold) "aggressive" else stage1_mode_selected
-            } else stage1_mode_selected
             size_sub <- length(genes_c)
             algo_per_run_sub <- stage2_algo_final
             nk_inputs_sub <- .nk_prepare_graph_input_2(g_sub)
@@ -1795,19 +1801,22 @@
             vertex_names_sub <- nk_inputs_sub$vertex_names
             res_param_sub <- res_param_base
 
-            backend_sub <- if (identical(stage2_backend, "networkit")) "networkit" else "igraph"
+            force_networkit_sub <- size_sub >= large_n_threshold
+            force_aggressive_sub <- size_sub >= stage2_aggressive_min_size
+            backend_sub <- if (identical(stage2_backend, "networkit") || force_networkit_sub || force_aggressive_sub) "networkit" else "igraph"
             if (backend_sub == "networkit" && !stage2_algo_final %in% c("leiden", "louvain")) {
                 backend_sub <- "igraph"
             }
-            if (isTRUE(config$prefer_fast)) backend_sub <- "igraph"
-            if (backend_sub == "networkit" && size_sub < large_n_threshold) {
-                backend_sub <- "igraph"
+            if (isTRUE(config$prefer_fast) && !force_aggressive_sub && !force_networkit_sub) backend_sub <- "igraph"
+            if (force_aggressive_sub && backend_sub != "networkit" && .nk_available_2()) {
+                backend_sub <- "networkit"
             }
             if (backend_sub == "networkit" && !.nk_available_2()) {
                 stop("Stage-2 NetworKit backend requested but NetworKit is unavailable.", call. = FALSE)
             }
 
-            multi_restart_sub <- identical(mode_sub, "aggressive")
+            multi_restart_sub <- size_sub >= stage2_consensus_min_size
+            if (force_aggressive_sub) multi_restart_sub <- TRUE
             n_restart_sub <- if (multi_restart_sub) n_restart_stage2 else 1L
 
             if (backend_sub == "networkit") {
@@ -1863,7 +1872,7 @@
 
             use_consensus_sub <- use_consensus && multi_restart_sub
             if (!use_consensus_sub) {
-                skip_reason <- if (multi_restart_sub) "disabled" else sprintf("mode_sub=%s", mode_sub)
+                skip_reason <- sprintf("size<%d", stage2_consensus_min_size)
                 .cluster_message_2(verbose, "[cluster]   Stage-2 consensus skipped (", skip_reason, ")")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
@@ -2200,6 +2209,8 @@
 #' @param sub_conductance_min Minimum conductance to trigger splitting.
 #' @param sub_improve_within_cons_min Minimum improvement required to accept split.
 #' @param sub_max_groups Maximum resulting subclusters per parent.
+#' @param stage2_consensus_min_size Minimum Stage-2 cluster size that triggers consensus/multi-restart.
+#' @param stage2_aggressive_min_size Minimum Stage-2 cluster size that forces aggressive behavior (NetworKit + multi-restart).
 #' @param enable_qc_filter Logical; enable QC-based gene pruning.
 #' @param qc_gene_intra_cons_min Minimum within-consensus for genes.
 #' @param qc_gene_best_out_cons_min Maximum best-out consensus for genes.
@@ -2272,6 +2283,8 @@ clusterGenes_2 <- function(
     sub_conductance_min = 0.6,
     sub_improve_within_cons_min = 0.07,
     sub_max_groups = 3,
+    stage2_consensus_min_size = 3,
+    stage2_aggressive_min_size = 500,
     enable_qc_filter = TRUE,
     qc_gene_intra_cons_min = 0.25,
     qc_gene_best_out_cons_min = 0.6,
@@ -2347,6 +2360,8 @@ clusterGenes_2 <- function(
         sub_conductance_min = sub_conductance_min,
         sub_improve_within_cons_min = sub_improve_within_cons_min,
         sub_max_groups = sub_max_groups,
+        stage2_consensus_min_size = stage2_consensus_min_size,
+        stage2_aggressive_min_size = stage2_aggressive_min_size,
         enable_qc_filter = enable_qc_filter,
         qc_gene_intra_cons_min = qc_gene_intra_cons_min,
         qc_gene_best_out_cons_min = qc_gene_best_out_cons_min,
