@@ -1293,7 +1293,7 @@
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
         algo_per_run <- if (identical(mode_selected, "aggressive") && identical(algo, "leiden")) "louvain" else algo
 
-        future_guard <- .adjust_future_globals_maxsize_2(cfg$future_globals_min_bytes %||% (2 * 1024^3))
+        future_guard <- .adjust_future_globals_maxsize_2(config$future_globals_min_bytes %||% (2 * 1024^3))
         on.exit(future_guard(), add = TRUE)
 
         aggressive_requested <- identical(mode_selected, "aggressive")
