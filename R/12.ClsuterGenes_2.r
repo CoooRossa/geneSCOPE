@@ -1327,7 +1327,7 @@
 
         aggressive_requested <- identical(backend_mode, "aggressive")
         if (aggressive_requested && !.networkit_available_2()) {
-            stop("Aggressive mode requires the NetworKit backend; please configure reticulate with a Python interpreter that can import networkit before running clusterGenes_3.", call. = FALSE)
+            stop("Aggressive mode requires the NetworKit backend; please configure reticulate with a Python interpreter that can import networkit before running clusterGenes_2.", call. = FALSE)
         }
         use_networkit_leiden <- aggressive_requested && identical(algo_per_run, "leiden")
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
@@ -2225,7 +2225,7 @@
 #' @return Modified `scope_obj`, or list with `scope_obj` and diagnostics when
 #'   `return_report = TRUE`.
 #' @export
-clusterGenes_3 <- function(
+clusterGenes_2 <- function(
     scope_obj,
     grid_name = NULL,
     stats_layer = "LeeStats_Xz",
