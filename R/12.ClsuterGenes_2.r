@@ -108,7 +108,8 @@
     keep_stage1_backbone = TRUE,
     backbone_floor_q = 0.02,
     hotspot_k = NULL,
-    hotspot_min_module_size = 5L) {
+    hotspot_min_module_size = 5L,
+    future_globals_min_bytes = 2 * 1024^3) {
 
     algo <- match.arg(algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
     if (identical(algo, "hotspot")) algo <- "hotspot-like"
@@ -166,7 +167,8 @@
         keep_stage1_backbone = keep_stage1_backbone,
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(hotspot_k)) NULL else as.integer(hotspot_k),
-        hotspot_min_module_size = as.integer(hotspot_min_module_size)
+        hotspot_min_module_size = as.integer(hotspot_min_module_size),
+        future_globals_min_bytes = as.numeric(future_globals_min_bytes)
     )
 }
 
@@ -262,6 +264,63 @@
 
 `%||%` <- function(x, y) {
     if (!is.null(x)) x else y
+}
+
+.future_maxsize_env_override_2 <- function() {
+    env_bytes <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_BYTES", "")))
+    env_gb <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_GB", "")))
+    opt_bytes <- getOption("genescope.future.globals.maxSize", default = NA_real_)
+    vals <- c(env_bytes, env_gb * 1024^3, opt_bytes)
+    vals <- vals[is.finite(vals) & vals > 0]
+    if (!length(vals)) return(NA_real_)
+    max(vals, na.rm = TRUE)
+}
+
+.adjust_future_globals_maxsize_2 <- function(min_bytes = 2 * 1024^3) {
+    override <- .future_maxsize_env_override_2()
+    target <- if (is.finite(override)) max(min_bytes, override) else min_bytes
+    old_value <- getOption("future.globals.maxSize")
+    needs_update <- is.null(old_value) || (!is.infinite(old_value) && old_value < target)
+    if (needs_update) {
+        options(future.globals.maxSize = target)
+    }
+    function() {
+        if (needs_update) {
+            options(future.globals.maxSize = old_value)
+        }
+        invisible(NULL)
+    }
+}
+
+.resolve_legacy_cluster_fn_2 <- function() {
+    if (exists("clusterGenes_old", mode = "function", inherits = TRUE)) {
+        return(get("clusterGenes_old", mode = "function", inherits = TRUE))
+    }
+    candidate_paths <- getOption("genescope.clusterGenes_old_paths",
+        default = c(
+            file.path("genescope", "R", "12.ClusterGenes_old copy.rscript"),
+            file.path("genescope", "R", "12.ClusterGenes_old.r"),
+            file.path("genescope", "R", "12.ClusterGenes_old.R"),
+            file.path("genescope copy", "geneSCOPE-main", "R", "12.ClusterGenes_old copy.rscript")
+        )
+    )
+    for (cand in candidate_paths) {
+        if (is.null(cand) || !nzchar(cand)) next
+        if (file.exists(cand)) {
+            try(sys.source(cand, envir = .GlobalEnv), silent = TRUE)
+            if (exists("clusterGenes_old", mode = "function", inherits = TRUE)) {
+                return(get("clusterGenes_old", mode = "function", inherits = TRUE))
+            }
+        }
+    }
+    stop("fast mode requires clusterGenes_old(); set options('genescope.clusterGenes_old_paths') or ensure the legacy script is sourced before calling clusterGenes_2(mode = 'fast').", call. = FALSE)
+}
+
+.clusterGenes_fast_mode_2 <- function(arg_list, future_globals_min_bytes = 2 * 1024^3) {
+    guard <- .adjust_future_globals_maxsize_2(future_globals_min_bytes %||% (2 * 1024^3))
+    on.exit(guard(), add = TRUE)
+    legacy_fn <- .resolve_legacy_cluster_fn_2()
+    do.call(legacy_fn, arg_list)
 }
 
 .nk_prepare_graph_input_2 <- function(graph) {
@@ -1234,14 +1293,8 @@
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
         algo_per_run <- if (identical(mode_selected, "aggressive") && identical(algo, "leiden")) "louvain" else algo
 
-        old_max_size <- getOption("future.globals.maxSize")
-        min_max_size <- 2 * 1024^3
-        new_max_size <- old_max_size
-        if (is.null(new_max_size) || (!is.infinite(new_max_size) && new_max_size < min_max_size)) {
-            new_max_size <- min_max_size
-        }
-        options(future.globals.maxSize = new_max_size)
-        on.exit(options(future.globals.maxSize = old_max_size), add = TRUE)
+        future_guard <- .adjust_future_globals_maxsize_2(cfg$future_globals_min_bytes %||% (2 * 1024^3))
+        on.exit(future_guard(), add = TRUE)
 
         aggressive_requested <- identical(mode_selected, "aggressive")
         if (aggressive_requested && !.networkit_available_2()) {
@@ -2151,13 +2204,16 @@
 #' @param return_report Logical; return diagnostics alongside modified object.
 #' @param verbose Logical; emit progress messages.
 #' @param ncores Parallel threads for consensus routines.
-#' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`).
+#' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`, `"fast"`).
 #' @param large_n_threshold Node threshold for switching to aggressive mode.
 #' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit configuration.
 #' @param nk_leiden_iterations Iterations for NetworKit Leiden backend.
 #' @param nk_leiden_randomize Logical; randomize NetworKit Leiden.
 #' @param aggr_future_workers Future workers for batched restarts.
 #' @param aggr_batch_size Batch size for restart aggregation.
+#' @param future_globals_min_bytes Minimum `future.globals.maxSize` (bytes) to request;
+#'   can be overridden via option `genescope.future.globals.maxSize` or environment
+#'   variables `FUTURE_GLOBALS_MAXSIZE_{BYTES,GB}`.
 #' @param profile_timing Logical; collect timing metrics.
 #'
 #' @return Modified `scope_obj`, or list with `scope_obj` and diagnostics when
@@ -2220,7 +2276,7 @@ clusterGenes_2 <- function(
     return_report = FALSE,
     verbose = TRUE,
     ncores = NULL,
-    mode = c("auto", "safe", "aggressive"),
+    mode = c("auto", "safe", "aggressive", "fast"),
     large_n_threshold = 1000L,
     nk_condaenv = NULL,
     nk_conda_bin = NULL,
@@ -2229,6 +2285,7 @@ clusterGenes_2 <- function(
     nk_leiden_randomize = TRUE,
     aggr_future_workers = 2L,
     aggr_batch_size = NULL,
+    future_globals_min_bytes = 2 * 1024^3,
     profile_timing = FALSE) {
 
     if (length(algo) == 1L && identical(tolower(algo), "hotspot")) {
@@ -2298,8 +2355,59 @@ clusterGenes_2 <- function(
         keep_stage1_backbone = keep_stage1_backbone,
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(K)) NULL else K,
-        hotspot_min_module_size = min_module_size
+        hotspot_min_module_size = min_module_size,
+        future_globals_min_bytes = future_globals_min_bytes
     )
+
+    if (identical(cfg$mode, "fast")) {
+        fast_args <- list(
+            scope_obj = scope_obj,
+            grid_name = grid_name,
+            lee_stats_layer = stats_layer,
+            L_min = cfg$min_cutoff,
+            use_FDR = cfg$use_significance,
+            FDR_max = cfg$significance_max,
+            pct_min = cfg$pct_min,
+            drop_isolated = cfg$drop_isolated,
+            algo = cfg$algo,
+            resolution = cfg$resolution,
+            objective = cfg$objective,
+            cluster_name = cluster_name,
+            use_log1p_weight = cfg$use_log1p_weight,
+            use_consensus = cfg$use_consensus,
+            graph_slot_name = graph_slot_name,
+            n_restart = cfg$n_restart,
+            consensus_thr = cfg$consensus_thr,
+            keep_cross_stable = cfg$keep_cross_stable,
+            CI95_filter = cfg$CI95_filter,
+            curve_layer = cfg$curve_layer,
+            CI_rule = cfg$CI_rule,
+            use_cmh_weight = cfg$use_mh_weight,
+            cmh_slot = cfg$mh_slot,
+            post_smooth = cfg$post_smooth,
+            post_smooth_quant = cfg$post_smooth_quant,
+            post_smooth_power = cfg$post_smooth_power,
+            enable_subcluster = cfg$enable_subcluster,
+            sub_min_size = cfg$sub_min_size,
+            sub_min_child_size = cfg$sub_min_child_size,
+            sub_resolution_factor = cfg$sub_resolution_factor,
+            sub_within_cons_max = cfg$sub_within_cons_max,
+            sub_conductance_min = cfg$sub_conductance_min,
+            sub_improve_within_cons_min = cfg$sub_improve_within_cons_min,
+            sub_max_groups = cfg$sub_max_groups,
+            enable_qc_filter = cfg$enable_qc_filter,
+            qc_gene_intra_cons_min = cfg$qc_gene_intra_cons_min,
+            qc_gene_best_out_cons_min = cfg$qc_gene_best_out_cons_min,
+            qc_gene_intra_weight_q = cfg$qc_gene_intra_weight_q,
+            keep_stage1_backbone = cfg$keep_stage1_backbone,
+            backbone_floor_q = cfg$backbone_floor_q,
+            min_cluster_size = cfg$min_cluster_size,
+            return_report = return_report,
+            verbose = verbose
+        )
+        fast_result <- .clusterGenes_fast_mode_2(fast_args, cfg$future_globals_min_bytes)
+        return(fast_result)
+    }
 
     timing <- list()
     .tic <- function() proc.time()
