@@ -2277,7 +2277,7 @@
 #' @return Modified `scope_obj`, or list with `scope_obj` and diagnostics when
 #'   `return_report = TRUE`.
 #' @export
-clusterGenes_2 <- function(
+clusterGenes <- function(
     scope_obj,
     grid_name = NULL,
     stats_layer = "LeeStats_Xz",
