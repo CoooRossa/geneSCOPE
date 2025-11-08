@@ -1,8 +1,8 @@
 #' Modules:
-#'   * .extract_scope_layers()        – extract primary matrix / aux slots
-#'   * .threshold_similarity_graph()  – base thresholding + adjacency build
-#'   * .stage1_consensus_workflow()   – multi-run community detection + consensus
-#'   * .stage2_refine_workflow()      – CI95 / MH corrections + Stage-2
+#'   * .extract_scope_layers_2()        – extract primary matrix / aux slots
+#'   * .threshold_similarity_graph_2()  – base thresholding + adjacency build
+#'   * .stage1_consensus_workflow_2()   – multi-run community detection + consensus
+#'   * .stage2_refine_workflow_2()      – CI95 / MH corrections + Stage-2
 #'   * clusterGenes()                 – user facing wrapper (scope_obj in/out)
 # ---------------------------------------------------------------------------
 # Utility: build default configuration list
@@ -44,13 +44,12 @@
 #' @param qc_gene_intra_weight_q Quantile threshold for intra weights.
 #' @param keep_cross_stable Logical; retain cross-cluster stable edges.
 #' @param min_cluster_size Minimum cluster size to keep.
-#' @param CI95_filter Logical; enable CI95 filtering.
-#' @param CI_rule Character CI rule.
-#' @param curve_layer Name of curve layer.
+#' @param CI_rule Character CI95 filtering rule; set `NULL` (default) to skip CI filtering.
+#' @param curve_layer Name of curve layer used when CI filtering is enabled.
 #' @param similarity_slot Similarity slot name.
 #' @param significance_slot Significance slot name.
-#' @param use_mh_weight Logical; apply Morisita-Horn weights.
-#' @param mh_slot MH slot name.
+#' @param use_mh_weight Logical; apply Morisita-Horn weights (when `NULL`, inferred from `mh_slot`/`cmh_slot`).
+#' @param mh_slot MH slot name; provide `NULL` to disable MH-based corrections.
 #' @param post_smooth Logical; smooth post Stage-2 weights.
 #' @param post_smooth_quant Numeric vector of smoothing quantiles.
 #' @param post_smooth_power Numeric smoothing power.
@@ -59,7 +58,7 @@
 #'
 #' @return A named configuration list consumed by downstream helpers.
 #' @noRd
-.build_pipeline_config <- function(
+.build_pipeline_config_2 <- function(
     min_cutoff = 0,
     use_significance = TRUE,
     significance_max = 0.05,
@@ -95,20 +94,22 @@
     qc_gene_intra_weight_q = 0.05,
     keep_cross_stable = TRUE,
     min_cluster_size = 2L,
-    CI95_filter = FALSE,
-    CI_rule = "remove_within",
-    curve_layer = "LR_curve",
+    CI95_filter = NULL,
+    CI_rule = NULL,
+    curve_layer = NULL,
     similarity_slot = "L",
     significance_slot = "FDR",
     use_mh_weight = FALSE,
-    mh_slot = "g_mh",
+    mh_slot = NULL,
     post_smooth = TRUE,
     post_smooth_quant = c(0.05, 0.95),
     post_smooth_power = 0.5,
     keep_stage1_backbone = TRUE,
     backbone_floor_q = 0.02,
     hotspot_k = NULL,
-    hotspot_min_module_size = 5L) {
+    hotspot_min_module_size = 5L,
+    future_globals_min_bytes = 2 * 1024^3,
+    system_memory_bytes = NA_real_) {
 
     algo <- match.arg(algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
     if (identical(algo, "hotspot")) algo <- "hotspot-like"
@@ -116,6 +117,15 @@
         stage2_algo <- match.arg(stage2_algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
         if (identical(stage2_algo, "hotspot")) stage2_algo <- "hotspot-like"
     }
+
+    valid_ci_rules <- c("remove_within", "remove_outside")
+    if (!is.null(CI_rule)) {
+        CI_rule <- match.arg(CI_rule, valid_ci_rules)
+    }
+    if (is.null(CI_rule) && !is.null(CI95_filter) && isTRUE(CI95_filter)) {
+        CI_rule <- "remove_within"
+    }
+    ci_filter_flag <- !is.null(CI_rule)
 
     list(
         min_cutoff = min_cutoff,
@@ -153,8 +163,8 @@
         qc_gene_intra_weight_q = qc_gene_intra_weight_q,
         keep_cross_stable = keep_cross_stable,
         min_cluster_size = as.integer(min_cluster_size),
-        CI95_filter = CI95_filter,
-        CI_rule = match.arg(CI_rule, c("remove_within", "remove_outside")),
+        CI95_filter = ci_filter_flag,
+        CI_rule = CI_rule,
         curve_layer = curve_layer,
         similarity_slot = similarity_slot,
         significance_slot = significance_slot,
@@ -166,7 +176,9 @@
         keep_stage1_backbone = keep_stage1_backbone,
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(hotspot_k)) NULL else as.integer(hotspot_k),
-        hotspot_min_module_size = as.integer(hotspot_min_module_size)
+        hotspot_min_module_size = as.integer(hotspot_min_module_size),
+        future_globals_min_bytes = as.numeric(future_globals_min_bytes),
+        system_memory_bytes = as.numeric(system_memory_bytes)
     )
 }
 
@@ -186,14 +198,14 @@
 #' @return A list containing similarity and significance matrices plus
 #'   metadata handles required by downstream stages.
 #' @noRd
-.extract_scope_layers <- function(scope_obj,
+.extract_scope_layers_2 <- function(scope_obj,
                                         grid_name,
                                         stats_layer = "LeeStats_Xz",
                                         similarity_slot = "L",
                                         significance_slot = "FDR",
                                         use_significance = TRUE,
                                         verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Prep: extracting container layers…")
+    .cluster_message_2(verbose, "[cluster] Prep: extracting container layers…")
 
     g_layer <- .selectGridLayer(scope_obj, grid_name)
     gname <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
@@ -234,7 +246,7 @@
 #'
 #' @return An igraph clustering object.
 #' @noRd
-.run_graph_algorithm <- function(g, algo_name, res_param, objective) {
+.run_graph_algorithm_2 <- function(g, algo_name, res_param, objective) {
     w <- igraph::E(g)$weight
     if (identical(algo_name, "leiden")) {
         res <- try(igraph::cluster_leiden(
@@ -264,7 +276,124 @@
     if (!is.null(x)) x else y
 }
 
-.run_single_partition <- function(graph,
+.cluster_timestamp_2 <- function() format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
+.cluster_message_2 <- function(verbose, ...) {
+    if (!isTRUE(verbose)) return(invisible(NULL))
+    txt <- paste0(...)
+    message(sprintf("[%s] %s", .cluster_timestamp_2(), txt))
+}
+
+.future_maxsize_env_override_2 <- function() {
+    env_bytes <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_BYTES", "")))
+    env_gb <- suppressWarnings(as.numeric(Sys.getenv("FUTURE_GLOBALS_MAXSIZE_GB", "")))
+    opt_bytes <- getOption("genescope.future.globals.maxSize", default = NA_real_)
+    vals <- c(env_bytes, env_gb * 1024^3, opt_bytes)
+    vals <- vals[is.finite(vals) & vals > 0]
+    if (!length(vals)) return(NA_real_)
+    max(vals, na.rm = TRUE)
+}
+
+.adjust_future_globals_maxsize_2 <- function(min_bytes = 2 * 1024^3) {
+    override <- .future_maxsize_env_override_2()
+    target <- if (is.finite(override)) max(min_bytes, override) else min_bytes
+    old_value <- getOption("future.globals.maxSize")
+    needs_update <- is.null(old_value) || (!is.infinite(old_value) && old_value < target)
+    if (needs_update) {
+        options(future.globals.maxSize = target)
+    }
+    function() {
+        if (needs_update) {
+            options(future.globals.maxSize = old_value)
+        }
+        invisible(NULL)
+    }
+}
+
+.detect_system_memory_bytes_2 <- function() {
+    total <- NA_real_
+    if (requireNamespace("ps", quietly = TRUE)) {
+        total <- tryCatch(as.numeric(ps::ps_system_memory()["total"]), error = function(e) NA_real_)
+    }
+    if (!is.na(total) && is.finite(total) && total > 0) return(total)
+    sysname <- tolower(Sys.info()[["sysname"]] %||% "")
+    if (identical(.Platform$OS.type, "windows")) {
+        lim <- suppressWarnings(utils::memory.limit(size = NA))
+        if (is.finite(lim) && lim > 0) {
+            total <- lim * 1024^2
+        }
+    } else if (sysname == "darwin") {
+        out <- suppressWarnings(system("/usr/sbin/sysctl -n hw.memsize", intern = TRUE))
+        total <- suppressWarnings(as.numeric(out))
+    } else {
+        if (file.exists("/proc/meminfo")) {
+            meminfo <- tryCatch(readLines("/proc/meminfo"), error = function(e) character(0))
+            line <- meminfo[grepl("^MemTotal", meminfo)][1]
+            if (!is.na(line)) {
+                value <- as.numeric(gsub("[^0-9]", "", line))
+                total <- value * 1024
+            }
+        }
+    }
+    if (!is.na(total) && is.finite(total) && total > 0) total else NA_real_
+}
+
+.estimate_fast_mode_memory_2 <- function(similarity_matrix, config) {
+    if (is.null(similarity_matrix)) return(NA_real_)
+    base <- suppressWarnings(as.numeric(object.size(similarity_matrix)))
+    if (!is.finite(base)) base <- 0
+    n <- nrow(similarity_matrix)
+    restarts <- as.numeric(config$n_restart %||% 1L)
+    if (!is.finite(restarts) || restarts < 1) restarts <- 1
+    seed_buf <- as.numeric(n) * restarts * 16
+    consensus_buf <- if (isTRUE(config$use_consensus)) {
+        as.numeric(n) * as.numeric(n) * 8
+    } else 0
+    overhead <- base * 0.5
+    total <- base + seed_buf + consensus_buf + overhead
+    if (!is.finite(total)) NA_real_ else total
+}
+
+.nk_prepare_graph_input_2 <- function(graph) {
+    cache <- tryCatch(igraph::graph_attr(graph, "_nk_cache"), error = function(e) NULL)
+    if (is.list(cache) &&
+        !is.null(cache$edge_table) &&
+        !is.null(cache$edge_weights) &&
+        !is.null(cache$vertex_names)) {
+        return(list(
+            graph = graph,
+            edge_table = cache$edge_table,
+            edge_weights = cache$edge_weights,
+            vertex_names = cache$vertex_names
+        ))
+    }
+
+    vertex_names <- igraph::V(graph)$name
+    edge_df <- igraph::as_data_frame(graph, what = "edges")
+    if (nrow(edge_df)) {
+        edge_table <- edge_df[, c("from", "to"), drop = FALSE]
+    } else {
+        edge_table <- data.frame(from = character(0), to = character(0), stringsAsFactors = FALSE)
+    }
+    weights <- igraph::E(graph)$weight
+    if (is.null(weights)) {
+        weights <- if (nrow(edge_table)) rep(1, nrow(edge_table)) else numeric(0)
+    }
+    cache <- list(
+        edge_table = edge_table,
+        edge_weights = weights,
+        vertex_names = vertex_names
+    )
+    graph <- igraph::set_graph_attr(graph, "_nk_cache", cache)
+    list(
+        graph = graph,
+        edge_table = edge_table,
+        edge_weights = weights,
+        vertex_names = vertex_names
+    )
+}
+
+.run_single_partition_2 <- function(graph,
                                   backend = c("igraph", "networkit"),
                                   algo_name = c("leiden", "louvain"),
                                   res_param,
@@ -276,11 +405,14 @@
     vertex_names <- igraph::V(graph)$name
 
     if (backend == "networkit") {
-        edge_df <- igraph::as_data_frame(graph, what = "edges")[, c("from", "to"), drop = FALSE]
-        weights <- igraph::E(graph)$weight
+        nk_inputs <- .nk_prepare_graph_input_2(graph)
+        graph <- nk_inputs$graph
+        edge_df <- nk_inputs$edge_table
+        weights <- nk_inputs$edge_weights
+        vertex_names <- nk_inputs$vertex_names
         seeds <- nk_opts$seeds %||% 1L
         if (identical(algo_name, "leiden")) {
-            memb_mat <- .networkit_parallel_leiden_runs(
+            memb_mat <- .networkit_parallel_leiden_runs_2(
                 vertex_names = vertex_names,
                 edge_table = edge_df,
                 edge_weights = weights,
@@ -291,7 +423,7 @@
                 seeds = as.integer(seeds)
             )
         } else {
-            memb_mat <- .networkit_plm_runs(
+            memb_mat <- .networkit_plm_runs_2(
                 vertex_names = vertex_names,
                 edge_table = edge_df,
                 edge_weights = weights,
@@ -306,7 +438,7 @@
         return(membership)
     }
 
-    clustering <- .run_graph_algorithm(graph, algo_name, res_param, objective)
+    clustering <- .run_graph_algorithm_2(graph, algo_name, res_param, objective)
     membership <- igraph::membership(clustering)
     if (is.null(names(membership))) names(membership) <- vertex_names
     membership
@@ -319,7 +451,7 @@
 #'
 #' @return Symmetric sparseMatrix of mean co-occurrence scores.
 #' @noRd
-.compute_consensus_sparse_R <- function(memb, thr = 0) {
+.compute_consensus_sparse_R_2 <- function(memb, thr = 0) {
     if (is.null(dim(memb))) memb <- matrix(as.integer(memb), nrow = length(memb))
     if (!is.matrix(memb)) memb <- as.matrix(memb)
     storage.mode(memb) <- "integer"
@@ -366,7 +498,7 @@
 #' @return A data.frame with one row per cluster containing columns
 #'   `cluster`, `size`, `within_cons`, and `conductance`.
 #' @noRd
-.summarise_cluster_metrics <- function(memberships,
+.summarise_cluster_metrics_2 <- function(memberships,
                                     consensus_matrix,
                                     weight_matrix) {
     if (!length(memberships)) {
@@ -423,7 +555,7 @@
 #' @return A data.frame with columns `gene`, `cluster`, `p_in`, `p_best_out`,
 #'   and `w_in`.
 #' @noRd
-.summarise_gene_membership <- function(memberships,
+.summarise_gene_membership_2 <- function(memberships,
                                          consensus_matrix,
                                          weight_matrix,
                                          genes = NULL) {
@@ -486,7 +618,7 @@
 #' @return A list with elements `membership` (pruned vector) and
 #'   `stable_clusters` (character vector of surviving cluster ids).
 #' @noRd
-.prune_unstable_memberships <- function(memberships,
+.prune_unstable_memberships_2 <- function(memberships,
                                       L_matrix,
                                       min_cluster_size = 2L) {
     if (!length(memberships)) {
@@ -530,7 +662,7 @@
 #'
 #' @return Updated membership vector.
 #' @noRd
-.merge_hotspot_clusters <- function(membership, similarity_dense, min_size) {
+.merge_hotspot_clusters_2 <- function(membership, similarity_dense, min_size) {
     membership <- as.integer(membership)
     names(membership) <- rownames(similarity_dense)
     repeat {
@@ -578,7 +710,7 @@
 #'
 #' @return Symmetric sparseMatrix with 1 for within-cluster pairs.
 #' @noRd
-.build_membership_consensus <- function(membership, gene_names) {
+.build_membership_consensus_2 <- function(membership, gene_names) {
     n <- length(membership)
     if (n == 0) {
         return(Matrix::Matrix(0, 0, 0, sparse = TRUE))
@@ -613,7 +745,7 @@
 #'
 #' @return List with `membership` and `consensus` entries.
 #' @noRd
-.run_hotspot_clustering <- function(similarity_matrix,
+.run_hotspot_clustering_2 <- function(similarity_matrix,
                                     cluster_count,
                                     min_module_size,
                                     apply_log1p = TRUE) {
@@ -642,9 +774,9 @@
     membership <- stats::cutree(hc, k = cluster_count)
     if (is.null(names(membership))) names(membership) <- gene_names
     if (!is.null(min_module_size) && is.finite(min_module_size) && min_module_size > 1) {
-        membership <- .merge_hotspot_clusters(membership, dense_matrix, as.integer(min_module_size))
+        membership <- .merge_hotspot_clusters_2(membership, dense_matrix, as.integer(min_module_size))
     }
-    consensus <- .build_membership_consensus(membership, gene_names)
+    consensus <- .build_membership_consensus_2(membership, gene_names)
     list(membership = membership, consensus = consensus)
 }
 
@@ -664,19 +796,19 @@
 #'
 #' @return Logical invisibly indicating whether configuration was attempted.
 #' @noRd
-.configure_networkit_python <- function(conda_env = NULL,
+.configure_networkit_python_2 <- function(conda_env = NULL,
                                         conda_bin = NULL,
                                         python_path = NULL,
                                         required = FALSE) {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(invisible(FALSE))
 
     if (!is.null(python_path) && nzchar(python_path)) {
-        .use_python_interpreter(python_path, required = required)
+        .use_python_interpreter_2(python_path, required = required)
         return(invisible(TRUE))
     }
 
     if (!is.null(conda_env) && nzchar(conda_env)) {
-        .use_conda_environment(conda_env, conda_bin = conda_bin, required = required)
+        .use_conda_environment_2(conda_env, conda_bin = conda_bin, required = required)
         return(invisible(TRUE))
     }
 
@@ -684,7 +816,7 @@
     conda_prefix <- Sys.getenv("CONDA_PREFIX", unset = "")
     if (nzchar(conda_prefix)) {
         default_python <- file.path(conda_prefix, "bin", "python")
-        try(.use_python_interpreter(default_python, required = FALSE), silent = TRUE)
+        try(.use_python_interpreter_2(default_python, required = FALSE), silent = TRUE)
         return(invisible(TRUE))
     }
     invisible(FALSE)
@@ -697,7 +829,7 @@
 #'
 #' @return Invisible TRUE when successful.
 #' @noRd
-.use_python_interpreter <- function(python_path, required = FALSE) {
+.use_python_interpreter_2 <- function(python_path, required = FALSE) {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(invisible(FALSE))
     reticulate::use_python(python_path, required = required)
     assign("configured", TRUE, envir = .networkit_runtime_state)
@@ -712,7 +844,7 @@
 #'
 #' @return Invisible TRUE when successful.
 #' @noRd
-.use_conda_environment <- function(env_name, conda_bin = NULL, required = FALSE) {
+.use_conda_environment_2 <- function(env_name, conda_bin = NULL, required = FALSE) {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(invisible(FALSE))
     if (is.null(conda_bin)) {
         reticulate::use_condaenv(env_name, required = required)
@@ -730,7 +862,7 @@
 #'
 #' @return Invisible TRUE when successful.
 #' @noRd
-.use_virtual_environment <- function(env_name, required = FALSE) {
+.use_virtual_environment_2 <- function(env_name, required = FALSE) {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(invisible(FALSE))
     reticulate::use_virtualenv(env_name, required = required)
     assign("configured", TRUE, envir = .networkit_runtime_state)
@@ -741,26 +873,26 @@
 #'
 #' @return Logical invisibly indicating whether configuration was attempted.
 #' @noRd
-.autoconfigure_networkit_runtime <- function() {
+.autoconfigure_networkit_runtime_2 <- function() {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(invisible(FALSE))
 
     python_opt <- getOption("clusterGenes.python", default = getOption("geneSCOPE.python", default = NULL))
     if (is.character(python_opt) && nzchar(python_opt)) {
-        try(.use_python_interpreter(python_opt, required = FALSE), silent = TRUE)
+        try(.use_python_interpreter_2(python_opt, required = FALSE), silent = TRUE)
     } else {
         conda_opt <- getOption("clusterGenes.condaenv", default = getOption("geneSCOPE.condaenv", default = NULL))
         if (is.character(conda_opt) && nzchar(conda_opt)) {
-            try(.use_conda_environment(conda_opt, required = FALSE), silent = TRUE)
+            try(.use_conda_environment_2(conda_opt, required = FALSE), silent = TRUE)
         }
         venv_opt <- getOption("clusterGenes.virtualenv", default = getOption("geneSCOPE.virtualenv", default = NULL))
         if (is.character(venv_opt) && nzchar(venv_opt)) {
-            try(.use_virtual_environment(venv_opt, required = FALSE), silent = TRUE)
+            try(.use_virtual_environment_2(venv_opt, required = FALSE), silent = TRUE)
         }
     }
 
     env_python <- Sys.getenv("NETWORKIT_PYTHON", unset = Sys.getenv("NK_PYTHON", unset = Sys.getenv("RETICULATE_PYTHON", unset = "")))
     if (nzchar(env_python)) {
-        try(.use_python_interpreter(env_python, required = FALSE), silent = TRUE)
+        try(.use_python_interpreter_2(env_python, required = FALSE), silent = TRUE)
     }
     invisible(TRUE)
 }
@@ -769,14 +901,141 @@
 #'
 #' @return TRUE when NetworKit Python module can be imported.
 #' @noRd
-.networkit_available <- function() {
+.networkit_available_2 <- function() {
     if (!requireNamespace("reticulate", quietly = TRUE)) return(FALSE)
     if (!isTRUE(get0("configured", envir = .networkit_runtime_state, ifnotfound = FALSE))) {
-        .autoconfigure_networkit_runtime()
+        .autoconfigure_networkit_runtime_2()
         assign("configured", TRUE, envir = .networkit_runtime_state)
     }
     ok <- tryCatch({ reticulate::py_module_available("networkit") }, error = function(e) FALSE)
     isTRUE(ok)
+}
+
+#' Write a NetworKit-compatible edge list to disk (weighted, undirected).
+#'
+#' @param vertex_names Character vector of vertex names defining ID order.
+#' @param edge_table Data frame with `from` and `to` columns.
+#' @param edge_weights Numeric vector of edge weights.
+#' @param tmpdir Optional directory for temporary files.
+#'
+#' @return A list with elements `file`, `edge_count`, `vertex_count`, and
+#'   `cleanup` (callable).
+#' @noRd
+.networkit_write_edge_file_2 <- function(vertex_names, edge_table, edge_weights, tmpdir = NULL) {
+    vertex_count <- length(vertex_names)
+    result <- list(
+        file = NULL,
+        edge_count = 0L,
+        vertex_count = vertex_count,
+        cleanup = function() invisible(NULL)
+    )
+    if (!nrow(edge_table) || !vertex_count) return(result)
+
+    vertex_ids <- seq_len(vertex_count) - 1L
+    name_to_id <- structure(vertex_ids, names = vertex_names)
+    u <- name_to_id[as.character(edge_table$from)]
+    v <- name_to_id[as.character(edge_table$to)]
+    w <- as.numeric(edge_weights)
+    keep <- !is.na(u) & !is.na(v) & is.finite(w)
+    if (!any(keep)) return(result)
+
+    edge_df <- data.frame(
+        from = as.integer(u[keep]),
+        to = as.integer(v[keep]),
+        weight = as.numeric(w[keep]),
+        stringsAsFactors = FALSE
+    )
+
+    tmpdir <- if (is.null(tmpdir) || !nzchar(tmpdir)) {
+        getOption("networkit.edge.tmpdir_2", default = tempdir())
+    } else {
+        tmpdir
+    }
+    if (!dir.exists(tmpdir)) {
+        dir.create(tmpdir, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    final_path <- tempfile(pattern = "nk_edges_", tmpdir = tmpdir, fileext = ".tsv")
+    staging_path <- paste0(final_path, ".tmp")
+
+    write_ok <- FALSE
+    writer <- function(dest) {
+        if (requireNamespace("data.table", quietly = TRUE)) {
+            data.table::fwrite(edge_df, dest, sep = " ", col.names = FALSE)
+        } else {
+            utils::write.table(edge_df, file = dest, sep = " ", col.names = FALSE,
+                               row.names = FALSE, quote = FALSE)
+        }
+    }
+
+    tryCatch({
+        writer(staging_path)
+        write_ok <- TRUE
+    }, error = function(e) {
+        write_ok <<- FALSE
+        if (file.exists(staging_path)) unlink(staging_path, recursive = FALSE, force = FALSE)
+        stop(e)
+    })
+
+    if (write_ok) {
+        if (!file.rename(staging_path, final_path)) {
+            final_path <- staging_path
+        }
+    } else {
+        final_path <- staging_path
+    }
+
+    cleanup_paths <- unique(c(final_path, staging_path))
+    result$file <- final_path
+    result$edge_count <- nrow(edge_df)
+    result$cleanup <- function() {
+        existing <- cleanup_paths[file.exists(cleanup_paths)]
+        if (length(existing)) unlink(existing, recursive = FALSE, force = FALSE)
+        invisible(NULL)
+    }
+    result
+}
+
+#' Create a NetworKit edge reader compatible across versions.
+#'
+#' @param nk NetworKit module imported via reticulate.
+#'
+#' @return An object exposing `$read(path)`.
+#' @noRd
+.networkit_edge_reader_2 <- function(nk) {
+    tryCatch(
+        nk$graphio$EdgeListReader(" ", 0L, "#", TRUE, FALSE),
+        error = function(e_new) {
+            tryCatch(
+                nk$graphio$EdgeListReader(weighted = TRUE, directed = FALSE),
+                error = function(e_old) stop(e_old)
+            )
+        }
+    )
+}
+
+#' Load a NetworKit graph from an edge-list file and pad isolated vertices.
+#'
+#' @param nk NetworKit module imported via reticulate.
+#' @param edge_file Path to edge list (can be NULL).
+#' @param vertex_count Total number of vertices expected.
+#'
+#' @return A NetworKit graph object with `vertex_count` nodes.
+#' @noRd
+.networkit_load_graph_from_file_2 <- function(nk, edge_file, vertex_count) {
+    vertex_count <- as.integer(vertex_count)
+    if (is.null(edge_file) || !nzchar(edge_file) || !file.exists(edge_file)) {
+        return(nk$Graph(vertex_count, weighted = TRUE, directed = FALSE))
+    }
+
+    reader <- .networkit_edge_reader_2(nk)
+    nk_graph <- reader$read(edge_file)
+    existing_nodes <- tryCatch(nk_graph$numberOfNodes(), error = function(e) NA_integer_)
+    if (is.finite(existing_nodes) && vertex_count > existing_nodes) {
+        add_count <- as.integer(vertex_count - existing_nodes)
+        if (add_count > 0L) nk_graph$addNodes(add_count)
+    }
+    nk_graph
 }
 
 #' Run NetworKit Parallel Leiden across multiple seeds.
@@ -792,11 +1051,11 @@
 #'
 #' @return Integer matrix of memberships (rows = vertices, cols = seeds).
 #' @noRd
-.networkit_parallel_leiden_runs <- function(vertex_names, edge_table, edge_weights,
+.networkit_parallel_leiden_runs_2 <- function(vertex_names, edge_table, edge_weights,
                                             gamma = 1.0, iterations = 10L,
                                             randomize = TRUE,
                                             threads = 1L, seeds = 1L) {
-    if (!.networkit_available()) {
+    if (!.networkit_available_2()) {
         g_local <- igraph::graph_from_data_frame(cbind(edge_table, weight = edge_weights), directed = FALSE, vertices = vertex_names)
         membership_list <- lapply(seeds, function(seed_id) {
             res <- try(igraph::cluster_leiden(g_local, weights = igraph::E(g_local)$weight, resolution_parameter = gamma), silent = TRUE)
@@ -815,20 +1074,9 @@
     threads <- as.integer(threads)
     if (!is.na(threads) && threads > 0) try(nk$setNumberOfThreads(threads), silent = TRUE)
 
-    vertex_count <- length(vertex_names)
-    nk_graph <- nk$Graph(as.integer(vertex_count), weighted = TRUE, directed = FALSE)
-    if (nrow(edge_table)) {
-        vertex_ids <- seq_len(vertex_count) - 1L
-        name_to_id <- structure(vertex_ids, names = vertex_names)
-        u <- name_to_id[as.character(edge_table$from)]
-        v <- name_to_id[as.character(edge_table$to)]
-        w <- as.numeric(edge_weights)
-        keep <- !is.na(u) & !is.na(v) & is.finite(w)
-        if (any(keep)) {
-            u <- as.integer(u[keep]); v <- as.integer(v[keep]); w <- as.numeric(w[keep])
-            for (idx in seq_along(u)) nk_graph$addEdge(u[[idx]], v[[idx]], w[[idx]])
-        }
-    }
+    edge_ctx <- .networkit_write_edge_file_2(vertex_names, edge_table, edge_weights)
+    on.exit(edge_ctx$cleanup(), add = TRUE)
+    nk_graph <- .networkit_load_graph_from_file_2(nk, edge_ctx$file, edge_ctx$vertex_count)
 
     seeds <- as.integer(seeds)
     membership_list <- vector("list", length(seeds))
@@ -861,10 +1109,10 @@
 #'
 #' @return Integer matrix of memberships.
 #' @noRd
-.networkit_plm_runs <- function(vertex_names, edge_table, edge_weights,
+.networkit_plm_runs_2 <- function(vertex_names, edge_table, edge_weights,
                                 gamma = 1.0, refine = TRUE,
                                 threads = 1L, seeds = 1L) {
-    if (!.networkit_available()) {
+    if (!.networkit_available_2()) {
         g_local <- igraph::graph_from_data_frame(cbind(edge_table, weight = edge_weights), directed = FALSE, vertices = vertex_names)
         membership_list <- lapply(seeds, function(seed_id) {
             res <- try(igraph::cluster_louvain(g_local, weights = igraph::E(g_local)$weight, resolution = gamma), silent = TRUE)
@@ -882,20 +1130,9 @@
     threads <- as.integer(threads)
     if (!is.na(threads) && threads > 0) try(nk$setNumberOfThreads(threads), silent = TRUE)
 
-    vertex_count <- length(vertex_names)
-    nk_graph <- nk$Graph(as.integer(vertex_count), weighted = TRUE, directed = FALSE)
-    if (nrow(edge_table)) {
-        vertex_ids <- seq_len(vertex_count) - 1L
-        name_to_id <- structure(vertex_ids, names = vertex_names)
-        u <- name_to_id[as.character(edge_table$from)]
-        v <- name_to_id[as.character(edge_table$to)]
-        w <- as.numeric(edge_weights)
-        keep <- !is.na(u) & !is.na(v) & is.finite(w)
-        if (any(keep)) {
-            u <- as.integer(u[keep]); v <- as.integer(v[keep]); w <- as.numeric(w[keep])
-            for (idx in seq_along(u)) nk_graph$addEdge(u[[idx]], v[[idx]], w[[idx]])
-        }
-    }
+    edge_ctx <- .networkit_write_edge_file_2(vertex_names, edge_table, edge_weights)
+    on.exit(edge_ctx$cleanup(), add = TRUE)
+    nk_graph <- .networkit_load_graph_from_file_2(nk, edge_ctx$file, edge_ctx$vertex_count)
 
     seeds <- as.integer(seeds)
     membership_list <- vector("list", length(seeds))
@@ -914,9 +1151,9 @@
 }
 
 # Legacy aliases retained for backward compatibility with older scripts.
-.nk_available <- .networkit_available
-.nk_parallel_leiden_mruns <- .networkit_parallel_leiden_runs
-.nk_plm_mruns <- .networkit_plm_runs
+.nk_available_2 <- .networkit_available_2
+.nk_parallel_leiden_mruns_2 <- .networkit_parallel_leiden_runs_2
+.nk_plm_mruns_2 <- .networkit_plm_runs_2
 
 # ---------------------------------------------------------------------------
 # Step 1: Threshold Lee's L matrix and build base adjacency
@@ -925,16 +1162,16 @@
 #'
 #' @param similarity_matrix Square matrix of similarity scores.
 #' @param significance_matrix Optional matching significance matrix.
-#' @param config Configuration list produced by `.build_pipeline_config()`.
+#' @param config Configuration list produced by `.build_pipeline_config_2()`.
 #' @param verbose Logical; emit progress messages.
 #'
 #' @return A list containing filtered adjacency matrices and gene sets.
 #' @noRd
-.threshold_similarity_graph <- function(similarity_matrix,
+.threshold_similarity_graph_2 <- function(similarity_matrix,
                                   significance_matrix = NULL,
                                   config,
                                   verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Step1: thresholding similarity matrix…")
+    .cluster_message_2(verbose, "[cluster] Step1: thresholding similarity matrix…")
 
     genes_all <- rownames(similarity_matrix)
     if (is.null(genes_all)) stop("Input similarity matrix must have rownames/colnames for node IDs.")
@@ -963,10 +1200,8 @@
     if (length(kept_genes) < 2) stop("Fewer than 2 genes after filtering.")
 
     similarity_kept <- similarity_filtered[kept_genes, kept_genes, drop = FALSE]
-    if (isTRUE(verbose)) {
-        message(sprintf("[cluster]   retained %d/%d nodes; |E|=%d",
+    .cluster_message_2(verbose, sprintf("[cluster]   retained %d/%d nodes; |E|=%d",
                         length(kept_genes), length(genes_all), Matrix::nnzero(similarity_kept) / 2))
-    }
 
     list(
         similarity = similarity_filtered,
@@ -984,19 +1219,19 @@
 #' Run Stage-1 multi-restart clustering and build consensus.
 #'
 #' @param similarity_matrix Thresholded similarity matrix.
-#' @param threshold Output list from `.threshold_similarity_graph()`.
+#' @param threshold Output list from `.threshold_similarity_graph_2()`.
 #' @param config Configuration list.
 #' @param verbose Logical; emit progress messages.
 #' @param networkit_config Optional list describing NetworKit runtime configuration.
 #'
 #' @return A list containing Stage-1 memberships, consensus matrix, and graphs.
 #' @noRd
-.stage1_consensus_workflow <- function(similarity_matrix,
+.stage1_consensus_workflow_2 <- function(similarity_matrix,
                                       threshold,
                                       config,
                                       verbose = TRUE,
                                       networkit_config = list()) {
-    if (isTRUE(verbose)) message("[cluster] Step2: running Stage-1 consensus…")
+    .cluster_message_2(verbose, "[cluster] Step2: running Stage-1 consensus…")
 
     kept_genes <- threshold$kept_genes
     similarity_sub <- threshold$similarity_sub
@@ -1009,7 +1244,7 @@
         if (is.null(config_conda_bin)) config_conda_bin <- networkit_config[["nk_conda_bin"]]
         config_python_path <- networkit_config[["python_path"]]
         if (is.null(config_python_path)) config_python_path <- networkit_config[["nk_python"]]
-        try(.configure_networkit_python(
+        try(.configure_networkit_python_2(
             conda_env = config_conda_env,
             conda_bin = config_conda_bin,
             python_path = config_python_path,
@@ -1035,17 +1270,21 @@
         directed = FALSE, vertices = kept_genes
     )
 
+    nk_inputs_stage1 <- .nk_prepare_graph_input_2(similarity_graph)
+    similarity_graph <- nk_inputs_stage1$graph
+
     algo <- match.arg(config$algo, c("leiden", "louvain", "hotspot-like"))
     objective <- match.arg(config$objective, c("CPM", "modularity"))
+    prefer_fast <- isTRUE(config$prefer_fast)
     mode_selected <- switch(config$mode,
-        auto = if (length(kept_genes) > config$large_n_threshold) "aggressive" else "safe",
+        fast = "fast",
+        auto = if (prefer_fast) "fast" else if (length(kept_genes) > config$large_n_threshold) "aggressive" else "safe",
         safe = "safe",
         aggressive = "aggressive"
     )
-    if (isTRUE(verbose)) {
-        message(sprintf("[cluster]   Stage-1 mode=%s (nodes=%d)", mode_selected, length(kept_genes)))
-    }
-    if (identical(mode_selected, "aggressive") && identical(objective, "CPM")) {
+    backend_mode <- if (identical(mode_selected, "fast")) "safe" else mode_selected
+    .cluster_message_2(verbose, sprintf("[cluster]   Stage-1 mode=%s (nodes=%d)", mode_selected, length(kept_genes)))
+    if (identical(backend_mode, "aggressive") && identical(objective, "CPM")) {
         warning("[cluster] CPM objective not supported in aggressive mode; falling back to 'modularity'.")
         objective <- "modularity"
     }
@@ -1057,12 +1296,12 @@
     stage1_backend <- "igraph"
 
     if (identical(algo, "hotspot-like")) {
-        if (isTRUE(verbose)) message("[cluster]   Stage-1 backend: hotspot-like")
+        .cluster_message_2(verbose, "[cluster]   Stage-1 backend: hotspot-like")
         hotspot_k <- config$hotspot_k
         if (is.null(hotspot_k) || !is.finite(hotspot_k)) {
             hotspot_k <- max(1L, min(20L, length(kept_genes)))
         }
-        hotspot_result <- .run_hotspot_clustering(similarity_sub, hotspot_k, config$hotspot_min_module_size, config$use_log1p_weight)
+        hotspot_result <- .run_hotspot_clustering_2(similarity_sub, hotspot_k, config$hotspot_min_module_size, config$use_log1p_weight)
         stage1_membership_labels <- hotspot_result$membership
         stage1_consensus_matrix <- hotspot_result$consensus
         restart_memberships <- matrix(as.integer(stage1_membership_labels), ncol = 1,
@@ -1077,34 +1316,26 @@
             }
         }, error = function(e) 1L)
 
-        edge_weights <- igraph::E(similarity_graph)$weight
-        vertex_names <- igraph::V(similarity_graph)$name
-        edge_pairs <- igraph::as_data_frame(similarity_graph, what = "edges")[, c("from", "to")]
+        edge_weights <- nk_inputs_stage1$edge_weights
+        vertex_names <- nk_inputs_stage1$vertex_names
+        edge_pairs <- nk_inputs_stage1$edge_table
 
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
-        algo_per_run <- if (identical(mode_selected, "aggressive") && identical(algo, "leiden")) "louvain" else algo
+        algo_per_run <- if (identical(backend_mode, "aggressive") && identical(algo, "leiden")) "louvain" else algo
 
-        old_max_size <- getOption("future.globals.maxSize")
-        min_max_size <- 2 * 1024^3
-        new_max_size <- old_max_size
-        if (is.null(new_max_size) || (!is.infinite(new_max_size) && new_max_size < min_max_size)) {
-            new_max_size <- min_max_size
-        }
-        options(future.globals.maxSize = new_max_size)
-        on.exit(options(future.globals.maxSize = old_max_size), add = TRUE)
+        future_guard <- .adjust_future_globals_maxsize_2(config$future_globals_min_bytes %||% (2 * 1024^3))
+        on.exit(future_guard(), add = TRUE)
 
-        aggressive_requested <- identical(mode_selected, "aggressive")
-        if (aggressive_requested && !.networkit_available()) {
+        aggressive_requested <- identical(backend_mode, "aggressive")
+        if (aggressive_requested && !.networkit_available_2()) {
             stop("Aggressive mode requires the NetworKit backend; please configure reticulate/networkit before running clusterGenes_new.", call. = FALSE)
         }
         use_networkit_leiden <- aggressive_requested && identical(algo_per_run, "leiden")
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
 
         if (use_networkit_leiden || use_networkit_plm) {
-            if (isTRUE(verbose)) {
-                message("[cluster]   Stage-1 backend: NetworKit (",
-                    if (use_networkit_leiden) "Leiden" else "PLM/louvain", ")")
-            }
+            backend_label <- if (use_networkit_leiden) "Leiden" else "PLM/louvain"
+            .cluster_message_2(verbose, "[cluster]   Stage-1 backend: NetworKit (", backend_label, ")")
             stage1_backend <- "networkit"
             seeds <- seq_len(config$n_restart)
             chunk_size <- config$aggr_batch_size
@@ -1120,7 +1351,7 @@
 
             worker_fun <- function(ss) {
                 if (use_networkit_leiden) {
-                    .networkit_parallel_leiden_runs(
+                    .networkit_parallel_leiden_runs_2(
                         vertex_names = vertex_names,
                         edge_table = edge_pairs,
                         edge_weights = edge_weights,
@@ -1131,7 +1362,7 @@
                         seeds = as.integer(ss)
                     )
                 } else {
-                    .networkit_plm_runs(
+                    .networkit_plm_runs_2(
                         vertex_names = vertex_names,
                         edge_table = edge_pairs,
                         edge_weights = edge_weights,
@@ -1149,9 +1380,7 @@
             }
             restart_memberships <- do.call(cbind, membership_blocks)
         } else {
-            if (isTRUE(verbose)) {
-                message("[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
-            }
+            .cluster_message_2(verbose, "[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
             # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
             restart_memberships <- future.apply::future_sapply(
                 seq_len(config$n_restart),
@@ -1161,7 +1390,7 @@
                         directed = FALSE,
                         vertices = vertex_names
                     )
-                    res <- try(.run_graph_algorithm(g_local, algo_per_run, res_param, objective), silent = TRUE)
+                    res <- try(.run_graph_algorithm_2(g_local, algo_per_run, res_param, objective), silent = TRUE)
                     if (inherits(res, "try-error")) {
                         rep.int(1L, length(vertex_names))
                     } else {
@@ -1197,10 +1426,10 @@
                 n_threads = n_threads
             ), silent = TRUE)
             if (!inherits(stage1_consensus_matrix, "try-error")) {
-                if (isTRUE(verbose)) message("[cluster]   Stage-1 consensus backend: C++ (consensus_sparse)")
+                .cluster_message_2(verbose, "[cluster]   Stage-1 consensus backend: C++ (consensus_sparse)")
             } else {
-                if (isTRUE(verbose)) message("[cluster]   consensus_sparse failed; using R fallback.")
-                stage1_consensus_matrix <- .compute_consensus_sparse_R(restart_memberships, thr = config$consensus_thr)
+                .cluster_message_2(verbose, "[cluster]   consensus_sparse failed; using R fallback.")
+                stage1_consensus_matrix <- .compute_consensus_sparse_R_2(restart_memberships, thr = config$consensus_thr)
             }
             try({ if (length(stage1_consensus_matrix@i)) diag(stage1_consensus_matrix) <- 0 }, silent = TRUE)
             if (Matrix::nnzero(stage1_consensus_matrix) == 0) {
@@ -1209,21 +1438,19 @@
                 consensus_graph_view <- igraph::graph_from_adjacency_matrix(stage1_consensus_matrix,
                     mode = "undirected", weighted = TRUE, diag = FALSE)
                 consensus_backend <- if (identical(stage1_backend, "networkit")) "networkit" else "igraph"
-                if (isTRUE(verbose)) {
-                    backend_label <- if (identical(consensus_backend, "networkit")) {
-                        paste0("NetworKit (", algo, ")")
-                    } else {
-                        paste0("igraph (", algo, ")")
-                    }
-                    message("[cluster]   Stage-1 consensus graph backend: ", backend_label)
+                backend_label <- if (identical(consensus_backend, "networkit")) {
+                    paste0("NetworKit (", algo, ")")
+                } else {
+                    paste0("igraph (", algo, ")")
                 }
+                .cluster_message_2(verbose, "[cluster]   Stage-1 consensus graph backend: ", backend_label)
                 nk_opts <- list(
                     iterations = config$nk_leiden_iterations,
                     randomize = config$nk_leiden_randomize,
                     refine = TRUE,
                     seeds = 1L
                 )
-                stage1_membership_labels <- .run_single_partition(
+                stage1_membership_labels <- .run_single_partition_2(
                     consensus_graph_view,
                     backend = consensus_backend,
                     algo_name = algo,
@@ -1284,7 +1511,7 @@
 # ---------------------------------------------------------------------------
 #' Apply Stage-2 corrections and optional subclustering.
 #'
-#' @param stage1 List returned by `.stage1_consensus_workflow()`.
+#' @param stage1 List returned by `.stage1_consensus_workflow_2()`.
 #' @param similarity_matrix Full similarity matrix.
 #' @param config Configuration list.
 #' @param FDR Optional FDR matrix aligned with similarity.
@@ -1295,7 +1522,7 @@
 #'
 #' @return List with refined memberships, consensus graph, and diagnostics.
 #' @noRd
-.stage2_refine_workflow <- function(stage1,
+.stage2_refine_workflow_2 <- function(stage1,
                                    similarity_matrix,
                                    config,
                                    FDR = NULL,
@@ -1303,7 +1530,7 @@
                                    aux_stats = NULL,
                                    pearson_matrix = NULL,
                                    verbose = TRUE) {
-    if (isTRUE(verbose)) message("[cluster] Step3: Stage-2 correction & clustering…")
+    .cluster_message_2(verbose, "[cluster] Step3: Stage-2 correction & clustering…")
 
     kept_genes <- stage1$kept_genes
     genes_all <- stage1$genes_all
@@ -1319,7 +1546,7 @@
     stage2_algo_final <- tryCatch({
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
-    if (isTRUE(verbose)) message("[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
+    .cluster_message_2(verbose, "[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
     stage2_backend <- if (!is.null(config$stage2_algo)) {
         if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
     } else {
@@ -1331,10 +1558,46 @@
             "igraph"
         }
     }
-    if (isTRUE(verbose)) message("[cluster]   Stage-2 target backend: ", stage2_backend)
+    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot")) {
+        stage2_backend <- "igraph"
+    }
+    .cluster_message_2(verbose, "[cluster]   Stage-2 target backend: ", stage2_backend)
 
     if (!config$use_mh_weight && !config$CI95_filter) {
-        if (isTRUE(verbose)) message("[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
+        .cluster_message_2(verbose, "[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
+        if (length(stage1_membership_labels) && length(kept_genes)) {
+            stage1_mem <- stage1_membership_labels
+            if (!is.null(names(stage1_mem))) {
+                stage1_mem <- stage1_mem[kept_genes]
+            } else if (length(stage1_mem) == length(kept_genes)) {
+                names(stage1_mem) <- kept_genes
+            } else {
+                stage1_mem <- setNames(rep(NA_integer_, length(kept_genes)), kept_genes)
+            }
+            stage1_mem <- as.integer(stage1_mem)
+            names(stage1_mem) <- kept_genes
+            sim_stage1 <- stage1$similarity_sub %||% stage1$A_sub
+            if (!is.null(sim_stage1)) {
+                if (!identical(rownames(sim_stage1), kept_genes)) {
+                    sim_stage1 <- sim_stage1[kept_genes, kept_genes, drop = FALSE]
+                }
+                min_cluster_keep <- max(1L, as.integer(config$min_cluster_size %||% 2L))
+                pruned <- .prune_unstable_memberships_2(
+                    memberships = stage1_mem,
+                    L_matrix = sim_stage1,
+                    min_cluster_size = min_cluster_keep
+                )
+                stage1_mem <- pruned$membership
+                idx_valid <- which(!is.na(stage1_mem))
+                if (length(idx_valid)) {
+                    unique_ids <- sort(unique(stage1_mem[idx_valid]))
+                    id_map <- setNames(seq_along(unique_ids), unique_ids)
+                    stage1_mem[idx_valid] <- as.integer(id_map[as.character(stage1_mem[idx_valid])])
+                }
+                names(stage1_mem) <- kept_genes
+                stage1_membership_labels <- stage1_mem
+            }
+        }
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
@@ -1356,7 +1619,7 @@
         L_post <- tryCatch(
             .align_and_filter_FDR(L_post, similarity_matrix, FDR, config$significance_max),
             error = function(e) {
-                if (isTRUE(verbose)) message("[cluster]   significance subset disabled: ", conditionMessage(e))
+                .cluster_message_2(verbose, "[cluster]   significance subset disabled: ", conditionMessage(e))
                 L_post
             }
         )
@@ -1556,7 +1819,7 @@
             S_sub <- methods::as(S_sub, "dgCMatrix")
             hotspot_k <- config$hotspot_k
             if (is.null(hotspot_k) || !is.finite(hotspot_k)) hotspot_k <- length(genes_c)
-            hotspot_res <- .run_hotspot_clustering(S_sub, as.integer(max(1L, min(hotspot_k, nrow(S_sub)))), config$hotspot_min_module_size, use_log1p_weight)
+            hotspot_res <- .run_hotspot_clustering_2(S_sub, as.integer(max(1L, min(hotspot_k, nrow(S_sub)))), config$hotspot_min_module_size, use_log1p_weight)
             memb_sub <- hotspot_res$membership
             if (is.null(names(memb_sub))) names(memb_sub) <- genes_c
             cons_sub <- hotspot_res$consensus
@@ -1569,15 +1832,19 @@
                 if (length(genes_c) > large_n_threshold) "aggressive" else stage1_mode_selected
             } else stage1_mode_selected
             algo_per_run_sub <- stage2_algo_final
-            ew <- igraph::E(g_sub)$weight
-            el <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
+            nk_inputs_sub <- .nk_prepare_graph_input_2(g_sub)
+            g_sub <- nk_inputs_sub$graph
+            ew <- nk_inputs_sub$edge_weights
+            el <- nk_inputs_sub$edge_table
+            vertex_names_sub <- nk_inputs_sub$vertex_names
             res_param_sub <- res_param_base
 
             backend_sub <- if (identical(stage2_backend, "networkit")) "networkit" else "igraph"
             if (backend_sub == "networkit" && !stage2_algo_final %in% c("leiden", "louvain")) {
                 backend_sub <- "igraph"
             }
-            if (backend_sub == "networkit" && !.nk_available()) {
+            if (isTRUE(config$prefer_fast)) backend_sub <- "igraph"
+            if (backend_sub == "networkit" && !.nk_available_2()) {
                 stop("Stage-2 NetworKit backend requested but NetworKit is unavailable.", call. = FALSE)
             }
 
@@ -1593,10 +1860,9 @@
                 }
                 chunks <- split_chunks(seeds, chunk_size)
                 threads_per_worker <- max(1L, floor(n_threads / max(1L, aggr_future_workers)))
-                vertex_names_sub <- igraph::V(g_sub)$name
                 worker_fun <- function(ss) {
                     if (identical(stage2_algo_final, "leiden")) {
-                        .nk_parallel_leiden_mruns(
+                        .nk_parallel_leiden_mruns_2(
                             vertex_names = vertex_names_sub,
                             edge_table = el,
                             edge_weights = ew,
@@ -1607,7 +1873,7 @@
                             seeds = as.integer(ss)
                         )
                     } else {
-                        .nk_plm_mruns(
+                        .nk_plm_mruns_2(
                             vertex_names = vertex_names_sub,
                             edge_table = el,
                             edge_weights = ew,
@@ -1631,9 +1897,9 @@
                         g_local <- igraph::graph_from_data_frame(
                             cbind(el, weight = ew),
                             directed = FALSE,
-                            vertices = igraph::V(g_sub)$name
+                            vertices = vertex_names_sub
                         )
-                        res <- try(.run_graph_algorithm(g_local, algo_per_run_sub, res_param_sub, objective), silent = TRUE)
+                        res <- try(.run_graph_algorithm_2(g_local, algo_per_run_sub, res_param_sub, objective), silent = TRUE)
                         if (inherits(res, "try-error")) {
                             rep.int(1L, length(genes_c))
                         } else {
@@ -1650,7 +1916,7 @@
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
 
             if (!use_consensus) {
-                if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
+                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
                 n_loc <- length(labs)
@@ -1682,12 +1948,10 @@
                     n_threads = n_threads
                 ), silent = TRUE)
                 if (!inherits(cons_sub, "try-error")) {
-                    if (isTRUE(verbose)) message("[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: C++ (consensus_sparse)")
                 } else {
-                    if (isTRUE(verbose)) {
-                        message("[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R)")
-                    }
-                    cons_sub <- .compute_consensus_sparse_R(memb_mat_sub, thr = consensus_thr)
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: R fallback (.compute_consensus_sparse_R_2)")
+                    cons_sub <- .compute_consensus_sparse_R_2(memb_mat_sub, thr = consensus_thr)
                 }
                 if (length(cons_sub@i)) Matrix::diag(cons_sub) <- 0
                 if (Matrix::nnzero(cons_sub) == 0) {
@@ -1696,21 +1960,19 @@
                     g_cons_sub <- igraph::graph_from_adjacency_matrix(cons_sub, mode = "undirected", weighted = TRUE, diag = FALSE)
                     backend_consensus_sub <- backend_sub
                     if (!backend_consensus_sub %in% c("networkit", "igraph")) backend_consensus_sub <- "igraph"
-                    if (isTRUE(verbose)) {
-                        backend_label <- if (identical(backend_consensus_sub, "networkit")) {
-                            paste0("NetworKit (", stage2_algo_final, ")")
-                        } else {
-                            paste0("igraph (", stage2_algo_final, ")")
-                        }
-                        message("[cluster]   Stage-2 consensus graph backend: ", backend_label)
+                    backend_label <- if (identical(backend_consensus_sub, "networkit")) {
+                        paste0("NetworKit (", stage2_algo_final, ")")
+                    } else {
+                        paste0("igraph (", stage2_algo_final, ")")
                     }
+                    .cluster_message_2(verbose, "[cluster]   Stage-2 consensus graph backend: ", backend_label)
                     nk_opts_cons <- list(
                         iterations = config$nk_leiden_iterations,
                         randomize = config$nk_leiden_randomize,
                         refine = TRUE,
                         seeds = 1L
                     )
-                    memb_sub <- .run_single_partition(
+                    memb_sub <- .run_single_partition_2(
                         g_cons_sub,
                         backend = backend_consensus_sub,
                         algo_name = stage2_algo_final,
@@ -1743,8 +2005,8 @@
         }
     }
 
-    metrics_before <- .summarise_cluster_metrics(memb_final, cons, W)
-    genes_before <- .summarise_gene_membership(memb_final, cons, W, kept_genes)
+    metrics_before <- .summarise_cluster_metrics_2(memb_final, cons, W)
+    genes_before <- .summarise_gene_membership_2(memb_final, cons, W, kept_genes)
 
     if (enable_qc_filter) {
         q_w <- stats::quantile(genes_before$w_in, probs = qc_gene_intra_weight_q, na.rm = TRUE)
@@ -1777,7 +2039,7 @@
                 seq_len(min(n_restart, 50)),
                 function(ii) {
                     g_local <- igraph::graph_from_data_frame(cbind(el, weight = ew), directed = FALSE, vertices = igraph::V(g_sub)$name)
-                    res <- .run_graph_algorithm(
+                    res <- .run_graph_algorithm_2(
                         g_local,
                         stage2_algo_final,
                         if (identical(objective, "modularity")) res_param_base * sub_resolution_factor else res_param_base * sub_resolution_factor,
@@ -1789,10 +2051,10 @@
             )
             if (is.null(dim(memb_mat_sub))) memb_mat_sub <- matrix(memb_mat_sub, ncol = 1)
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
-            cons_sub <- .compute_consensus_sparse_R(memb_mat_sub, thr = consensus_thr)
+            cons_sub <- .compute_consensus_sparse_R_2(memb_mat_sub, thr = consensus_thr)
             if (Matrix::nnzero(cons_sub) == 0) next
             g_cons_sub <- igraph::graph_from_adjacency_matrix(cons_sub, mode = "undirected", weighted = TRUE, diag = FALSE)
-            comm_sub <- .run_graph_algorithm(
+            comm_sub <- .run_graph_algorithm_2(
                 g_cons_sub,
                 stage2_algo_final,
                 if (identical(objective, "modularity")) res_param_base * sub_resolution_factor else res_param_base * sub_resolution_factor,
@@ -1848,8 +2110,8 @@
     }
     names(memb_final) <- kept_genes
 
-    metrics_after <- .summarise_cluster_metrics(memb_final, cons, W)
-    genes_after <- .summarise_gene_membership(memb_final, cons, W, kept_genes)
+    metrics_after <- .summarise_cluster_metrics_2(memb_final, cons, W)
+    genes_after <- .summarise_gene_membership_2(memb_final, cons, W, kept_genes)
 
     cons_ts <- methods::as(cons, "TsparseMatrix")
     if (length(cons_ts@x)) {
@@ -1971,11 +2233,12 @@
 #' @param n_restart Number of Stage-1 restarts.
 #' @param consensus_thr Consensus threshold applied to co-occurrence matrix.
 #' @param keep_cross_stable Logical; retain cross-cluster stable edges.
-#' @param CI95_filter Logical; enable CI95-based edge filtering.
-#' @param curve_layer Name of curve layer for CI95 filtering.
-#' @param CI_rule Rule applied to CI95 mask (`"remove_within"` or `"remove_outside"`).
-#' @param use_mh_weight Logical; enable Morisita-Horn weighting.
-#' @param mh_slot Slot containing MH weights (aliases `cmh_slot`).
+#' @param CI95_filter Deprecated logical toggle for CI filtering (use `CI_rule`; kept for backward compatibility).
+#' @param CI_rule Rule applied to the CI95 mask (`"remove_within"`/`"remove_outside"`); set `NULL` to disable.
+#' @param curve_layer Name of curve layer used when CI filtering is enabled.
+#' @param use_mh_weight Logical; enable Morisita-Horn weighting (defaults to `NULL`, inferred from `mh_slot` / `cmh_slot`).
+#' @param mh_slot Slot containing MH weights (aliases `cmh_slot`); set `NULL` to skip MH-based corrections.
+#' @param cmh_slot Optional alias for `mh_slot`; defaults to `NULL`.
 #' @param K Desired number of modules when `algo = "hotspot-like"`.
 #' @param min_module_size Minimum module size for hotspot-like clustering.
 #' @param post_smooth Logical; smooth corrected weights.
@@ -1999,19 +2262,22 @@
 #' @param return_report Logical; return diagnostics alongside modified object.
 #' @param verbose Logical; emit progress messages.
 #' @param ncores Parallel threads for consensus routines.
-#' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`).
+#' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`, `"fast"`).
 #' @param large_n_threshold Node threshold for switching to aggressive mode.
 #' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit configuration.
 #' @param nk_leiden_iterations Iterations for NetworKit Leiden backend.
 #' @param nk_leiden_randomize Logical; randomize NetworKit Leiden.
 #' @param aggr_future_workers Future workers for batched restarts.
 #' @param aggr_batch_size Batch size for restart aggregation.
+#' @param future_globals_min_bytes Minimum `future.globals.maxSize` (bytes) to request;
+#'   can be overridden via option `genescope.future.globals.maxSize` or environment
+#'   variables `FUTURE_GLOBALS_MAXSIZE_{BYTES,GB}`.
 #' @param profile_timing Logical; collect timing metrics.
 #'
 #' @return Modified `scope_obj`, or list with `scope_obj` and diagnostics when
 #'   `return_report = TRUE`.
 #' @export
-clusterGenes <- function(
+clusterGenes_2 <- function(
     scope_obj,
     grid_name = NULL,
     stats_layer = "LeeStats_Xz",
@@ -2039,13 +2305,13 @@ clusterGenes <- function(
     consensus_thr = 0.95,
     K = NULL,
     min_module_size = 5,
-    CI95_filter = FALSE,
-    curve_layer = "LR_curve",
-    CI_rule = c("remove_within", "remove_outside"),
-    use_mh_weight = FALSE,
+    CI95_filter = NULL,
+    CI_rule = NULL,
+    curve_layer = NULL,
+    use_mh_weight = NULL,
     use_cmh_weight = NULL,
     mh_slot = NULL,
-    cmh_slot = "g_morisita",
+    cmh_slot = NULL,
     post_smooth = TRUE,
     post_smooth_quant = c(0.05, 0.95),
     post_smooth_power = 0.5,
@@ -2068,7 +2334,7 @@ clusterGenes <- function(
     return_report = FALSE,
     verbose = TRUE,
     ncores = NULL,
-    mode = c("auto", "safe", "aggressive"),
+    mode = c("auto", "safe", "aggressive", "fast"),
     large_n_threshold = 1000L,
     nk_condaenv = NULL,
     nk_conda_bin = NULL,
@@ -2077,6 +2343,7 @@ clusterGenes <- function(
     nk_leiden_randomize = TRUE,
     aggr_future_workers = 2L,
     aggr_batch_size = NULL,
+    future_globals_min_bytes = 2 * 1024^3,
     profile_timing = FALSE) {
 
     if (length(algo) == 1L && identical(tolower(algo), "hotspot")) {
@@ -2084,7 +2351,11 @@ clusterGenes <- function(
     }
     algo <- match.arg(algo)
     objective <- match.arg(objective)
-    CI_rule <- match.arg(CI_rule)
+    valid_ci_rules <- c("remove_within", "remove_outside")
+    ci_rule_value <- NULL
+    if (!is.null(CI_rule) && length(CI_rule)) {
+        ci_rule_value <- match.arg(CI_rule, valid_ci_rules)
+    }
     mode <- match.arg(mode)
 
     if (!is.null(lee_stats_layer)) stats_layer <- lee_stats_layer
@@ -2093,11 +2364,50 @@ clusterGenes <- function(
     if (!is.null(FDR_max)) significance_max <- FDR_max
     if (!is.null(use_cmh_weight)) use_mh_weight <- use_cmh_weight
     if (!is.null(cmh_slot)) mh_slot <- cmh_slot
+    normalize_name <- function(val) {
+        if (is.null(val)) return(NULL)
+        val <- as.character(val)[1]
+        if (is.na(val) || !nzchar(val)) return(NULL)
+        val
+    }
+    mh_slot <- normalize_name(mh_slot)
+    curve_layer <- normalize_name(curve_layer)
+    auto_mh <- !is.null(mh_slot)
+    auto_curve <- !is.null(curve_layer)
+    if (is.null(use_mh_weight)) {
+        use_mh_weight <- auto_mh
+    } else {
+        use_mh_weight <- isTRUE(use_mh_weight)
+        if (use_mh_weight && !auto_mh) {
+            stop("mh_slot must be provided when enabling MH weighting.")
+        }
+    }
+    if (!use_mh_weight) {
+        mh_slot <- NULL
+        auto_mh <- FALSE
+    }
+    if (is.null(ci_rule_value) && !is.null(CI95_filter)) {
+        if (isTRUE(CI95_filter)) {
+            warning("CI95_filter is deprecated; please specify CI_rule instead.", call. = FALSE)
+            ci_rule_value <- "remove_within"
+        }
+    }
+    CI95_filter_flag <- !is.null(ci_rule_value)
+    if (CI95_filter_flag && !auto_curve) {
+        stop("curve_layer must be provided when specifying CI_rule.")
+    }
+    if (!CI95_filter_flag) {
+        curve_layer <- NULL
+        auto_curve <- FALSE
+    }
     if (!is.null(stage2_algo) && length(stage2_algo) == 1L && identical(tolower(stage2_algo), "hotspot")) {
         stage2_algo <- "hotspot-like"
     }
 
-    cfg <- .build_pipeline_config(
+    sys_mem_bytes <- .detect_system_memory_bytes_2()
+    future_bytes_arg <- as.numeric(future_globals_min_bytes)
+
+    cfg <- .build_pipeline_config_2(
         min_cutoff = min_cutoff,
         use_significance = use_significance,
         significance_max = significance_max,
@@ -2133,8 +2443,8 @@ clusterGenes <- function(
         qc_gene_intra_weight_q = qc_gene_intra_weight_q,
         keep_cross_stable = keep_cross_stable,
         min_cluster_size = min_cluster_size,
-        CI95_filter = CI95_filter,
-        CI_rule = CI_rule,
+        CI95_filter = CI95_filter_flag,
+        CI_rule = ci_rule_value,
         curve_layer = curve_layer,
         similarity_slot = similarity_slot,
         significance_slot = significance_slot,
@@ -2146,23 +2456,52 @@ clusterGenes <- function(
         keep_stage1_backbone = keep_stage1_backbone,
         backbone_floor_q = backbone_floor_q,
         hotspot_k = if (is.null(K)) NULL else K,
-        hotspot_min_module_size = min_module_size
+        hotspot_min_module_size = min_module_size,
+        future_globals_min_bytes = future_bytes_arg,
+        system_memory_bytes = sys_mem_bytes
     )
+    cfg$system_memory_bytes <- if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) sys_mem_bytes else cfg$system_memory_bytes
 
     timing <- list()
     .tic <- function() proc.time()
     .toc <- function(t0) as.numeric((proc.time() - t0)["elapsed"])
     t_all0 <- .tic()
 
-    inputs <- .extract_scope_layers(scope_obj, grid_name,
+    inputs <- .extract_scope_layers_2(scope_obj, grid_name,
         stats_layer = stats_layer,
         similarity_slot = cfg$similarity_slot,
         significance_slot = cfg$significance_slot,
         use_significance = cfg$use_significance,
         verbose = verbose)
 
-    th <- .threshold_similarity_graph(inputs$similarity, inputs$significance, cfg, verbose = verbose)
-    stage1 <- .stage1_consensus_workflow(inputs$similarity, th, cfg, verbose = verbose,
+    fast_requested <- identical(cfg$mode, "fast")
+    auto_requested <- identical(cfg$mode, "auto")
+    fast_candidate <- fast_requested || auto_requested
+    fast_limit <- cfg$system_memory_bytes
+    if (!is.finite(fast_limit) || fast_limit <= 0) fast_limit <- cfg$future_globals_min_bytes
+    fast_est <- if (fast_candidate) .estimate_fast_mode_memory_2(inputs$similarity, cfg) else NA_real_
+    margin <- getOption("genescope.fast_mode_mem_margin", 0.9)
+    if (!is.finite(margin) || margin <= 0 || margin > 1) margin <- 0.9
+    finite_limit <- is.finite(fast_limit) && fast_limit > 0
+    fast_allowed <- fast_candidate && (!finite_limit || !is.finite(fast_est) || fast_est <= fast_limit * margin)
+    cfg$prefer_fast <- FALSE
+    if (fast_allowed && (fast_requested || auto_requested)) {
+        cfg$prefer_fast <- TRUE
+        cfg$mode <- "fast"
+        if (is.finite(fast_est) && fast_est > 0) {
+            fg_multiplier <- getOption("genescope.fast_mode_fg_multiplier", 1.2)
+            if (!is.finite(fg_multiplier) || fg_multiplier <= 0) fg_multiplier <- 1.2
+            cfg$future_globals_min_bytes <- max(cfg$future_globals_min_bytes, fast_est * fg_multiplier)
+        }
+    } else if (fast_requested && !fast_allowed) {
+        limit_gb <- if (is.finite(fast_limit)) fast_limit / 1024^3 else NA_real_
+        est_gb <- if (is.finite(fast_est)) fast_est / 1024^3 else NA_real_
+        warning(sprintf("[cluster] fast mode requires %.2f GB but limit is %.2f GB; falling back to safe mode.", est_gb, limit_gb))
+        cfg$mode <- "safe"
+    }
+
+    th <- .threshold_similarity_graph_2(inputs$similarity, inputs$significance, cfg, verbose = verbose)
+    stage1 <- .stage1_consensus_workflow_2(inputs$similarity, th, cfg, verbose = verbose,
         networkit_config = list(conda_env = nk_condaenv, conda_bin = nk_conda_bin, python_path = nk_python))
     timing$stage1 <- .toc(t_all0)
 
@@ -2184,7 +2523,7 @@ clusterGenes <- function(
         }
     }
 
-    stage2 <- .stage2_refine_workflow(stage1,
+    stage2 <- .stage2_refine_workflow_2(stage1,
         similarity_matrix = inputs$similarity,
         config = cfg,
         FDR = inputs$significance,
@@ -2217,7 +2556,8 @@ clusterGenes <- function(
 
     if (isTRUE(verbose)) {
         nz <- sum(!is.na(scope_obj@meta.data[genes_all, cluster_name]))
-        message("[clusterGenes] Written clustering column '", cluster_name, "': ",
+        .cluster_message_2(TRUE,
+            "[clusterGenes] Written clustering column '", cluster_name, "': ",
             nz, "/", length(genes_all), " genes (",
             sprintf("%.1f%%", 100 * nz / length(genes_all)), ")")
     }
