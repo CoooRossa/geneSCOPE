@@ -23,12 +23,11 @@
 #' @param use_consensus Logical; enable consensus stage.
 #' @param consensus_thr Numeric consensus threshold.
 #' @param n_restart Integer number of restarts.
-#' @param n_restart_stage2 Optional Stage-2 restart count (defaults to Stage-1 when `NULL`).
 #' @param n_threads Integer thread count.
 #' @param mode Character mode flag.
 #' @param large_n_threshold Integer node threshold for aggressive mode.
-#' @param nk_leiden_iterations Integer iteration cap for the NetworKit backend (legacy option name).
-#' @param nk_leiden_randomize Logical flag mapped to NetworKit's ParallelLeiden randomize option (legacy name).
+#' @param nk_leiden_iterations Integer NetworKit iteration count.
+#' @param nk_leiden_randomize Logical; randomize NetworKit initialisation.
 #' @param aggr_future_workers Integer future workers.
 #' @param aggr_batch_size Integer restart batch size.
 #' @param enable_subcluster Logical; attempt Stage-2 subclustering.
@@ -39,21 +38,18 @@
 #' @param sub_conductance_min Minimum conductance for subclustering.
 #' @param sub_improve_within_cons_min Minimum within-consensus gain.
 #' @param sub_max_groups Maximum Stage-2 splits.
-#' @param stage2_consensus_min_size Minimum Stage-2 cluster size that should trigger consensus/multi-restart logic.
-#' @param stage2_aggressive_min_size Minimum Stage-2 cluster size that should be treated as “aggressive” (force NetworKit + multi-restart).
 #' @param enable_qc_filter Logical; enable QC pruning.
 #' @param qc_gene_intra_cons_min Minimum within-consensus per gene.
 #' @param qc_gene_best_out_cons_min Maximum best-out consensus per gene.
 #' @param qc_gene_intra_weight_q Quantile threshold for intra weights.
 #' @param keep_cross_stable Logical; retain cross-cluster stable edges.
 #' @param min_cluster_size Minimum cluster size to keep.
-#' @param CI95_filter Logical; enable CI95 filtering.
-#' @param CI_rule Character CI rule.
-#' @param curve_layer Name of curve layer.
+#' @param CI_rule Character CI95 filtering rule; set `NULL` (default) to skip CI filtering.
+#' @param curve_layer Name of curve layer used when CI filtering is enabled.
 #' @param similarity_slot Similarity slot name.
 #' @param significance_slot Significance slot name.
-#' @param use_mh_weight Logical; apply Morisita-Horn weights.
-#' @param mh_slot MH slot name.
+#' @param use_mh_weight Logical; apply Morisita-Horn weights (when `NULL`, inferred from `mh_slot`/`cmh_slot`).
+#' @param mh_slot MH slot name; provide `NULL` to disable MH-based corrections.
 #' @param post_smooth Logical; smooth post Stage-2 weights.
 #' @param post_smooth_quant Numeric vector of smoothing quantiles.
 #' @param post_smooth_power Numeric smoothing power.
@@ -77,7 +73,6 @@
     use_consensus = TRUE,
     consensus_thr = 0.95,
     n_restart = 100,
-    n_restart_stage2 = NULL,
     n_threads = NULL,
     mode = "auto",
     large_n_threshold = 1000L,
@@ -93,21 +88,19 @@
     sub_conductance_min = 0.6,
     sub_improve_within_cons_min = 0.07,
     sub_max_groups = 3,
-    stage2_consensus_min_size = 3L,
-    stage2_aggressive_min_size = 500L,
     enable_qc_filter = TRUE,
     qc_gene_intra_cons_min = 0.25,
     qc_gene_best_out_cons_min = 0.6,
     qc_gene_intra_weight_q = 0.05,
     keep_cross_stable = TRUE,
     min_cluster_size = 2L,
-    CI95_filter = FALSE,
-    CI_rule = "remove_within",
-    curve_layer = "LR_curve",
+    CI95_filter = NULL,
+    CI_rule = NULL,
+    curve_layer = NULL,
     similarity_slot = "L",
     significance_slot = "FDR",
     use_mh_weight = FALSE,
-    mh_slot = "g_mh",
+    mh_slot = NULL,
     post_smooth = TRUE,
     post_smooth_quant = c(0.05, 0.95),
     post_smooth_power = 0.5,
@@ -125,6 +118,15 @@
         if (identical(stage2_algo, "hotspot")) stage2_algo <- "hotspot-like"
     }
 
+    valid_ci_rules <- c("remove_within", "remove_outside")
+    if (!is.null(CI_rule)) {
+        CI_rule <- match.arg(CI_rule, valid_ci_rules)
+    }
+    if (is.null(CI_rule) && !is.null(CI95_filter) && isTRUE(CI95_filter)) {
+        CI_rule <- "remove_within"
+    }
+    ci_filter_flag <- !is.null(CI_rule)
+
     list(
         min_cutoff = min_cutoff,
         use_significance = use_significance,
@@ -139,8 +141,7 @@
         use_log1p_weight = use_log1p_weight,
         use_consensus = use_consensus,
         consensus_thr = consensus_thr,
-        n_restart = as.integer(n_restart),
-        n_restart_stage2 = if (is.null(n_restart_stage2)) NA_integer_ else as.integer(n_restart_stage2),
+        n_restart = n_restart,
         n_threads = n_threads,
         mode = mode,
         large_n_threshold = as.integer(large_n_threshold),
@@ -156,16 +157,14 @@
         sub_conductance_min = sub_conductance_min,
         sub_improve_within_cons_min = sub_improve_within_cons_min,
         sub_max_groups = sub_max_groups,
-        stage2_consensus_min_size = as.integer(stage2_consensus_min_size),
-        stage2_aggressive_min_size = as.integer(stage2_aggressive_min_size),
         enable_qc_filter = enable_qc_filter,
         qc_gene_intra_cons_min = qc_gene_intra_cons_min,
         qc_gene_best_out_cons_min = qc_gene_best_out_cons_min,
         qc_gene_intra_weight_q = qc_gene_intra_weight_q,
         keep_cross_stable = keep_cross_stable,
         min_cluster_size = as.integer(min_cluster_size),
-        CI95_filter = CI95_filter,
-        CI_rule = match.arg(CI_rule, c("remove_within", "remove_outside")),
+        CI95_filter = ci_filter_flag,
+        CI_rule = CI_rule,
         curve_layer = curve_layer,
         similarity_slot = similarity_slot,
         significance_slot = significance_slot,
@@ -457,10 +456,6 @@
     if (!is.matrix(memb)) memb <- as.matrix(memb)
     storage.mode(memb) <- "integer"
     n <- nrow(memb); r <- ncol(memb)
-    max_dense_n <- getOption("genescope.consensus_r_fallback_max_n", 5000L)
-    if (is.finite(max_dense_n) && n > max_dense_n) {
-        stop(sprintf("R consensus fallback skipped: n=%d exceeds safe dense limit (%d).", n, max_dense_n), call. = FALSE)
-    }
     if (!is.finite(r) || r < 1L) return(Matrix::Matrix(0, n, n, sparse = TRUE))
     acc <- Matrix::Matrix(0, n, n, sparse = FALSE)
     for (jj in seq_len(r)) {
@@ -1162,7 +1157,6 @@
 
 # ---------------------------------------------------------------------------
 # Step 1: Threshold Lee's L matrix and build base adjacency
-# --------------------------------------------------------------------------- Lee's L matrix and build base adjacency
 # ---------------------------------------------------------------------------
 #' Threshold similarity matrix and prepare adjacency structures.
 #'
@@ -1228,7 +1222,7 @@
 #' @param threshold Output list from `.threshold_similarity_graph_2()`.
 #' @param config Configuration list.
 #' @param verbose Logical; emit progress messages.
-#' @param networkit_config Optional list describing NetworKit runtime configuration (legacy argument name).
+#' @param networkit_config Optional list describing NetworKit runtime configuration.
 #'
 #' @return A list containing Stage-1 memberships, consensus matrix, and graphs.
 #' @noRd
@@ -1299,6 +1293,7 @@
     stage1_membership_labels <- NULL
     restart_memberships <- NULL
     stage1_backend <- "igraph"
+    stage1_backend <- "igraph"
 
     if (identical(algo, "hotspot-like")) {
         .cluster_message_2(verbose, "[cluster]   Stage-1 backend: hotspot-like")
@@ -1326,14 +1321,14 @@
         edge_pairs <- nk_inputs_stage1$edge_table
 
         res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
-        algo_per_run <- algo
+        algo_per_run <- if (identical(backend_mode, "aggressive") && identical(algo, "leiden")) "louvain" else algo
 
         future_guard <- .adjust_future_globals_maxsize_2(config$future_globals_min_bytes %||% (2 * 1024^3))
         on.exit(future_guard(), add = TRUE)
 
         aggressive_requested <- identical(backend_mode, "aggressive")
         if (aggressive_requested && !.networkit_available_2()) {
-            stop("Aggressive mode requires the NetworKit backend; please configure reticulate with a Python interpreter that can import networkit before running clusterGenes_2.", call. = FALSE)
+            stop("Aggressive mode requires the NetworKit backend; please configure reticulate/networkit before running clusterGenes_new.", call. = FALSE)
         }
         use_networkit_leiden <- aggressive_requested && identical(algo_per_run, "leiden")
         use_networkit_plm <- aggressive_requested && identical(algo_per_run, "louvain")
@@ -1342,31 +1337,48 @@
             backend_label <- if (use_networkit_leiden) "Leiden" else "PLM/louvain"
             .cluster_message_2(verbose, "[cluster]   Stage-1 backend: NetworKit (", backend_label, ")")
             stage1_backend <- "networkit"
-            seeds <- as.integer(seq_len(config$n_restart))
-            if (!length(seeds)) seeds <- 1L
-            threads_networkit <- max(1L, as.integer(config$n_threads %||% n_threads))
-            restart_memberships <- if (use_networkit_leiden) {
-                .networkit_parallel_leiden_runs_2(
-                    vertex_names = vertex_names,
-                    edge_table = edge_pairs,
-                    edge_weights = edge_weights,
-                    gamma = as.numeric(res_param),
-                    iterations = as.integer(config$nk_leiden_iterations),
-                    randomize = isTRUE(config$nk_leiden_randomize),
-                    threads = threads_networkit,
-                    seeds = seeds
-                )
-            } else {
-                .networkit_plm_runs_2(
-                    vertex_names = vertex_names,
-                    edge_table = edge_pairs,
-                    edge_weights = edge_weights,
-                    gamma = as.numeric(res_param),
-                    refine = TRUE,
-                    threads = threads_networkit,
-                    seeds = seeds
-                )
+            seeds <- seq_len(config$n_restart)
+            chunk_size <- config$aggr_batch_size
+            if (is.null(chunk_size) || chunk_size <= 0) {
+                chunk_size <- ceiling(config$n_restart / max(1L, as.integer(config$aggr_future_workers)))
             }
+            split_chunks <- function(x, k) {
+                if (k <= 0) return(list(x))
+                split(x, ceiling(seq_along(x) / k))
+            }
+            chunks <- split_chunks(seeds, chunk_size)
+            threads_per_worker <- max(1L, floor(n_threads / max(1L, as.integer(config$aggr_future_workers))))
+
+            worker_fun <- function(ss) {
+                if (use_networkit_leiden) {
+                    .networkit_parallel_leiden_runs_2(
+                        vertex_names = vertex_names,
+                        edge_table = edge_pairs,
+                        edge_weights = edge_weights,
+                        gamma = as.numeric(res_param),
+                        iterations = as.integer(config$nk_leiden_iterations),
+                        randomize = isTRUE(config$nk_leiden_randomize),
+                        threads = threads_per_worker,
+                        seeds = as.integer(ss)
+                    )
+                } else {
+                    .networkit_plm_runs_2(
+                        vertex_names = vertex_names,
+                        edge_table = edge_pairs,
+                        edge_weights = edge_weights,
+                        gamma = as.numeric(res_param),
+                        refine = TRUE,
+                        threads = threads_per_worker,
+                        seeds = as.integer(ss)
+                    )
+                }
+            }
+            membership_blocks <- if (config$aggr_future_workers > 1L) {
+                future.apply::future_lapply(chunks, worker_fun, future.seed = TRUE)
+            } else {
+                lapply(chunks, worker_fun)
+            }
+            restart_memberships <- do.call(cbind, membership_blocks)
         } else {
             .cluster_message_2(verbose, "[cluster]   Stage-1 backend: igraph (", algo_per_run, ")")
             # Aggressive mode no longer falls back to igraph; the original igraph fallback is retained below for reference.
@@ -1531,33 +1543,61 @@
     stage1_backend <- stage1$stage1_backend %||% "igraph"
     stage1_algo_effective <- stage1$stage1_algo_per_run %||% stage1$stage1_algo %||% config$algo
 
-    large_n_threshold <- if (is.null(config$large_n_threshold)) length(kept_genes) else as.integer(config$large_n_threshold)
-    stage2_consensus_min_size <- max(2L, as.integer(config$stage2_consensus_min_size %||% 3L))
-    stage2_aggressive_min_size <- max(stage2_consensus_min_size, as.integer(config$stage2_aggressive_min_size %||% 500L))
-
     stage2_algo_final <- tryCatch({
         if (is.null(config$stage2_algo)) config$algo else match.arg(config$stage2_algo, c("leiden", "louvain", "hotspot-like"))
     }, error = function(e) config$algo)
     .cluster_message_2(verbose, "[cluster]   Stage-2 base algorithm: ", stage2_algo_final)
-    mode_flag_aggressive <- identical(config$mode, "aggressive") || identical(stage1_mode_selected, "aggressive")
-    global_nodes <- length(kept_genes)
-    if (!is.null(config$stage2_algo)) {
-        stage2_backend <- if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
-        stage2_backend_force_networkit <- FALSE
-    } else if (identical(stage2_algo_final, "hotspot-like")) {
-        stage2_backend <- "hotspot"
-        stage2_backend_force_networkit <- FALSE
+    stage2_backend <- if (!is.null(config$stage2_algo)) {
+        if (identical(stage2_algo_final, "hotspot-like")) "hotspot" else "igraph"
     } else {
-        stage2_backend_force_networkit <- mode_flag_aggressive || global_nodes >= large_n_threshold || identical(stage1_backend, "networkit")
-        stage2_backend <- if (stage2_backend_force_networkit) "networkit" else "igraph"
+        if (identical(stage2_algo_final, "hotspot-like")) {
+            "hotspot"
+        } else if (identical(stage1_backend, "networkit")) {
+            "networkit"
+        } else {
+            "igraph"
+        }
     }
-    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot") && !isTRUE(stage2_backend_force_networkit)) {
+    if (isTRUE(config$prefer_fast) && !identical(stage2_backend, "hotspot")) {
         stage2_backend <- "igraph"
     }
     .cluster_message_2(verbose, "[cluster]   Stage-2 target backend: ", stage2_backend)
 
     if (!config$use_mh_weight && !config$CI95_filter) {
         .cluster_message_2(verbose, "[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
+        if (length(stage1_membership_labels) && length(kept_genes)) {
+            stage1_mem <- stage1_membership_labels
+            if (!is.null(names(stage1_mem))) {
+                stage1_mem <- stage1_mem[kept_genes]
+            } else if (length(stage1_mem) == length(kept_genes)) {
+                names(stage1_mem) <- kept_genes
+            } else {
+                stage1_mem <- setNames(rep(NA_integer_, length(kept_genes)), kept_genes)
+            }
+            stage1_mem <- as.integer(stage1_mem)
+            names(stage1_mem) <- kept_genes
+            sim_stage1 <- stage1$similarity_sub %||% stage1$A_sub
+            if (!is.null(sim_stage1)) {
+                if (!identical(rownames(sim_stage1), kept_genes)) {
+                    sim_stage1 <- sim_stage1[kept_genes, kept_genes, drop = FALSE]
+                }
+                min_cluster_keep <- max(1L, as.integer(config$min_cluster_size %||% 2L))
+                pruned <- .prune_unstable_memberships_2(
+                    memberships = stage1_mem,
+                    L_matrix = sim_stage1,
+                    min_cluster_size = min_cluster_keep
+                )
+                stage1_mem <- pruned$membership
+                idx_valid <- which(!is.na(stage1_mem))
+                if (length(idx_valid)) {
+                    unique_ids <- sort(unique(stage1_mem[idx_valid]))
+                    id_map <- setNames(seq_along(unique_ids), unique_ids)
+                    stage1_mem[idx_valid] <- as.integer(id_map[as.character(stage1_mem[idx_valid])])
+                }
+                names(stage1_mem) <- kept_genes
+                stage1_membership_labels <- stage1_mem
+            }
+        }
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
@@ -1730,17 +1770,12 @@
     use_consensus <- isTRUE(config$use_consensus)
     consensus_thr <- config$consensus_thr
     n_restart <- max(1L, as.integer(config$n_restart))
-    raw_stage2_restarts <- config$n_restart_stage2
-    if (is.null(raw_stage2_restarts) || is.na(raw_stage2_restarts) || !is.finite(raw_stage2_restarts)) {
-        n_restart_stage2 <- n_restart
-    } else {
-        n_restart_stage2 <- max(1L, as.integer(raw_stage2_restarts))
-    }
     n_threads <- if (is.null(config$n_threads)) 1L else max(1L, as.integer(config$n_threads))
     objective <- config$objective
     res_param_base <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
     if (!is.finite(res_param_base)) res_param_base <- 1
     mode_setting <- config$mode
+    large_n_threshold <- if (is.null(config$large_n_threshold)) length(kept_genes) else as.integer(config$large_n_threshold)
     aggr_future_workers <- if (is.null(config$aggr_future_workers)) 1L else max(1L, as.integer(config$aggr_future_workers))
     aggr_batch_size <- config$aggr_batch_size
     nk_leiden_iterations <- if (is.null(config$nk_leiden_iterations)) 10L else as.integer(config$nk_leiden_iterations)
@@ -1793,7 +1828,9 @@
                     dimnames = list(names(memb_sub), names(memb_sub)))
             }
         } else {
-            size_sub <- length(genes_c)
+            mode_sub <- if (identical(mode_setting, "auto")) {
+                if (length(genes_c) > large_n_threshold) "aggressive" else stage1_mode_selected
+            } else stage1_mode_selected
             algo_per_run_sub <- stage2_algo_final
             nk_inputs_sub <- .nk_prepare_graph_input_2(g_sub)
             g_sub <- nk_inputs_sub$graph
@@ -1802,53 +1839,60 @@
             vertex_names_sub <- nk_inputs_sub$vertex_names
             res_param_sub <- res_param_base
 
-            force_networkit_sub <- size_sub >= large_n_threshold
-            force_aggressive_sub <- size_sub >= stage2_aggressive_min_size
-            backend_sub <- if (identical(stage2_backend, "networkit") || force_networkit_sub || force_aggressive_sub) "networkit" else "igraph"
+            backend_sub <- if (identical(stage2_backend, "networkit")) "networkit" else "igraph"
             if (backend_sub == "networkit" && !stage2_algo_final %in% c("leiden", "louvain")) {
                 backend_sub <- "igraph"
             }
-            if (isTRUE(config$prefer_fast) && !force_aggressive_sub && !force_networkit_sub) backend_sub <- "igraph"
-            if (force_aggressive_sub && backend_sub != "networkit" && .nk_available_2()) {
-                backend_sub <- "networkit"
-            }
+            if (isTRUE(config$prefer_fast)) backend_sub <- "igraph"
             if (backend_sub == "networkit" && !.nk_available_2()) {
                 stop("Stage-2 NetworKit backend requested but NetworKit is unavailable.", call. = FALSE)
             }
 
-            multi_restart_sub <- size_sub >= stage2_consensus_min_size
-            if (force_aggressive_sub) multi_restart_sub <- TRUE
-            n_restart_sub <- if (multi_restart_sub) n_restart_stage2 else 1L
-
             if (backend_sub == "networkit") {
-                seeds <- seq_len(n_restart_sub)
-                if (!length(seeds)) seeds <- 1L
-                threads_networkit <- max(1L, as.integer(n_threads))
-                memb_mat_sub <- if (identical(stage2_algo_final, "leiden")) {
-                    .nk_parallel_leiden_mruns_2(
-                        vertex_names = vertex_names_sub,
-                        edge_table = el,
-                        edge_weights = ew,
-                        gamma = as.numeric(res_param_sub),
-                        iterations = nk_leiden_iterations,
-                        randomize = nk_leiden_randomize,
-                        threads = threads_networkit,
-                        seeds = seeds
-                    )
-                } else {
-                    .nk_plm_mruns_2(
-                        vertex_names = vertex_names_sub,
-                        edge_table = el,
-                        edge_weights = ew,
-                        gamma = as.numeric(res_param_sub),
-                        refine = TRUE,
-                        threads = threads_networkit,
-                        seeds = seeds
-                    )
+                seeds <- seq_len(n_restart)
+                chunk_size <- aggr_batch_size
+                if (is.null(chunk_size) || chunk_size <= 0) {
+                    chunk_size <- ceiling(n_restart / max(1L, aggr_future_workers))
                 }
+                split_chunks <- function(x, k) {
+                    if (k <= 0) return(list(x))
+                    split(x, ceiling(seq_along(x) / k))
+                }
+                chunks <- split_chunks(seeds, chunk_size)
+                threads_per_worker <- max(1L, floor(n_threads / max(1L, aggr_future_workers)))
+                worker_fun <- function(ss) {
+                    if (identical(stage2_algo_final, "leiden")) {
+                        .nk_parallel_leiden_mruns_2(
+                            vertex_names = vertex_names_sub,
+                            edge_table = el,
+                            edge_weights = ew,
+                            gamma = as.numeric(res_param_sub),
+                            iterations = nk_leiden_iterations,
+                            randomize = nk_leiden_randomize,
+                            threads = threads_per_worker,
+                            seeds = as.integer(ss)
+                        )
+                    } else {
+                        .nk_plm_mruns_2(
+                            vertex_names = vertex_names_sub,
+                            edge_table = el,
+                            edge_weights = ew,
+                            gamma = as.numeric(res_param_sub),
+                            refine = TRUE,
+                            threads = threads_per_worker,
+                            seeds = as.integer(ss)
+                        )
+                    }
+                }
+                memb_blocks <- if (aggr_future_workers > 1L) {
+                    future.apply::future_lapply(chunks, worker_fun, future.seed = TRUE)
+                } else {
+                    lapply(chunks, worker_fun)
+                }
+                memb_mat_sub <- do.call(cbind, memb_blocks)
             } else {
                 memb_mat_sub <- future.apply::future_sapply(
-                    seq_len(n_restart_sub),
+                    seq_len(n_restart),
                     function(ii) {
                         g_local <- igraph::graph_from_data_frame(
                             cbind(el, weight = ew),
@@ -1871,10 +1915,8 @@
             }
             rownames(memb_mat_sub) <- igraph::V(g_sub)$name
 
-            use_consensus_sub <- use_consensus && multi_restart_sub
-            if (!use_consensus_sub) {
-                skip_reason <- sprintf("size<%d", stage2_consensus_min_size)
-                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus skipped (", skip_reason, ")")
+            if (!use_consensus) {
+                .cluster_message_2(verbose, "[cluster]   Stage-2 consensus backend: single-run (no aggregation)")
                 memb_sub <- memb_mat_sub[, 1]
                 labs <- as.integer(memb_sub)
                 n_loc <- length(labs)
@@ -1994,7 +2036,7 @@
             ew <- igraph::E(g_sub)$weight
             el <- igraph::as_data_frame(g_sub, what = "edges")[, c("from", "to")]
             memb_mat_sub <- future.apply::future_sapply(
-                seq_len(min(n_restart_stage2, 50)),
+                seq_len(min(n_restart, 50)),
                 function(ii) {
                     g_local <- igraph::graph_from_data_frame(cbind(el, weight = ew), directed = FALSE, vertices = igraph::V(g_sub)$name)
                     res <- .run_graph_algorithm_2(
@@ -2190,13 +2232,13 @@
 #' @param graph_slot_name Stats-layer slot to store consensus graph.
 #' @param n_restart Number of Stage-1 restarts.
 #' @param consensus_thr Consensus threshold applied to co-occurrence matrix.
-#' @param n_restart_stage2 Optional Stage-2 restarts (defaults to Stage-1 count when `NULL`).
 #' @param keep_cross_stable Logical; retain cross-cluster stable edges.
-#' @param CI95_filter Logical; enable CI95-based edge filtering.
-#' @param curve_layer Name of curve layer for CI95 filtering.
-#' @param CI_rule Rule applied to CI95 mask (`"remove_within"` or `"remove_outside"`).
-#' @param use_mh_weight Logical; enable Morisita-Horn weighting.
-#' @param mh_slot Slot containing MH weights (aliases `cmh_slot`).
+#' @param CI95_filter Deprecated logical toggle for CI filtering (use `CI_rule`; kept for backward compatibility).
+#' @param CI_rule Rule applied to the CI95 mask (`"remove_within"`/`"remove_outside"`); set `NULL` to disable.
+#' @param curve_layer Name of curve layer used when CI filtering is enabled.
+#' @param use_mh_weight Logical; enable Morisita-Horn weighting (defaults to `NULL`, inferred from `mh_slot` / `cmh_slot`).
+#' @param mh_slot Slot containing MH weights (aliases `cmh_slot`); set `NULL` to skip MH-based corrections.
+#' @param cmh_slot Optional alias for `mh_slot`; defaults to `NULL`.
 #' @param K Desired number of modules when `algo = "hotspot-like"`.
 #' @param min_module_size Minimum module size for hotspot-like clustering.
 #' @param post_smooth Logical; smooth corrected weights.
@@ -2210,8 +2252,6 @@
 #' @param sub_conductance_min Minimum conductance to trigger splitting.
 #' @param sub_improve_within_cons_min Minimum improvement required to accept split.
 #' @param sub_max_groups Maximum resulting subclusters per parent.
-#' @param stage2_consensus_min_size Minimum Stage-2 cluster size that triggers consensus/multi-restart.
-#' @param stage2_aggressive_min_size Minimum Stage-2 cluster size that forces aggressive behavior (NetworKit + multi-restart).
 #' @param enable_qc_filter Logical; enable QC-based gene pruning.
 #' @param qc_gene_intra_cons_min Minimum within-consensus for genes.
 #' @param qc_gene_best_out_cons_min Maximum best-out consensus for genes.
@@ -2224,9 +2264,9 @@
 #' @param ncores Parallel threads for consensus routines.
 #' @param mode Clustering mode (`"auto"`, `"safe"`, `"aggressive"`, `"fast"`).
 #' @param large_n_threshold Node threshold for switching to aggressive mode.
-#' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit (Python) runtime configuration (legacy option names).
-#' @param nk_leiden_iterations Iterations for the NetworKit ParallelLeiden backend (legacy option name).
-#' @param nk_leiden_randomize Logical; whether to randomize NetworKit ParallelLeiden (legacy option name).
+#' @param nk_condaenv/nk_conda_bin/nk_python Optional NetworKit configuration.
+#' @param nk_leiden_iterations Iterations for NetworKit Leiden backend.
+#' @param nk_leiden_randomize Logical; randomize NetworKit Leiden.
 #' @param aggr_future_workers Future workers for batched restarts.
 #' @param aggr_batch_size Batch size for restart aggregation.
 #' @param future_globals_min_bytes Minimum `future.globals.maxSize` (bytes) to request;
@@ -2263,16 +2303,15 @@ clusterGenes_2 <- function(
     graph_slot_name = "g_consensus",
     n_restart = 100,
     consensus_thr = 0.95,
-    n_restart_stage2 = NULL,
     K = NULL,
     min_module_size = 5,
-    CI95_filter = FALSE,
-    curve_layer = "LR_curve",
-    CI_rule = c("remove_within", "remove_outside"),
-    use_mh_weight = FALSE,
+    CI95_filter = NULL,
+    CI_rule = NULL,
+    curve_layer = NULL,
+    use_mh_weight = NULL,
     use_cmh_weight = NULL,
     mh_slot = NULL,
-    cmh_slot = "g_morisita",
+    cmh_slot = NULL,
     post_smooth = TRUE,
     post_smooth_quant = c(0.05, 0.95),
     post_smooth_power = 0.5,
@@ -2284,8 +2323,6 @@ clusterGenes_2 <- function(
     sub_conductance_min = 0.6,
     sub_improve_within_cons_min = 0.07,
     sub_max_groups = 3,
-    stage2_consensus_min_size = 3,
-    stage2_aggressive_min_size = 500,
     enable_qc_filter = TRUE,
     qc_gene_intra_cons_min = 0.25,
     qc_gene_best_out_cons_min = 0.6,
@@ -2314,7 +2351,11 @@ clusterGenes_2 <- function(
     }
     algo <- match.arg(algo)
     objective <- match.arg(objective)
-    CI_rule <- match.arg(CI_rule)
+    valid_ci_rules <- c("remove_within", "remove_outside")
+    ci_rule_value <- NULL
+    if (!is.null(CI_rule) && length(CI_rule)) {
+        ci_rule_value <- match.arg(CI_rule, valid_ci_rules)
+    }
     mode <- match.arg(mode)
 
     if (!is.null(lee_stats_layer)) stats_layer <- lee_stats_layer
@@ -2323,6 +2364,42 @@ clusterGenes_2 <- function(
     if (!is.null(FDR_max)) significance_max <- FDR_max
     if (!is.null(use_cmh_weight)) use_mh_weight <- use_cmh_weight
     if (!is.null(cmh_slot)) mh_slot <- cmh_slot
+    normalize_name <- function(val) {
+        if (is.null(val)) return(NULL)
+        val <- as.character(val)[1]
+        if (is.na(val) || !nzchar(val)) return(NULL)
+        val
+    }
+    mh_slot <- normalize_name(mh_slot)
+    curve_layer <- normalize_name(curve_layer)
+    auto_mh <- !is.null(mh_slot)
+    auto_curve <- !is.null(curve_layer)
+    if (is.null(use_mh_weight)) {
+        use_mh_weight <- auto_mh
+    } else {
+        use_mh_weight <- isTRUE(use_mh_weight)
+        if (use_mh_weight && !auto_mh) {
+            stop("mh_slot must be provided when enabling MH weighting.")
+        }
+    }
+    if (!use_mh_weight) {
+        mh_slot <- NULL
+        auto_mh <- FALSE
+    }
+    if (is.null(ci_rule_value) && !is.null(CI95_filter)) {
+        if (isTRUE(CI95_filter)) {
+            warning("CI95_filter is deprecated; please specify CI_rule instead.", call. = FALSE)
+            ci_rule_value <- "remove_within"
+        }
+    }
+    CI95_filter_flag <- !is.null(ci_rule_value)
+    if (CI95_filter_flag && !auto_curve) {
+        stop("curve_layer must be provided when specifying CI_rule.")
+    }
+    if (!CI95_filter_flag) {
+        curve_layer <- NULL
+        auto_curve <- FALSE
+    }
     if (!is.null(stage2_algo) && length(stage2_algo) == 1L && identical(tolower(stage2_algo), "hotspot")) {
         stage2_algo <- "hotspot-like"
     }
@@ -2345,7 +2422,6 @@ clusterGenes_2 <- function(
         use_consensus = use_consensus,
         consensus_thr = consensus_thr,
         n_restart = n_restart,
-        n_restart_stage2 = n_restart_stage2,
         n_threads = ncores,
         mode = mode,
         large_n_threshold = large_n_threshold,
@@ -2361,16 +2437,14 @@ clusterGenes_2 <- function(
         sub_conductance_min = sub_conductance_min,
         sub_improve_within_cons_min = sub_improve_within_cons_min,
         sub_max_groups = sub_max_groups,
-        stage2_consensus_min_size = stage2_consensus_min_size,
-        stage2_aggressive_min_size = stage2_aggressive_min_size,
         enable_qc_filter = enable_qc_filter,
         qc_gene_intra_cons_min = qc_gene_intra_cons_min,
         qc_gene_best_out_cons_min = qc_gene_best_out_cons_min,
         qc_gene_intra_weight_q = qc_gene_intra_weight_q,
         keep_cross_stable = keep_cross_stable,
         min_cluster_size = min_cluster_size,
-        CI95_filter = CI95_filter,
-        CI_rule = CI_rule,
+        CI95_filter = CI95_filter_flag,
+        CI_rule = ci_rule_value,
         curve_layer = curve_layer,
         similarity_slot = similarity_slot,
         significance_slot = significance_slot,
