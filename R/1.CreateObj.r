@@ -1896,7 +1896,7 @@ build_scope_from_visium_seurat <- function(input_dir,
         tissue_hires_scalef = hires_scalef,
         tissue_lowres_scalef = lowres_scalef,
         spot_diameter_fullres = spot_diameter_px,
-        y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
+        y_origin = "top-left"
     )
 
     sf_lookup <- list(
@@ -1905,7 +1905,7 @@ build_scope_from_visium_seurat <- function(input_dir,
     )
     y_origin_img <- scope_obj@grid[[grid_name]]$image_info$y_origin
     if (is.null(y_origin_img)) {
-        y_origin_img <- if (isTRUE(flip_y)) "bottom-left" else "top-left"
+        y_origin_img <- "top-left"
     }
     safe_attach_histology <- function(scope_obj,
                                       level,
