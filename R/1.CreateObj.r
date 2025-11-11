@@ -833,7 +833,11 @@
             counts = cnt,
             grid_length = lg,
             xbins_eff = length(x_breaks) - 1L,
-            ybins_eff = length(y_breaks) - 1L
+            ybins_eff = length(y_breaks) - 1L,
+            histology = list(
+                lowres = NULL,
+                hires = NULL
+            )
         )
     }
     if (p$verbose) message(log_prefix, " Grid construction finished.")
@@ -1837,7 +1841,17 @@ build_scope_from_visium_seurat <- function(input_dir,
         visium_orientation = ori$orientation,
         visium_orientation_horiz_frac = ori$horiz_frac,
         visium_orientation_vert_frac = ori$vert_frac,
-        visium_orientation_tol_deg = ori$tol_deg
+        visium_orientation_tol_deg = ori$tol_deg,
+        histology = list(
+            lowres = NULL,
+            hires = NULL
+        )
+    )
+    roi_bbox <- c(
+        xmin = min(grid_dt$xmin, na.rm = TRUE),
+        xmax = max(grid_dt$xmax, na.rm = TRUE),
+        ymin = min(grid_dt$ymin, na.rm = TRUE),
+        ymax = max(grid_dt$ymax, na.rm = TRUE)
     )
 
     image_candidates_hires <- c(
@@ -1884,6 +1898,41 @@ build_scope_from_visium_seurat <- function(input_dir,
         spot_diameter_fullres = spot_diameter_px,
         y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
     )
+
+    sf_lookup <- list(
+        hires = suppressWarnings(as.numeric(hires_scalef)),
+        lowres = suppressWarnings(as.numeric(lowres_scalef))
+    )
+    y_origin_img <- scope_obj@grid[[grid_name]]$image_info$y_origin
+    if (is.null(y_origin_img)) {
+        y_origin_img <- if (isTRUE(flip_y)) "bottom-left" else "top-left"
+    }
+    safe_attach_histology <- function(scope_obj,
+                                      level,
+                                      path) {
+        if (is.null(path) || is.na(path)) return(scope_obj)
+        tryCatch(
+            attach_histology(
+                scope_obj = scope_obj,
+                grid_name = grid_name,
+                png_path = path,
+                json_path = sf_path,
+                level = level,
+                roi_bbox = roi_bbox,
+                scalefactors = sf_lookup,
+                y_origin = y_origin_img
+            ),
+            error = function(e) {
+                if (isTRUE(verbose)) {
+                    message(log_prefix, " Histology attach (", level, ") skipped: ", conditionMessage(e))
+                }
+                scope_obj
+            }
+        )
+    }
+    scope_obj <- safe_attach_histology(scope_obj, "hires", if (is.na(hires_path)) NULL else hires_path)
+    scope_obj <- safe_attach_histology(scope_obj, "lowres", if (is.na(lowres_path)) NULL else lowres_path)
+
     if (!is.null(sct_mat)) {
         scope_obj@grid[[grid_name]]$SCT <- t(sct_mat)
     }
@@ -2069,7 +2118,7 @@ createSCOPE <- function(data_dir = NULL,
 #'   the recorded platform tag in `scope_obj` (`meta.data$platform` or
 #'   `stats$platform`). You may also force the backend by providing `platform`,
 #'   or by supplying a generic `data_dir`/`input_dir` that mirrors the
-#'   `createSCOPE()` 入口参数。
+#'   the `createSCOPE()` entry point parameters.
 #' @param scope_obj A `scope_object` with centroids loaded.
 #' @param data_dir Optional generic directory pointing to single-cell outputs
 #'        (alias for `xenium_dir`/`cosmx_root`; when provided the function will
