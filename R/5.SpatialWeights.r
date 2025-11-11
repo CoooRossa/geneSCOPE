@@ -21,8 +21,9 @@
 #' @param verbose Logical toggle for progress messages.
 #' @param topology Character flag controlling the neighbourhood lattice.
 #'   `"auto"` inspects the grid geometry and platform metadata to decide
-#'   between queen/rook/hex variants。`"fuzzy"` 在生成 Queen 邻接的基础上，
-#'   额外存储一份行归一化后的矩阵以支持模糊扩散分析。
+#'   between queen/rook/hex variants。`"fuzzy_queen"` 在生成 Queen 邻接的基础上，
+#'   额外存储一份行归一化后的矩阵以支持模糊扩散分析；`"fuzzy_hex"` 则在
+#'   六边形拓扑上执行相同的模糊扩散准备。
 #'
 #' @return Invisibly returns the modified \code{scope_object}.
 #'
@@ -37,10 +38,14 @@ computeWeights <- function(scope_obj,
                            zero_policy = TRUE,
                            store_listw = TRUE,
                            verbose = TRUE,
-                           topology = c("auto", "queen", "rook", "hex", "fuzzy")) {
+                           topology = c("auto", "queen", "rook", "hex", "fuzzy_queen", "fuzzy_hex")) {
   topology <- match.arg(topology)
-  use_fuzzy <- identical(topology, "fuzzy")
-  topo_arg <- if (use_fuzzy) "queen" else topology
+  use_fuzzy <- grepl("^fuzzy", topology)
+  topo_arg <- if (use_fuzzy) {
+    if (identical(topology, "fuzzy_hex")) "hex" else "queen"
+  } else {
+    topology
+  }
   if (verbose) message("[geneSCOPE::computeWeights] Computing spatial weights for grid layer")
 
   guard <- .spw_thread_guard()
@@ -88,15 +93,16 @@ computeWeights <- function(scope_obj,
 
   if (use_fuzzy) {
     if (!store_mat) {
-      stop("Fuzzy queen topology requires store_mat = TRUE to retain the adjacency matrix.")
+      stop("Fuzzy ", topo_arg, " topology requires store_mat = TRUE to retain the adjacency matrix.")
     }
     W_base <- scope_obj@grid[[grid_name]]$W
     scope_obj@grid[[grid_name]]$fuzzy <- list(
+      base_topology = topo_arg,
       W_binary = W_base,
       W_row_normalised = .row_normalize_sparse(W_base)
     )
     if (verbose) {
-      message("[geneSCOPE::computeWeights] Stored queen weights in grid[['W']] and fuzzy weights under grid[['fuzzy']].")
+      message("[geneSCOPE::computeWeights] Stored ", topo_arg, " weights in grid[['W']] and fuzzy weights under grid[['fuzzy']].")
     }
   }
 
