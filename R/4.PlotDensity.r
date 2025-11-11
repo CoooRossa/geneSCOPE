@@ -6,6 +6,19 @@
 #' @param density1_name,density2_name Column names to plot.
 #' @param palette1,palette2 Color palettes for density1 and density2.
 #' @param alpha1,alpha2 Alpha transparency for density layers.
+#' @param tile_shape Shape used to render each grid tile: "square", "circle", or "hex".
+#' @param hex_orientation Orientation for hex tiles ("flat" = flat-top, "pointy" = pointy-top).
+#' @param aspect_ratio Optional numeric width/height ratio to enforce for the grid axes;
+#'        when `NULL`, the raw `grid_info` extents are used (no forced square padding).
+#' @param scale_bar_pos Optional numeric vector (x,y) with fractional offsets for the scale bar
+#'        relative to the plotting window (0 = left/bottom, 1 = right/top).
+#' @param scale_bar_show Logical toggle controlling whether the scale bar is drawn.
+#' @param scale_bar_colour Colour used for the scale bar line and text (default black).
+#' @param scale_bar_corner Corner preset for the scale bar when `scale_bar_pos` is not supplied;
+#'        choices are "bottom-left", "bottom-right", "top-left", "top-right".
+#' @param use_histology Logical; overlay histology stored on the grid when available.
+#' @param histology_level Which histology slot ("lowres" or "hires") to prioritise.
+#' @param axis_mode Coordinate space for the plot: `"grid"` (microns) or `"image"` (pixels).
 #' @param seg_type Segmentation overlay type: "cell", "nucleus", or "both".
 #' @param colour_cell,colour_nucleus Colors for cell and nucleus segmentation.
 #' @param alpha_seg Alpha transparency for segmentation overlay.
@@ -32,6 +45,16 @@ plotDensity <- function(scope_obj,
                         palette2 = "#4753f8",
                         alpha1 = 0.5,
                         alpha2 = 0.5,
+                        tile_shape = c("square", "circle", "hex"),
+                        hex_orientation = c("flat", "pointy"),
+                        aspect_ratio = NULL,
+                        scale_bar_pos = NULL,
+                        scale_bar_show = TRUE,
+                        scale_bar_colour = "black",
+                        scale_bar_corner = c("bottom-left", "bottom-right", "top-left", "top-right"),
+                        use_histology = TRUE,
+                        histology_level = c("lowres", "hires"),
+                        axis_mode = c("grid", "image"),
                         overlay_image = FALSE,
                         image_path = NULL,
                         image_alpha = 0.6,
@@ -49,8 +72,19 @@ plotDensity <- function(scope_obj,
                         max.cutoff1 = 1,
                         max.cutoff2 = 1,
                         legend_digits = 1) {
+    tile_shape <- match.arg(tile_shape)
+    hex_orientation <- match.arg(hex_orientation)
+    scale_bar_corner <- match.arg(scale_bar_corner)
     seg_type <- match.arg(seg_type)
     image_choice <- match.arg(image_choice)
+    histology_level <- match.arg(histology_level)
+    axis_mode_requested <- match.arg(axis_mode)
+    target_aspect_ratio <- if (!is.null(aspect_ratio)) as.numeric(aspect_ratio) else NULL
+    if (!is.null(target_aspect_ratio)) {
+        if (!is.finite(target_aspect_ratio) || target_aspect_ratio <= 0) {
+            target_aspect_ratio <- NULL
+        }
+    }
     accuracy_val <- 1 / (10^legend_digits)
 
     ## ------------------------------------------------------------------ 1
@@ -61,6 +95,104 @@ plotDensity <- function(scope_obj,
     if (is.null(grid_info) ||
         !all(c("grid_id", "xmin", "xmax", "ymin", "ymax") %in% names(grid_info))) {
         stop("grid_info is missing required columns for layer '", grid_layer_name, "'.")
+    }
+    default_roi <- c(
+        xmin = suppressWarnings(min(grid_info$xmin, na.rm = TRUE)),
+        xmax = suppressWarnings(max(grid_info$xmax, na.rm = TRUE)),
+        ymin = suppressWarnings(min(grid_info$ymin, na.rm = TRUE)),
+        ymax = suppressWarnings(max(grid_info$ymax, na.rm = TRUE))
+    )
+    x_rng_phys <- range(grid_info$xmin, grid_info$xmax, na.rm = TRUE)
+    y_rng_phys <- range(grid_info$ymin, grid_info$ymax, na.rm = TRUE)
+    if (any(!is.finite(x_rng_phys))) x_rng_phys <- c(0, 1)
+    if (any(!is.finite(y_rng_phys))) y_rng_phys <- c(0, 1)
+    if (any(!is.finite(default_roi))) {
+        default_roi <- c(xmin = 0, xmax = 1, ymin = 0, ymax = 1)
+    }
+    image_info <- g_layer$image_info
+    y_origin <- if (!is.null(image_info) && !is.null(image_info$y_origin)) {
+        image_info$y_origin
+    } else {
+        "top-left"
+    }
+    histology_slot <- NULL
+    if (isTRUE(use_histology) && !is.null(g_layer$histology)) {
+        histology_slot <- g_layer$histology[[histology_level]]
+        if (is.null(histology_slot)) {
+            available <- Filter(function(x) !is.null(x), g_layer$histology)
+            if (length(available)) histology_slot <- available[[1]]
+        }
+    }
+    histology_available <- !is.null(histology_slot) && !is.null(histology_slot$png)
+    histology_y_origin <- if (!is.null(histology_slot$y_origin)) {
+        histology_slot$y_origin
+    } else if (!is.null(image_info$y_origin)) {
+        image_info$y_origin
+    } else {
+        "top-left"
+    }
+    flip_histology_y <- !identical(histology_y_origin, "bottom-left")
+    histology_roi <- if (histology_available && !is.null(histology_slot$roi_bbox)) {
+        histology_slot$roi_bbox
+    } else {
+        default_roi
+    }
+    histology_ready <- histology_available &&
+        !is.null(histology_roi) &&
+        all(is.finite(histology_roi)) &&
+        is.finite(histology_slot$width) &&
+        is.finite(histology_slot$height)
+    axis_mode <- axis_mode_requested
+    if (identical(axis_mode_requested, "image")) {
+        if (!histology_ready) {
+            warning("axis_mode = 'image' requires histology with ROI metadata; reverting to grid axes.")
+            axis_mode <- "grid"
+        }
+    } else {
+        axis_mode <- "grid"
+    }
+    use_image_coords <- identical(axis_mode, "image")
+    mpp_fullres <- if (!is.null(g_layer$microns_per_pixel)) {
+        as.numeric(g_layer$microns_per_pixel)
+    } else {
+        NA_real_
+    }
+    prepare_rgba <- function(img, alpha_scale = 1) {
+        if (is.null(img)) return(NULL)
+        alpha_scale <- max(0, min(1, alpha_scale))
+        dims <- dim(img)
+        if (length(dims) == 2L) {
+            out <- array(1, dim = c(dims[1], dims[2], 4L))
+            out[, , 1] <- img
+            out[, , 2] <- img
+            out[, , 3] <- img
+            out[, , 4] <- alpha_scale
+            return(out)
+        }
+        if (length(dims) == 3L && dims[3] == 3L) {
+            out <- array(1, dim = c(dims[1], dims[2], 4L))
+            out[, , 1:3] <- img
+            out[, , 4] <- alpha_scale
+            return(out)
+        }
+        if (length(dims) == 3L && dims[3] == 4L) {
+            out <- img
+            out[, , 4] <- pmin(1, pmax(0, out[, , 4] * alpha_scale))
+            return(out)
+        }
+        stop("Unsupported histology image dimensions.")
+    }
+    flip_raster_vertical <- function(img) {
+        dims <- dim(img)
+        if (is.null(dims) || length(dims) < 2L) return(img)
+        row_idx <- seq.int(dims[1], 1)
+        if (length(dims) == 2L) {
+            return(img[row_idx, , drop = FALSE])
+        }
+        if (length(dims) == 3L) {
+            return(img[row_idx, , , drop = FALSE])
+        }
+        img
     }
 
     ## ------------------------------------------------------------------ 2
@@ -104,6 +236,39 @@ plotDensity <- function(scope_obj,
 
     heat1 <- build_heat(density1_name, max.cutoff1)
     heat2 <- if (!is.null(density2_name)) build_heat(density2_name, max.cutoff2)
+    if (use_image_coords) {
+        roi <- histology_roi
+        width_px <- histology_slot$width
+        height_px <- histology_slot$height
+        rx <- roi["xmax"] - roi["xmin"]
+        ry <- roi["ymax"] - roi["ymin"]
+        phys_to_img <- function(vals, axis = c("x", "y")) {
+            axis <- match.arg(axis)
+            if (axis == "x") {
+                (vals - roi["xmin"]) / rx * width_px
+            } else {
+                if (flip_histology_y) {
+                    (1 - (vals - roi["ymin"]) / ry) * height_px
+                } else {
+                    (vals - roi["ymin"]) / ry * height_px
+                }
+            }
+        }
+        transform_heat <- function(df) {
+            if (!nrow(df) || !is.finite(rx) || !is.finite(ry) || rx == 0 || ry == 0) return(df)
+            x1 <- phys_to_img(df$xmin, axis = "x")
+            x2 <- phys_to_img(df$xmax, axis = "x")
+            y1 <- phys_to_img(df$ymin, axis = "y")
+            y2 <- phys_to_img(df$ymax, axis = "y")
+            df$xmin <- pmin(x1, x2)
+            df$xmax <- pmax(x1, x2)
+            df$ymin <- pmin(y1, y2)
+            df$ymax <- pmax(y1, y2)
+            df
+        }
+        heat1 <- transform_heat(heat1)
+        if (!is.null(heat2)) heat2 <- transform_heat(heat2)
+    }
 
     ## ------------------------------------------------------------------ 3
     ## tile geometry (centre & size)
@@ -111,19 +276,116 @@ plotDensity <- function(scope_obj,
         transform(df,
             x = (xmin + xmax) / 2,
             y = (ymin + ymax) / 2,
-            w = xmax - xmin,
-            h = ymax - ymin
+            w = pmax(0, xmax - xmin),
+            h = pmax(0, ymax - ymin)
         )
+    }
+
+    build_shape_geom <- function(df, alpha_val) {
+        if (!nrow(df)) return(list())
+        if (identical(tile_shape, "square")) {
+            list(geom_tile(
+                data = df,
+                aes(x = x, y = y, width = w, height = h, fill = d),
+                colour = NA, alpha = alpha_val
+            ))
+        } else if (identical(tile_shape, "circle")) {
+            circ_df <- transform(df, radius = pmax(pmin(w, h), .Machine$double.eps) / 2)
+            list(ggforce::geom_circle(
+                data = circ_df,
+                aes(x0 = x, y0 = y, r = radius, fill = d),
+                colour = NA,
+                alpha = alpha_val,
+                inherit.aes = FALSE
+            ))
+        } else if (identical(tile_shape, "hex")) {
+            hex_df <- transform(df,
+                radius = pmax(pmin(w, h), .Machine$double.eps) / 2,
+                sides = 6L,
+                angle = if (identical(hex_orientation, "pointy")) pi / 6 else 0
+            )
+            list(ggforce::geom_regon(
+                data = hex_df,
+                aes(x0 = x, y0 = y, r = radius, sides = sides, angle = angle, fill = d),
+                colour = NA,
+                alpha = alpha_val,
+                inherit.aes = FALSE
+            ))
+        } else {
+            list()
+        }
+    }
+
+    resolve_scale_bar_pos <- function(pos, corner, default_x = 0.03, default_y = 0.22) {
+        corner_defaults <- list(
+            "bottom-left" = c(x = default_x, y = default_y),
+            "bottom-right" = c(x = 1 - default_x, y = default_y),
+            "top-left" = c(x = default_x, y = 1 - default_y),
+            "top-right" = c(x = 1 - default_x, y = 1 - default_y)
+        )
+        base <- corner_defaults[[corner]]
+        out <- c(x = default_x, y = default_y)
+        if (!is.null(base)) out <- base
+        if (is.null(pos)) return(out)
+        if (is.list(pos)) pos <- unlist(pos, use.names = TRUE)
+        if (!length(pos)) return(out)
+        clamp01 <- function(v) {
+            v <- suppressWarnings(as.numeric(v[1]))
+            if (!is.finite(v)) return(NA_real_)
+            max(0, min(1, v))
+        }
+        if (is.null(names(pos))) {
+            if (length(pos) >= 1) {
+                val <- clamp01(pos[1])
+                if (!is.na(val)) out["x"] <- val
+            }
+            if (length(pos) >= 2) {
+                val <- clamp01(pos[2])
+                if (!is.na(val)) out["y"] <- val
+            }
+        } else {
+            if ("x" %in% names(pos)) {
+                val <- clamp01(pos["x"])
+                if (!is.na(val)) out["x"] <- val
+            }
+            if ("y" %in% names(pos)) {
+                val <- clamp01(pos["y"])
+                if (!is.na(val)) out["y"] <- val
+            }
+        }
+        out
     }
 
     library(ggplot2)
     p <- ggplot()
 
     ## ------------------------------------------------------------------ 3.0
-    ## optional background image overlay (auto-detect from grid layer)
-    if (isTRUE(overlay_image)) {
+    ## Histology background (attached to scope_obj)
+    if (histology_available) {
+        img_rgba <- prepare_rgba(histology_slot$png, image_alpha)
+        if (!is.null(img_rgba)) {
+            if (!use_image_coords && isTRUE(flip_histology_y)) {
+                img_rgba <- flip_raster_vertical(img_rgba)
+            }
+            if (use_image_coords) {
+                p <- p + annotation_raster(
+                    img_rgba,
+                    xmin = 0, xmax = histology_slot$width,
+                    ymin = 0, ymax = histology_slot$height,
+                    interpolate = TRUE
+                )
+            } else {
+                roi_draw <- if (!is.null(histology_roi)) histology_roi else default_roi
+                p <- p + annotation_raster(
+                    img_rgba,
+                    xmin = roi_draw["xmin"], xmax = roi_draw["xmax"],
+                    ymin = roi_draw["ymin"], ymax = roi_draw["ymax"],
+                    interpolate = TRUE
+                )
+            }
+        }
+    } else if (isTRUE(overlay_image)) {
         img_info <- g_layer$image_info
-        mpp_fullres <- g_layer$microns_per_pixel
         hires_path <- if (!is.null(img_info)) img_info$hires_path else NULL
         lowres_path <- if (!is.null(img_info)) img_info$lowres_path else NULL
         if (!is.null(image_path)) {
@@ -144,66 +406,54 @@ plotDensity <- function(scope_obj,
                 img <- jpeg::readJPEG(sel_path)
             }
             if (!is.null(img)) {
-                # Normalize to RGBA array and apply alpha (annotation_raster has no alpha arg)
                 if (length(dim(img)) == 2L) {
-                    # grayscale -> RGB
                     img_rgb <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 3L))
-                    img_rgb[,,1] <- img; img_rgb[,,2] <- img; img_rgb[,,3] <- img
+                    img_rgb[, , 1] <- img
+                    img_rgb[, , 2] <- img
+                    img_rgb[, , 3] <- img
                     img <- img_rgb
                 }
                 if (length(dim(img)) == 3L) {
                     if (dim(img)[3] == 3L) {
                         img_rgba <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 4L))
-                        img_rgba[,,1:3] <- img
-                        img_rgba[,,4]   <- max(0, min(1, image_alpha))
+                        img_rgba[, , 1:3] <- img
+                        img_rgba[, , 4] <- max(0, min(1, image_alpha))
                         img <- img_rgba
                     } else if (dim(img)[3] == 4L) {
-                        img[,,4] <- pmin(1, pmax(0, img[,,4] * image_alpha))
+                        img[, , 4] <- pmin(1, pmax(0, img[, , 4] * image_alpha))
                     }
                 }
 
-                # image size (width x height) in um
-                wpx <- dim(img)[2]; hpx <- dim(img)[1]
-                # Determine effective microns-per-pixel depending on image type and scalefactors
+                wpx <- dim(img)[2]
+                hpx <- dim(img)[1]
                 hires_sf <- if (!is.null(img_info)) img_info$tissue_hires_scalef else NA_real_
                 lowres_sf <- if (!is.null(img_info)) img_info$tissue_lowres_scalef else NA_real_
                 eff_mpp <- mpp_fullres
-                # Detect by filename if necessary
                 is_hires <- grepl("tissue_hires_image", basename(sel_path), ignore.case = TRUE)
                 is_lowres <- grepl("tissue_lowres_image", basename(sel_path), ignore.case = TRUE)
                 is_aligned <- grepl("aligned_tissue_image", basename(sel_path), ignore.case = TRUE)
                 if (is_hires && is.finite(hires_sf)) eff_mpp <- mpp_fullres / hires_sf
                 if (is_lowres && is.finite(lowres_sf)) eff_mpp <- mpp_fullres / lowres_sf
                 if (is_aligned) eff_mpp <- mpp_fullres
-                # Fallback: if cannot infer, try to match grid width to image width by simple ratio
                 if (!is.finite(eff_mpp) || eff_mpp <= 0) eff_mpp <- mpp_fullres
                 w_um <- as.numeric(wpx) * as.numeric(eff_mpp)
                 h_um <- as.numeric(hpx) * as.numeric(eff_mpp)
-                y_origin <- if (!is.null(img_info$y_origin)) img_info$y_origin else "top-left"
-                # If grid was not flipped (top-left), flip image vertically by swapping ymin/ymax
-                if (identical(y_origin, "top-left")) {
-                    p <- p + annotation_raster(img,
-                        xmin = 0, xmax = w_um,
-                        ymin = h_um, ymax = 0,
-                        interpolate = TRUE
-                    )
-                } else {
-                    p <- p + annotation_raster(img,
-                        xmin = 0, xmax = w_um,
-                        ymin = 0, ymax = h_um,
-                        interpolate = TRUE
-                    )
+                y_origin_manual <- if (!is.null(img_info$y_origin)) img_info$y_origin else "top-left"
+                if (identical(y_origin_manual, "top-left")) {
+                    img <- flip_raster_vertical(img)
                 }
+                p <- p + annotation_raster(img,
+                    xmin = 0, xmax = w_um,
+                    ymin = 0, ymax = h_um,
+                    interpolate = TRUE
+                )
             }
         }
     }
 
+    shape_layers1 <- build_shape_geom(tile_df(heat1), alpha1)
+    p <- Reduce(`+`, shape_layers1, init = p)
     p <- p +
-        geom_tile(
-            data = tile_df(heat1),
-            aes(x = x, y = y, width = w, height = h, fill = d),
-            colour = NA, alpha = alpha1
-        ) +
         scale_fill_gradient(
             name = density1_name,
             low = "transparent",
@@ -218,12 +468,10 @@ plotDensity <- function(scope_obj,
     ## second density with new fill scale
     if (!is.null(heat2)) {
         library(ggnewscale)
-        p <- p + ggnewscale::new_scale_fill() +
-            geom_tile(
-                data = tile_df(heat2),
-                aes(x = x, y = y, width = w, height = h, fill = d),
-                colour = NA, alpha = alpha2
-            ) +
+        shape_layers2 <- build_shape_geom(tile_df(heat2), alpha2)
+        p <- p + ggnewscale::new_scale_fill()
+        p <- Reduce(`+`, shape_layers2, init = p)
+        p <- p +
             scale_fill_gradient(
                 name = density2_name,
                 low = "transparent",
@@ -249,6 +497,15 @@ plotDensity <- function(scope_obj,
         seg_dt <- data.table::rbindlist(scope_obj@coord[seg_layers],
             use.names = TRUE, fill = TRUE
         )
+        if (use_image_coords) {
+            seg_df <- .coords_physical_to_level(as.data.frame(seg_dt),
+                x_col = "x", y_col = "y", histo = histology_slot
+            )
+            seg_dt <- data.table::as.data.table(seg_df)
+            data.table::set(seg_dt, j = "x", value = seg_dt$x_img)
+            data.table::set(seg_dt, j = "y", value = seg_dt$y_img)
+            seg_dt[, c("x_img", "y_img") := NULL]
+        }
         if (seg_type == "both") {
             is_cell <- seg_dt$cell %in% scope_obj@coord$segmentation_cell$cell
             seg_dt[, segClass := ifelse(is_cell, "cell", "nucleus")]
@@ -283,32 +540,71 @@ plotDensity <- function(scope_obj,
 
     ## ------------------------------------------------------------------ 5
     ## aesthetics: square, gridlines, scale‑bar
-    x_rng <- range(grid_info$xmin, grid_info$xmax)
-    y_rng <- range(grid_info$ymin, grid_info$ymax)
-
-    # pad shorter axis
-    dx <- diff(x_rng)
-    dy <- diff(y_rng)
-    if (dx < dy) {
-        pad <- (dy - dx) / 2
-        x_rng <- x_rng + c(-pad, pad)
+    if (!use_image_coords) {
+        ensure_extent <- function(rng) {
+            if (any(!is.finite(rng))) return(c(0, 1))
+            span <- diff(rng)
+            if (!is.finite(span) || span <= 0) {
+                center <- mean(rng)
+                if (!is.finite(center)) center <- 0
+                return(c(center - 0.5, center + 0.5))
+            }
+            rng
+        }
+        x_rng <- ensure_extent(x_rng_phys)
+        y_rng <- ensure_extent(y_rng_phys)
+        if (!is.null(target_aspect_ratio)) {
+            dx <- diff(x_rng)
+            dy <- diff(y_rng)
+            current_ratio <- dx / dy
+            if (is.finite(current_ratio) && dx > 0 && dy > 0) {
+                if (current_ratio < target_aspect_ratio) {
+                    pad <- (target_aspect_ratio * dy - dx) / 2
+                    if (is.finite(pad) && pad > 0) x_rng <- x_rng + c(-pad, pad)
+                } else if (current_ratio > target_aspect_ratio) {
+                    pad <- (dx / target_aspect_ratio - dy) / 2
+                    if (is.finite(pad) && pad > 0) y_rng <- y_rng + c(-pad, pad)
+                }
+            }
+        }
+        grid_x <- seq(x_rng[1], x_rng[2], by = grid_gap)
+        grid_y <- seq(y_rng[1], y_rng[2], by = grid_gap)
+    } else {
+        x_rng <- c(0, histology_slot$width)
+        y_rng <- if (flip_histology_y) c(histology_slot$height, 0) else c(0, histology_slot$height)
+        grid_x <- phys_to_img(seq(x_rng_phys[1], x_rng_phys[2], by = grid_gap), axis = "x")
+        grid_y <- phys_to_img(seq(y_rng_phys[1], y_rng_phys[2], by = grid_gap), axis = "y")
+        grid_x <- grid_x[is.finite(grid_x)]
+        grid_y <- grid_y[is.finite(grid_y)]
     }
-    if (dy < dx) {
-        pad <- (dx - dy) / 2
-        y_rng <- y_rng + c(-pad, pad)
+
+    if (length(grid_x)) {
+        p <- p + geom_vline(xintercept = grid_x, linewidth = 0.05, colour = "grey80")
+    }
+    if (length(grid_y)) {
+        p <- p + geom_hline(yintercept = grid_y, linewidth = 0.05, colour = "grey80")
     }
 
-    # gridlines
-    grid_x <- seq(x_rng[1], x_rng[2], by = grid_gap)
-    grid_y <- seq(y_rng[1], y_rng[2], by = grid_gap)
-    p <- p +
-        geom_vline(xintercept = grid_x, linewidth = 0.05, colour = "grey80") +
-        geom_hline(yintercept = grid_y, linewidth = 0.05, colour = "grey80")
+    if (use_image_coords) {
+        if (flip_histology_y) {
+            p <- p +
+                scale_x_continuous(limits = c(0, histology_slot$width), expand = c(0, 0)) +
+                ggplot2::scale_y_reverse(limits = c(histology_slot$height, 0), expand = c(0, 0)) +
+                coord_fixed(expand = FALSE)
+        } else {
+            p <- p +
+                scale_x_continuous(limits = c(0, histology_slot$width), expand = c(0, 0)) +
+                scale_y_continuous(limits = c(0, histology_slot$height), expand = c(0, 0)) +
+                coord_fixed(expand = FALSE)
+        }
+    } else {
+        p <- p +
+            scale_x_continuous(limits = x_rng, expand = c(0, 0)) +
+            scale_y_continuous(limits = y_rng, expand = c(0, 0)) +
+            coord_fixed()
+    }
 
     p <- p +
-        scale_x_continuous(limits = x_rng, expand = c(0, 0)) +
-        scale_y_continuous(limits = y_rng, expand = c(0, 0)) +
-        coord_fixed() +
         theme_minimal(base_size = 9) +
         theme(
             panel.grid = element_blank(),
@@ -318,8 +614,8 @@ plotDensity <- function(scope_obj,
             legend.position = "bottom",
             legend.direction = "horizontal",
             legend.box = "horizontal",
-            legend.key.width = unit(0.4, "cm"), # key 的“宽度”
-            legend.key.height = unit(0.15, "cm"), # key 的“高度”
+            legend.key.width = unit(0.4, "cm"), # legend key width
+            legend.key.height = unit(0.15, "cm"), # legend key height
             legend.text = element_text(size = 9, angle = 90),
             legend.title = element_text(size = 8, hjust = 0, vjust = 1),
             plot.title = element_text(size = 10, hjust = 0.5),
@@ -333,24 +629,97 @@ plotDensity <- function(scope_obj,
         theme(panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.8))
 
     ## scale‑bar
-    x0 <- x_rng[1] + 0.01 * diff(x_rng) # 3% padding from left
-    y_bar <- y_rng[1] + bar_offset * diff(y_rng) # inside plot area
-    p <- p +
-        annotate("segment",
-            x = x0, xend = x0 + bar_len,
-            y = y_bar,
-            yend = y_bar,
-            arrow = arrow(length = unit(arrow_pt, "pt"), ends = "both"),
-            colour = scale_legend_colour,
-            linewidth = 0.4
-        ) +
-        annotate("text",
-            x = x0 + bar_len / 2,
-            y = y_bar + 0.025 * diff(y_rng),
-            label = paste0(bar_len, " \u00B5m"),
-            colour = scale_legend_colour,
-            vjust = 1, size = scale_text_size
-        )
+    draw_scale_bar <- isTRUE(scale_bar_show)
+    scale_pos <- resolve_scale_bar_pos(scale_bar_pos, scale_bar_corner)
+    if (use_image_coords) {
+        roi <- histology_roi
+        span_um <- roi["xmax"] - roi["xmin"]
+        px_per_um <- histology_slot$width / span_um
+        if (!is.finite(px_per_um) || px_per_um <= 0) {
+            draw_scale_bar <- FALSE
+        } else {
+            bar_len_display <- bar_len * px_per_um
+            min_frac_x <- min(0.4, bar_len_display / max(1, histology_slot$width))
+            x_margin <- max(0.03, min_frac_x / 2)
+            x_frac <- max(x_margin, min(1 - min_frac_x - x_margin, scale_pos["x"]))
+            y_margin <- 0.22
+            y_frac <- max(y_margin, min(1 - y_margin, scale_pos["y"]))
+            x0 <- x_frac * histology_slot$width
+            x1 <- x0 + bar_len_display
+            if (x0 < 0) {
+                x1 <- x1 - x0
+                x0 <- 0
+            }
+            if (x1 > histology_slot$width) {
+                shift <- x1 - histology_slot$width
+                x0 <- max(0, x0 - shift)
+                x1 <- histology_slot$width
+            }
+            label_offset <- max(15, 0.08 * histology_slot$height)
+            arrow_shift <- max(12, 0.08 * histology_slot$height)
+            if (flip_histology_y) {
+                y_bar_base <- histology_slot$height - y_frac * histology_slot$height
+                y_bar <- min(histology_slot$height, max(0, y_bar_base + arrow_shift))
+                label_y <- y_bar_base - label_offset
+                if (label_y < 0) label_y <- y_bar_base + label_offset
+            } else {
+                y_bar_base <- y_frac * histology_slot$height
+                y_bar <- max(0, min(histology_slot$height, y_bar_base - arrow_shift))
+                label_y <- y_bar_base + label_offset
+                if (label_y > histology_slot$height) label_y <- y_bar_base - label_offset
+            }
+        }
+    } else {
+        bar_len_display <- bar_len
+        x_span <- diff(x_rng)
+        y_span <- diff(y_rng)
+        min_frac_x <- min(0.4, bar_len_display / max(1e-6, x_span))
+        x_margin <- max(0.03, min_frac_x / 2)
+        x_frac <- max(x_margin, min(1 - min_frac_x - x_margin, scale_pos["x"]))
+        y_margin <- 0.22
+        y_frac <- max(y_margin, min(1 - y_margin, scale_pos["y"]))
+        x0 <- x_rng[1] + x_frac * x_span
+        x1 <- x0 + bar_len_display
+        if (x0 < x_rng[1]) {
+            shift <- x_rng[1] - x0
+            x0 <- x_rng[1]
+            x1 <- x1 + shift
+        }
+        if (x1 > x_rng[2]) {
+            shift <- x1 - x_rng[2]
+            x0 <- x0 - shift
+            x1 <- x_rng[2]
+        }
+        if (x0 < x_rng[1] || x1 > x_rng[2]) {
+            draw_scale_bar <- FALSE
+        }
+        label_offset <- max(15, 0.08 * y_span)
+        arrow_shift <- max(12, 0.08 * y_span)
+        y_bar_base <- y_rng[1] + y_frac * y_span
+        y_bar <- y_bar_base - arrow_shift
+        y_bar <- max(min(y_rng), min(max(y_rng), y_bar))
+        label_y <- y_bar_base + label_offset
+        if (label_y > max(y_rng)) label_y <- y_bar_base - label_offset
+        if (label_y < min(y_rng)) label_y <- y_bar_base + label_offset
+    }
+    if (isTRUE(draw_scale_bar)) {
+        p <- p +
+            annotate("segment",
+                x = x0, xend = x1,
+                y = y_bar,
+                yend = y_bar,
+                arrow = arrow(length = unit(arrow_pt, "pt"), ends = "both"),
+                colour = scale_bar_colour,
+                linewidth = 0.4
+            ) +
+            annotate("text",
+                x = (x0 + x1) / 2,
+                y = label_y,
+                label = paste0(bar_len, " \u00B5m"),
+                colour = scale_bar_colour,
+                vjust = 1, size = scale_text_size
+            )
+    }
     return(p)
 }
 
@@ -816,3 +1185,63 @@ plotDensityCentroids <- function(scope_obj,
 
     p
 }
+
+#' @title Attach an H&E background to an existing scope_object
+#' @description
+#'   Convenience wrapper around `attach_histology()` that loads a PNG image
+#'   plus the corresponding scalefactors JSON after a scope object has been
+#'   constructed.
+#' @param scope_obj A pre-built \code{scope_object}.
+#' @param grid_name Target grid name that must exist inside \code{scope_obj@grid}.
+#' @param png_path Path to the H&E PNG/JPEG file.
+#' @param json_path Path to the Visium scalefactors JSON; set to \code{NULL}
+#'   when a scalefactor list is provided explicitly via \code{scalefactors}.
+#' @param level Either `"lowres"` or `"hires"`.
+#' @param crop_bbox_px Optional crop window in pixel coordinates (named vector).
+#' @param roi_bbox Optional ROI bounds in physical coordinates (named vector).
+#' @param coord_type Coordinate system label (default `"visium"`).
+#' @param scalefactors Optional pre-read scalefactor list containing hires/lowres entries.
+#' @return The updated \code{scope_object}.
+#' @export
+addScopeHistology <- function(scope_obj,
+                              grid_name,
+                              png_path,
+                              json_path = NULL,
+                              level = c("lowres", "hires"),
+                              crop_bbox_px = NULL,
+                              roi_bbox = NULL,
+                              coord_type = c("visium", "manual"),
+                              scalefactors = NULL,
+                              y_origin = c("auto", "top-left", "bottom-left")) {
+    level <- match.arg(level)
+    coord_type <- match.arg(coord_type)
+    y_origin <- match.arg(y_origin)
+    if (!methods::is(scope_obj, "scope_object")) {
+        stop("`scope_obj` must be a scope_object.")
+    }
+    if (is.null(grid_name) || !nzchar(grid_name) || !(grid_name %in% names(scope_obj@grid))) {
+        stop("grid '", grid_name, "' does not exist in scope_obj@grid.")
+    }
+    if (is.null(png_path) || !file.exists(png_path)) {
+        stop("Image file not found: ", png_path)
+    }
+    sf_use <- scalefactors
+    if (is.null(sf_use)) {
+        if (is.null(json_path)) {
+            stop("Missing json_path or scalefactors; at least one source is required.")
+        }
+        sf_use <- .read_scalefactors_json(json_path, warn_if_missing = TRUE)
+    }
+    attach_histology(
+        scope_obj = scope_obj,
+        grid_name = grid_name,
+        png_path = png_path,
+        json_path = json_path,
+        level = level,
+        crop_bbox_px = crop_bbox_px,
+        roi_bbox = roi_bbox,
+        coord_type = coord_type,
+        scalefactors = sf_use,
+        y_origin = y_origin
+    )
+}                            
