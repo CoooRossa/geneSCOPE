@@ -97,9 +97,366 @@ clip_points_to_region <- function(points,
     data.table::rbindlist(res_list)
 }
 
+#' @title Histology ingestion helpers
+#' @description Utility functions to keep Visium/Xenium/CosMx imagery handling consistent.
+
+#' Read Visium-style scalefactors JSON.
+#' @param json_path Path to the JSON file.
+#' @param warn_if_missing Emit a warning instead of failing when the file is absent.
+#' @return Named list with hires/lowres scalefactors and optional metadata.
+#' @noRd
+.read_scalefactors_json <- function(json_path,
+                                    warn_if_missing = TRUE) {
+    default <- list(
+        hires = NA_real_,
+        lowres = NA_real_,
+        microns_per_pixel = NA_real_,
+        spot_diameter_fullres = NA_real_
+    )
+    if (is.null(json_path) || !nzchar(json_path)) {
+        if (warn_if_missing) warning("scalefactors_json path is NULL; returning NA scalefactors.")
+        return(default)
+    }
+    if (!file.exists(json_path)) {
+        if (warn_if_missing) warning("scalefactors_json not found: ", json_path)
+        return(default)
+    }
+    sf <- tryCatch(jsonlite::fromJSON(json_path),
+        error = function(e) {
+            stop("Failed to parse scalefactors JSON: ", conditionMessage(e))
+        }
+    )
+    hires_raw <- if (!is.null(sf$tissue_hires_scalef)) {
+        sf$tissue_hires_scalef
+    } else if (!is.null(sf$tissue_hires_scale)) {
+        sf$tissue_hires_scale
+    } else {
+        sf$hires_scalef
+    }
+    lowres_raw <- if (!is.null(sf$tissue_lowres_scalef)) {
+        sf$tissue_lowres_scalef
+    } else if (!is.null(sf$tissue_lowres_scale)) {
+        sf$tissue_lowres_scale
+    } else {
+        sf$lowres_scalef
+    }
+    list(
+        hires = suppressWarnings(as.numeric(hires_raw)),
+        lowres = suppressWarnings(as.numeric(lowres_raw)),
+        microns_per_pixel = suppressWarnings(as.numeric(sf$microns_per_pixel)),
+        spot_diameter_fullres = suppressWarnings(as.numeric(sf$spot_diameter_fullres))
+    )
+}
+
+#' Read an H&E PNG (optionally cropping to ROI).
+#' @param png_path Path to PNG file.
+#' @param crop_bbox_px Optional named numeric vector (xmin,xmax,ymin,ymax) in pixel space.
+#' @return List containing the image array, width/height, and crop metadata.
+#' @noRd
+.read_histology_png <- function(png_path,
+                                crop_bbox_px = NULL) {
+    if (is.null(png_path) || !file.exists(png_path)) {
+        stop("Histology image not found: ", png_path)
+    }
+    ext <- tolower(tools::file_ext(png_path))
+    if (ext %in% c("png")) {
+        if (!requireNamespace("png", quietly = TRUE)) {
+            stop("Package 'png' is required to read histology PNG files.")
+        }
+        img <- png::readPNG(png_path)
+    } else if (ext %in% c("jpg", "jpeg")) {
+        if (!requireNamespace("jpeg", quietly = TRUE)) {
+            stop("Package 'jpeg' is required to read histology JPEG files.")
+        }
+        img <- jpeg::readJPEG(png_path)
+    } else {
+        stop("Unsupported histology image extension: ", ext)
+    }
+    dims <- dim(img)
+    if (length(dims) < 2L) stop("Unexpected PNG dimensions for ", png_path)
+    h <- dims[1]
+    w <- dims[2]
+
+    adjust_bbox <- function(bbox, w_max, h_max) {
+        if (is.null(bbox)) return(NULL)
+        req <- c("xmin", "xmax", "ymin", "ymax")
+        if (!all(req %in% names(bbox))) {
+            stop("crop_bbox_px must be a named vector with xmin/xmax/ymin/ymax.")
+        }
+        bbox <- as.numeric(bbox[req])
+        names(bbox) <- req
+        bbox["xmin"] <- max(1, floor(bbox["xmin"]))
+        bbox["xmax"] <- min(w_max, ceiling(bbox["xmax"]))
+        bbox["ymin"] <- max(1, floor(bbox["ymin"]))
+        bbox["ymax"] <- min(h_max, ceiling(bbox["ymax"]))
+        if (bbox["xmin"] >= bbox["xmax"] || bbox["ymin"] >= bbox["ymax"]) {
+            stop("Invalid crop_bbox_px; xmin/xmax or ymin/ymax collapsed.")
+        }
+        bbox
+    }
+
+    crop_box <- adjust_bbox(crop_bbox_px, w, h)
+    if (!is.null(crop_box)) {
+        img <- img[crop_box["ymin"]:crop_box["ymax"], crop_box["xmin"]:crop_box["xmax"], , drop = FALSE]
+        h <- dim(img)[1]
+        w <- dim(img)[2]
+    }
+
+    list(
+        png = img,
+        width = w,
+        height = h,
+        crop_bbox_px = crop_box,
+        source_path = normalizePath(png_path)
+    )
+}
+
+.as_numeric_or_na <- function(x) {
+    if (is.null(x)) return(NA_real_)
+    val <- suppressWarnings(as.numeric(x))
+    if (!length(val)) return(NA_real_)
+    val[1]
+}
+
+.infer_visium_mpp <- function(grid_layer,
+                              scalefactors,
+                              default_spot_um = getOption("geneSCOPE.default_visium_spot_um", 55)) {
+    cand <- c(
+        .as_numeric_or_na(scalefactors$microns_per_pixel),
+        .as_numeric_or_na(grid_layer$microns_per_pixel)
+    )
+    spot_um_sf <- .as_numeric_or_na(scalefactors$spot_diameter_microns)
+    spot_px_sf <- .as_numeric_or_na(scalefactors$spot_diameter_fullres)
+    spot_um_grid <- .as_numeric_or_na(grid_layer$spot_diameter_um)
+    if (is.finite(spot_um_sf) && is.finite(spot_px_sf)) {
+        cand <- c(cand, spot_um_sf / spot_px_sf)
+    }
+    if (is.finite(spot_um_grid) && is.finite(spot_px_sf)) {
+        cand <- c(cand, spot_um_grid / spot_px_sf)
+    }
+    if (is.finite(default_spot_um) && is.finite(spot_px_sf)) {
+        cand <- c(cand, default_spot_um / spot_px_sf)
+    }
+    cand <- cand[is.finite(cand) & cand > 0]
+    if (length(cand)) cand[1] else NA_real_
+}
+
+.auto_histology_crop_bbox <- function(roi_bbox,
+                                      microns_per_pixel,
+                                      level_scalefactor) {
+    if (is.null(roi_bbox) || !is.finite(microns_per_pixel) || microns_per_pixel <= 0) {
+        return(NULL)
+    }
+    req <- c("xmin", "xmax", "ymin", "ymax")
+    if (!all(req %in% names(roi_bbox))) return(NULL)
+    roi_vals <- setNames(as.numeric(roi_bbox[req]), req)
+    if (any(!is.finite(roi_vals))) return(NULL)
+    px_fullres <- roi_vals / microns_per_pixel
+    scale_use <- .as_numeric_or_na(level_scalefactor)
+    if (!is.finite(scale_use) || scale_use <= 0) scale_use <- 1
+    px_level <- px_fullres * scale_use
+    c(
+        xmin = floor(px_level["xmin"]),
+        xmax = ceiling(px_level["xmax"]),
+        ymin = floor(px_level["ymin"]),
+        ymax = ceiling(px_level["ymax"])
+    )
+}
+
+.standardize_crop_bbox <- function(bbox, warn_if_missing_names = TRUE) {
+    if (is.null(bbox)) return(NULL)
+    req <- c("xmin", "xmax", "ymin", "ymax")
+    flat <- bbox
+    if (is.list(bbox) && !is.null(names(bbox))) {
+        flat <- unlist(bbox, use.names = TRUE)
+    }
+    if (is.numeric(flat) && length(flat) == 4L && (is.null(names(flat)) || anyNA(names(flat)))) {
+        names(flat) <- req
+    }
+    if (!all(req %in% names(flat))) {
+        if (is.numeric(flat) && length(flat) == 4L) {
+            names(flat) <- req
+        } else {
+            if (isTRUE(warn_if_missing_names)) {
+                warning("crop_bbox_px is missing names; ignoring crop window.", call. = FALSE)
+            }
+            return(NULL)
+        }
+    }
+    out <- as.numeric(flat[req])
+    names(out) <- req
+    out
+}
+
+.resolve_histology_y_origin <- function(grid_layer, y_origin_choice) {
+    y_origin_choice <- match.arg(y_origin_choice, c("auto", "top-left", "bottom-left"))
+    if (!identical(y_origin_choice, "auto")) {
+        return(y_origin_choice)
+    }
+    candidates <- character()
+    if (!is.null(grid_layer$image_info$y_origin)) {
+        candidates <- c(candidates, grid_layer$image_info$y_origin)
+    }
+    if (!is.null(grid_layer$histology)) {
+        histo_list <- Filter(function(x) !is.null(x) && !is.null(x$y_origin), grid_layer$histology)
+        if (length(histo_list)) {
+            candidates <- c(candidates, vapply(histo_list, `[[`, character(1), "y_origin"))
+        }
+    }
+    candidates <- candidates[candidates %in% c("top-left", "bottom-left")]
+    if (length(candidates)) {
+        return(candidates[1])
+    }
+    "top-left"
+}
+
+#' Attach histology payload to a grid layer.
+#' @param scope_obj scope_object to mutate.
+#' @param grid_name Name of the grid layer inside `@grid`.
+#' @param png_path Path to PNG to ingest.
+#' @param json_path Path to scalefactors JSON (optional if `scalefactors` provided).
+#' @param level `"lowres"` or `"hires"`.
+#' @param crop_bbox_px Optional crop window in pixel coordinates.
+#' @param roi_bbox Optional named vector (xmin,xmax,ymin,ymax) in physical/fullres units.
+#' @param coord_type Label describing coordinate basis (default `"visium"`).
+#' @param scalefactors Optional list returned by `.read_scalefactors_json()`.
+#' @return Updated scope_object.
+#' @noRd
+attach_histology <- function(scope_obj,
+                             grid_name,
+                             png_path,
+                             json_path = NULL,
+                             level = c("lowres", "hires"),
+                             crop_bbox_px = NULL,
+                             roi_bbox = NULL,
+                             coord_type = c("visium", "manual"),
+                             scalefactors = NULL,
+                             y_origin = c("auto", "top-left", "bottom-left")) {
+    stopifnot(methods::is(scope_obj, "scope_object"))
+    level <- match.arg(level)
+    coord_type <- match.arg(coord_type)
+    y_origin_requested <- match.arg(y_origin)
+    if (!(grid_name %in% names(scope_obj@grid))) {
+        stop("Grid '", grid_name, "' not found in scope_obj@grid.")
+    }
+    grid_layer <- scope_obj@grid[[grid_name]]
+    if (is.null(grid_layer$histology)) {
+        grid_layer$histology <- list(lowres = NULL, hires = NULL)
+    } else {
+        grid_layer$histology <- utils::modifyList(list(lowres = NULL, hires = NULL), grid_layer$histology, keep.null = TRUE)
+    }
+
+    if (is.null(scalefactors)) {
+        scalefactors <- .read_scalefactors_json(json_path)
+    }
+    sf_val <- if (identical(level, "lowres")) scalefactors$lowres else scalefactors$hires
+    roi_use <- roi_bbox
+    if (is.null(roi_use) && !is.null(grid_layer$grid_info)) {
+        roi_use <- c(
+            xmin = min(grid_layer$grid_info$xmin, na.rm = TRUE),
+            xmax = max(grid_layer$grid_info$xmax, na.rm = TRUE),
+            ymin = min(grid_layer$grid_info$ymin, na.rm = TRUE),
+            ymax = max(grid_layer$grid_info$ymax, na.rm = TRUE)
+        )
+    }
+
+    crop_auto_flag <- FALSE
+    if (is.null(crop_bbox_px)) {
+        mpp_auto <- .infer_visium_mpp(grid_layer, scalefactors)
+        crop_auto <- .auto_histology_crop_bbox(
+            roi_bbox = roi_use,
+            microns_per_pixel = mpp_auto,
+            level_scalefactor = sf_val
+        )
+        if (!is.null(crop_auto)) {
+            crop_bbox_px <- crop_auto
+            crop_auto_flag <- TRUE
+        }
+    }
+
+    y_origin_final <- .resolve_histology_y_origin(grid_layer, y_origin_requested)
+
+    crop_bbox_px <- .standardize_crop_bbox(crop_bbox_px, warn_if_missing_names = !crop_auto_flag)
+    img_info <- .read_histology_png(png_path, crop_bbox_px = crop_bbox_px)
+
+    grid_layer$histology[[level]] <- list(
+        png = img_info$png,
+        width = img_info$width,
+        height = img_info$height,
+        scalefactor = sf_val,
+        coord_type = coord_type,
+        roi_bbox = roi_use,
+        crop_bbox_px = img_info$crop_bbox_px,
+        source_path = img_info$source_path,
+        y_origin = y_origin_final
+    )
+    scope_obj@grid[[grid_name]] <- grid_layer
+    scope_obj
+}
+
+#' Map full-resolution Visium coordinates into a histology level.
+#' @param df data.frame with spot columns.
+#' @param x_col,y_col Column names storing Visium pxl_* values.
+#' @param histo Histology entry from `grid$histology[[level]]`.
+#' @return data.frame with `x_img`/`y_img`.
+#' @noRd
+.coords_fullres_to_level <- function(df,
+                                     x_col,
+                                     y_col,
+                                     histo) {
+    stopifnot(all(c(x_col, y_col) %in% names(df)))
+    if (is.null(histo$scalefactor) || !is.finite(histo$scalefactor)) {
+        stop("Histology entry is missing a numeric scalefactor.")
+    }
+    if (is.null(histo$height) || !is.finite(histo$height)) {
+        stop("Histology entry is missing `height` (pixels).")
+    }
+    sf <- as.numeric(histo$scalefactor)
+    img_h <- as.numeric(histo$height)
+    x_full <- as.numeric(df[[x_col]])
+    y_full <- as.numeric(df[[y_col]])
+    df$x_img <- x_full * sf
+    df$y_img <- img_h - (y_full * sf)
+    df
+}
+
+#' Map physical (micron) coordinates to histology pixel space using ROI bounds.
+#' @param df data.frame with numeric columns.
+#' @param x_col,y_col Column names to transform.
+#' @param histo Histology entry from `grid$histology`.
+#' @return data.frame with `x_img`/`y_img`.
+#' @noRd
+.coords_physical_to_level <- function(df,
+                                      x_col,
+                                      y_col,
+                                      histo) {
+    stopifnot(all(c(x_col, y_col) %in% names(df)))
+    roi <- histo$roi_bbox
+    if (is.null(roi)) stop("Histology entry missing `roi_bbox`; cannot map coordinates.")
+    req <- c("xmin", "xmax", "ymin", "ymax")
+    if (!all(req %in% names(roi))) {
+        stop("roi_bbox must include xmin/xmax/ymin/ymax.")
+    }
+    width <- as.numeric(histo$width)
+    height <- as.numeric(histo$height)
+    if (!all(is.finite(c(width, height))) || any(c(width, height) <= 0)) {
+        stop("Histology entry must define positive numeric width/height.")
+    }
+    rx <- roi["xmax"] - roi["xmin"]
+    ry <- roi["ymax"] - roi["ymin"]
+    if (rx == 0 || ry == 0) stop("roi_bbox has zero extent; cannot transform coordinates.")
+
+    x_phys <- as.numeric(df[[x_col]])
+    y_phys <- as.numeric(df[[y_col]])
+
+    df$x_img <- (x_phys - roi["xmin"]) / rx * width
+    df$y_img <- (1 - (y_phys - roi["ymin"]) / ry) * height
+    df
+}
+
 #' Read segmentation vertices and rebuild polygons.
 #' Converts raw vertex listings into usable point clouds and boundary polygons.
-#'
+#' 
 #' @param path Character; Parquet file containing segmentation vertices.
 #' @param label Character tag written to output list names.
 #' @param flip Logical; whether to flip Y coordinates using `y_max`.
@@ -1082,7 +1439,7 @@ build_segmentation_geometries <- function(path,
     }
 
     seg_raw <- data.table::as.data.table(arrow::read_parquet(seg_file))
-    # 若存在 fov 列：构造唯一键 key = paste(cell_id, fov)，并把 label_id 也更新为该唯一键
+    # When an fov column exists, build a unique key paste(cell_id, fov) and update label_id accordingly
     if ("fov" %in% names(seg_raw)) {
         seg_dt <- seg_raw[, .(
             cell     = paste0(as.character(cell_id), "_", as.character(fov)),
