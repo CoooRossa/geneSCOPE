@@ -36,15 +36,15 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
     openmp_only = .configureOpenMPOnly(ncores_requested)
   )
 
-  # 应用配置
+  # Apply configuration
   .applyThreadConfig(config)
 
-  # 准备返回值
+  # Prepare return value
   result <- list(
     operation_type = operation_type,
     openmp_threads = config$openmp_threads,
     r_threads = config$r_threads,
-    blas_threads = 1 # 始终为1
+    blas_threads = 1 # always 1
   )
 
   if (restore_after) {
@@ -60,7 +60,7 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
 #' @title Force BLAS to single thread
 #' @description Aggressively sets all known BLAS libraries to single thread
 .forceBLASSingleThread <- function() {
-  # 1. RhpcBLASctl方法
+  # 1. RhpcBLASctl method
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     tryCatch(
       {
@@ -70,7 +70,7 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
     )
   }
 
-  # 2. 环境变量方法（更可靠）
+  # 2. Environment variable method (more reliable)
   blas_vars <- c(
     "OPENBLAS_NUM_THREADS" = "1",
     "MKL_NUM_THREADS" = "1",
@@ -86,7 +86,7 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
     do.call(Sys.setenv, setNames(list(blas_vars[[var]]), var))
   }
 
-  # 3. 设置data.table线程为1
+  # 3. Set data.table threads to 1
   if (requireNamespace("data.table", quietly = TRUE)) {
     tryCatch(
       {
@@ -113,7 +113,7 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
 
 #' @title Restore thread state
 .restoreThreadState <- function(old_state) {
-  # 恢复环境变量
+  # Restore environment variables
   for (var in c("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")) {
     key <- switch(var,
       "OMP_NUM_THREADS" = "omp_num_threads",
@@ -128,19 +128,19 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
     }
   }
 
-  # 但是保持BLAS为单线程，防止冲突
+  # Keep BLAS single-threaded to avoid conflicts
   .forceBLASSingleThread()
 }
 
 #' @title Configure for compute-intensive operations
 .configureComputeIntensive <- function(ncores_requested) {
   max_cores <- parallel::detectCores()
-  safe_cores <- min(ncores_requested, max_cores - 1, 16) # 保守限制
+  safe_cores <- min(ncores_requested, max_cores - 1, 16) # conservative cap
 
   list(
     openmp_threads = safe_cores,
-    r_threads = 1, # R本身单线程
-    blas_threads = 1 # BLAS强制单线程
+    r_threads = 1, # keep R single-threaded
+    blas_threads = 1 # force BLAS single-thread
   )
 }
 
@@ -150,8 +150,8 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
   safe_cores <- min(ncores_requested, max_cores - 1, 8)
 
   list(
-    openmp_threads = 2, # 少量OpenMP
-    r_threads = safe_cores, # 更多R线程用于I/O
+    openmp_threads = 2, # limited OpenMP usage
+    r_threads = safe_cores, # allow more R threads for I/O
     blas_threads = 1
   )
 }
@@ -176,19 +176,19 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
   list(
     openmp_threads = safe_cores,
     r_threads = 1,
-    blas_threads = 1 # 依然强制单线程
+    blas_threads = 1 # still force single-thread BLAS
   )
 }
 
 #' @title Apply thread configuration
 .applyThreadConfig <- function(config) {
-  # 设置OpenMP线程
+  # Configure OpenMP threads
   Sys.setenv(OMP_NUM_THREADS = as.character(config$openmp_threads))
 
-  # 确保BLAS保持单线程
+  # Ensure BLAS remains single-threaded
   .forceBLASSingleThread()
 
-  # 设置Arrow线程（如果可用）
+  # Configure Arrow threads when available
   if (requireNamespace("arrow", quietly = TRUE)) {
     tryCatch(
       {
@@ -227,7 +227,7 @@ getSafeThreadCount <- function(max_requested = parallel::detectCores()) {
   total_cores <- parallel::detectCores()
   os_type <- detectOS()
 
-  # 系统特定的安全限制
+  # Platform-specific safety cap
   safe_limit <- switch(os_type,
     windows = min(8, total_cores - 1),
     macos = min(12, total_cores - 1),
