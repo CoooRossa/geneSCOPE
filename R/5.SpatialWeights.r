@@ -21,9 +21,10 @@
 #' @param verbose Logical toggle for progress messages.
 #' @param topology Character flag controlling the neighbourhood lattice.
 #'   `"auto"` inspects the grid geometry and platform metadata to decide
-#'   between queen/rook/hex variants。`"fuzzy_queen"` 在生成 Queen 邻接的基础上，
-#'   额外存储一份行归一化后的矩阵以支持模糊扩散分析；`"fuzzy_hex"` 则在
-#'   六边形拓扑上执行相同的模糊扩散准备。
+#'   between queen/rook/hex variants. `"fuzzy_queen"` builds a Queen adjacency
+#'   and additionally stores a row-normalised matrix to support fuzzy diffusion
+#'   analyses, while `"fuzzy_hex"` performs the same preparation on the
+#'   hexagonal lattice.
 #'
 #' @return Invisibly returns the modified \code{scope_object}.
 #'
