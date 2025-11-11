@@ -1,5 +1,6 @@
 # Generated manually; synced with current @export tags
 export(.onLoad)
+export(addScopeHistology)
 export(addSingleCells)
 export(build_scope_from_cosmx)
 export(build_scope_from_visium)
