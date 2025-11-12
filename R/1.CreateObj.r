@@ -1920,7 +1920,8 @@ build_scope_from_visium_seurat <- function(input_dir,
                 level = level,
                 roi_bbox = roi_bbox,
                 scalefactors = sf_lookup,
-                y_origin = y_origin_img
+                y_origin = y_origin_img,
+                flip_reference = list(enabled = isTRUE(flip_y), y_max = y_max)
             ),
             error = function(e) {
                 if (isTRUE(verbose)) {
