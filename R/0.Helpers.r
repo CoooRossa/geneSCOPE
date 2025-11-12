@@ -320,8 +320,6 @@ clip_points_to_region <- function(points,
 #' @param roi_bbox Optional named vector (xmin,xmax,ymin,ymax) in physical/fullres units.
 #' @param coord_type Label describing coordinate basis (default `"visium"`).
 #' @param scalefactors Optional list returned by `.read_scalefactors_json()`.
-#' @param flip_reference Optional list with `enabled` and `y_max` entries used to
-#'        remap ROI coordinates when the grid was created with flipped axes.
 #' @return Updated scope_object.
 #' @noRd
 attach_histology <- function(scope_obj,
@@ -333,8 +331,7 @@ attach_histology <- function(scope_obj,
                              roi_bbox = NULL,
                              coord_type = c("visium", "manual"),
                              scalefactors = NULL,
-                             y_origin = c("auto", "top-left", "bottom-left"),
-                             flip_reference = NULL) {
+                             y_origin = c("auto", "top-left", "bottom-left")) {
     stopifnot(methods::is(scope_obj, "scope_object"))
     level <- match.arg(level)
     coord_type <- match.arg(coord_type)
@@ -364,19 +361,10 @@ attach_histology <- function(scope_obj,
     }
 
     crop_auto_flag <- FALSE
-    roi_for_crop <- roi_use
-    if (!is.null(flip_reference) && isTRUE(flip_reference$enabled)) {
-        y_max_ref <- .as_numeric_or_na(flip_reference$y_max)
-        if (is.finite(y_max_ref) && !is.null(roi_use)) {
-            roi_for_crop <- roi_use
-            roi_for_crop["ymin"] <- y_max_ref - roi_use["ymax"]
-            roi_for_crop["ymax"] <- y_max_ref - roi_use["ymin"]
-        }
-    }
     if (is.null(crop_bbox_px)) {
         mpp_auto <- .infer_visium_mpp(grid_layer, scalefactors)
         crop_auto <- .auto_histology_crop_bbox(
-            roi_bbox = roi_for_crop,
+            roi_bbox = roi_use,
             microns_per_pixel = mpp_auto,
             level_scalefactor = sf_val
         )
@@ -391,21 +379,8 @@ attach_histology <- function(scope_obj,
     crop_bbox_px <- .standardize_crop_bbox(crop_bbox_px, warn_if_missing_names = !crop_auto_flag)
     img_info <- .read_histology_png(png_path, crop_bbox_px = crop_bbox_px)
 
-    y_flip_entry <- NULL
-    if (!is.null(flip_reference) && isTRUE(flip_reference$enabled)) {
-        y_max_ref <- .as_numeric_or_na(flip_reference$y_max)
-        if (is.finite(y_max_ref)) {
-            y_flip_entry <- list(enabled = TRUE, y_max = y_max_ref)
-        }
-    }
-
-    png_store <- img_info$png
-    if (!is.null(y_flip_reference) && isTRUE(y_flip_reference$enabled)) {
-        png_store <- flip_image_vertical(png_store)
-    }
-
     grid_layer$histology[[level]] <- list(
-        png = png_store,
+        png = img_info$png,
         width = img_info$width,
         height = img_info$height,
         scalefactor = sf_val,
@@ -413,8 +388,7 @@ attach_histology <- function(scope_obj,
         roi_bbox = roi_use,
         crop_bbox_px = img_info$crop_bbox_px,
         source_path = img_info$source_path,
-        y_origin = y_origin_final,
-        y_flip_reference = y_flip_entry
+        y_origin = y_origin_final
     )
     scope_obj@grid[[grid_name]] <- grid_layer
     scope_obj
@@ -435,8 +409,6 @@ attach_histology <- function(scope_obj,
 #' @param roi_bbox Optional ROI bounds in physical coordinates (named vector).
 #' @param coord_type Coordinate system label (default `"visium"`).
 #' @param scalefactors Optional pre-read scalefactor list containing hires/lowres entries.
-#' @param flip_reference Optional list mirroring the argument in `attach_histology()`
-#'   for cases where the grid axes have been flipped.
 #' @return The updated \code{scope_object}.
 #' @export
 addScopeHistology <- function(scope_obj,
@@ -448,8 +420,7 @@ addScopeHistology <- function(scope_obj,
                               roi_bbox = NULL,
                               coord_type = c("visium", "manual"),
                               scalefactors = NULL,
-                              y_origin = c("auto", "top-left", "bottom-left"),
-                              flip_reference = NULL) {
+                              y_origin = c("auto", "top-left", "bottom-left")) {
     level <- match.arg(level)
     coord_type <- match.arg(coord_type)
     y_origin <- match.arg(y_origin)
@@ -479,8 +450,7 @@ addScopeHistology <- function(scope_obj,
         roi_bbox = roi_bbox,
         coord_type = coord_type,
         scalefactors = sf_use,
-        y_origin = y_origin,
-        flip_reference = flip_reference
+        y_origin = y_origin
     )
 }
 
@@ -533,28 +503,15 @@ addScopeHistology <- function(scope_obj,
         stop("Histology entry must define positive numeric width/height.")
     }
 
-    roi_use <- roi
+    rx <- roi["xmax"] - roi["xmin"]
+    ry <- roi["ymax"] - roi["ymin"]
+    if (rx == 0 || ry == 0) stop("roi_bbox has zero extent; cannot transform coordinates.")
+
     x_phys <- as.numeric(df[[x_col]])
     y_phys <- as.numeric(df[[y_col]])
 
-    y_flip_ref <- histo$y_flip_reference
-    y_flip_max <- if (!is.null(y_flip_ref) && isTRUE(y_flip_ref$enabled)) {
-        .as_numeric_or_na(y_flip_ref$y_max)
-    } else {
-        NA_real_
-    }
-    if (is.finite(y_flip_max)) {
-        roi_use["ymin"] <- y_flip_max - roi["ymax"]
-        roi_use["ymax"] <- y_flip_max - roi["ymin"]
-        y_phys <- y_flip_max - y_phys
-    }
-
-    rx <- roi_use["xmax"] - roi_use["xmin"]
-    ry <- roi_use["ymax"] - roi_use["ymin"]
-    if (rx == 0 || ry == 0) stop("roi_bbox has zero extent; cannot transform coordinates.")
-
-    df$x_img <- (x_phys - roi_use["xmin"]) / rx * width
-    df$y_img <- (1 - (y_phys - roi_use["ymin"]) / ry) * height
+    df$x_img <- (x_phys - roi["xmin"]) / rx * width
+    df$y_img <- (1 - (y_phys - roi["ymin"]) / ry) * height
     df
 }
 
@@ -2056,13 +2013,3 @@ ensure_fdr_dimnames <- function(scope_obj, grid_name,
   }
   scope_obj
 }
-    flip_image_vertical <- function(img) {
-        if (is.null(img)) return(NULL)
-        dims <- dim(img)
-        if (length(dims) < 2L) return(img)
-        idx <- seq.int(dims[1], 1)
-        if (length(dims) == 2L) {
-            return(img[idx, , drop = FALSE])
-        }
-        img[idx, , , drop = FALSE]
-    }
