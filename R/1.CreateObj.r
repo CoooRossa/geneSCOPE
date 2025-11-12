@@ -1706,8 +1706,10 @@ build_scope_from_visium_seurat <- function(input_dir,
         x_um = pxl_col_in_fullres * microns_per_pixel,
         y_um = pxl_row_in_fullres * microns_per_pixel
     )]
+    y_flip_reference_um <- NA_real_
     if (isTRUE(flip_y)) {
         y_max <- max(pos_dt$y_um, na.rm = TRUE)
+        y_flip_reference_um <- y_max
         pos_dt[, y_um := y_max - y_um]
     }
 
@@ -1896,7 +1898,9 @@ build_scope_from_visium_seurat <- function(input_dir,
         tissue_hires_scalef = hires_scalef,
         tissue_lowres_scalef = lowres_scalef,
         spot_diameter_fullres = spot_diameter_px,
-        y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left"
+        y_origin = if (isTRUE(flip_y)) "bottom-left" else "top-left",
+        flip_y_applied = isTRUE(flip_y),
+        y_flip_reference_um = if (isTRUE(flip_y)) y_flip_reference_um else NA_real_
     )
 
     sf_lookup <- list(
@@ -1920,7 +1924,8 @@ build_scope_from_visium_seurat <- function(input_dir,
                 level = level,
                 roi_bbox = roi_bbox,
                 scalefactors = sf_lookup,
-                y_origin = y_origin_img
+                y_origin = y_origin_img,
+                y_flip_reference_um = if (isTRUE(flip_y)) y_flip_reference_um else NULL
             ),
             error = function(e) {
                 if (isTRUE(verbose)) {
