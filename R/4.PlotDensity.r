@@ -1232,6 +1232,12 @@ addScopeHistology <- function(scope_obj,
         }
         sf_use <- .read_scalefactors_json(json_path, warn_if_missing = TRUE)
     }
+    grid_layer <- scope_obj@grid[[grid_name]]
+    y_flip_ref_arg <- NULL
+    if (!is.null(grid_layer$image_info) && !is.null(grid_layer$image_info$y_flip_reference_um)) {
+        cand <- suppressWarnings(as.numeric(grid_layer$image_info$y_flip_reference_um))
+        if (length(cand) && is.finite(cand[1])) y_flip_ref_arg <- cand[1]
+    }
     attach_histology(
         scope_obj = scope_obj,
         grid_name = grid_name,
@@ -1242,6 +1248,7 @@ addScopeHistology <- function(scope_obj,
         roi_bbox = roi_bbox,
         coord_type = coord_type,
         scalefactors = sf_use,
-        y_origin = y_origin
+        y_origin = y_origin,
+        y_flip_reference_um = y_flip_ref_arg
     )
-}                            
+}
