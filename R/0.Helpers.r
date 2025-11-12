@@ -320,6 +320,9 @@ clip_points_to_region <- function(points,
 #' @param roi_bbox Optional named vector (xmin,xmax,ymin,ymax) in physical/fullres units.
 #' @param coord_type Label describing coordinate basis (default `"visium"`).
 #' @param scalefactors Optional list returned by `.read_scalefactors_json()`.
+#' @param y_flip_reference_um Optional numeric scalar capturing the pre-flip
+#'   maximum Y (in microns) so crop windows remain aligned when `y_origin`
+#'   is `"bottom-left"`.
 #' @return Updated scope_object.
 #' @noRd
 attach_histology <- function(scope_obj,
@@ -331,7 +334,8 @@ attach_histology <- function(scope_obj,
                              roi_bbox = NULL,
                              coord_type = c("visium", "manual"),
                              scalefactors = NULL,
-                             y_origin = c("auto", "top-left", "bottom-left")) {
+                             y_origin = c("auto", "top-left", "bottom-left"),
+                             y_flip_reference_um = NULL) {
     stopifnot(methods::is(scope_obj, "scope_object"))
     level <- match.arg(level)
     coord_type <- match.arg(coord_type)
@@ -360,11 +364,42 @@ attach_histology <- function(scope_obj,
         )
     }
 
+    y_origin_final <- .resolve_histology_y_origin(grid_layer, y_origin_requested)
+    flip_ref_um <- .as_numeric_or_na(y_flip_reference_um)
+    if (!is.finite(flip_ref_um) && !is.null(grid_layer$image_info$y_flip_reference_um)) {
+        flip_ref_um <- .as_numeric_or_na(grid_layer$image_info$y_flip_reference_um)
+    }
+    convert_roi_for_crop <- function(bbox) {
+        if (is.null(bbox)) return(NULL)
+        req <- c("xmin", "xmax", "ymin", "ymax")
+        flat <- bbox
+        if (is.list(flat) && !is.null(names(flat))) {
+            flat <- unlist(flat, use.names = TRUE)
+        }
+        if (!(is.numeric(flat) && all(req %in% names(flat)))) {
+            return(bbox)
+        }
+        vals <- as.numeric(flat[req])
+        names(vals) <- req
+        if (!identical(y_origin_final, "bottom-left")) {
+            return(vals)
+        }
+        if (!is.finite(flip_ref_um)) {
+            return(vals)
+        }
+        y1 <- flip_ref_um - vals["ymax"]
+        y2 <- flip_ref_um - vals["ymin"]
+        vals["ymin"] <- min(y1, y2)
+        vals["ymax"] <- max(y1, y2)
+        vals
+    }
+
     crop_auto_flag <- FALSE
     if (is.null(crop_bbox_px)) {
+        roi_for_crop <- convert_roi_for_crop(roi_use)
         mpp_auto <- .infer_visium_mpp(grid_layer, scalefactors)
         crop_auto <- .auto_histology_crop_bbox(
-            roi_bbox = roi_use,
+            roi_bbox = roi_for_crop,
             microns_per_pixel = mpp_auto,
             level_scalefactor = sf_val
         )
@@ -373,8 +408,6 @@ attach_histology <- function(scope_obj,
             crop_auto_flag <- TRUE
         }
     }
-
-    y_origin_final <- .resolve_histology_y_origin(grid_layer, y_origin_requested)
 
     crop_bbox_px <- .standardize_crop_bbox(crop_bbox_px, warn_if_missing_names = !crop_auto_flag)
     img_info <- .read_histology_png(png_path, crop_bbox_px = crop_bbox_px)
@@ -440,6 +473,12 @@ addScopeHistology <- function(scope_obj,
         }
         sf_use <- .read_scalefactors_json(json_path, warn_if_missing = TRUE)
     }
+    grid_layer <- scope_obj@grid[[grid_name]]
+    y_flip_ref_arg <- NULL
+    if (!is.null(grid_layer$image_info) && !is.null(grid_layer$image_info$y_flip_reference_um)) {
+        cand <- suppressWarnings(as.numeric(grid_layer$image_info$y_flip_reference_um))
+        if (length(cand) && is.finite(cand[1])) y_flip_ref_arg <- cand[1]
+    }
     attach_histology(
         scope_obj = scope_obj,
         grid_name = grid_name,
@@ -450,7 +489,8 @@ addScopeHistology <- function(scope_obj,
         roi_bbox = roi_bbox,
         coord_type = coord_type,
         scalefactors = sf_use,
-        y_origin = y_origin
+        y_origin = y_origin,
+        y_flip_reference_um = y_flip_ref_arg
     )
 }
 
