@@ -320,6 +320,8 @@ clip_points_to_region <- function(points,
 #' @param roi_bbox Optional named vector (xmin,xmax,ymin,ymax) in physical/fullres units.
 #' @param coord_type Label describing coordinate basis (default `"visium"`).
 #' @param scalefactors Optional list returned by `.read_scalefactors_json()`.
+#' @param flip_reference Optional list with `enabled` and `y_max` entries used to
+#'        remap ROI coordinates when the grid was created with flipped axes.
 #' @return Updated scope_object.
 #' @noRd
 attach_histology <- function(scope_obj,
@@ -331,7 +333,8 @@ attach_histology <- function(scope_obj,
                              roi_bbox = NULL,
                              coord_type = c("visium", "manual"),
                              scalefactors = NULL,
-                             y_origin = c("auto", "top-left", "bottom-left")) {
+                             y_origin = c("auto", "top-left", "bottom-left"),
+                             flip_reference = NULL) {
     stopifnot(methods::is(scope_obj, "scope_object"))
     level <- match.arg(level)
     coord_type <- match.arg(coord_type)
@@ -361,10 +364,19 @@ attach_histology <- function(scope_obj,
     }
 
     crop_auto_flag <- FALSE
+    roi_for_crop <- roi_use
+    if (!is.null(flip_reference) && isTRUE(flip_reference$enabled)) {
+        y_max_ref <- .as_numeric_or_na(flip_reference$y_max)
+        if (is.finite(y_max_ref) && !is.null(roi_use)) {
+            roi_for_crop <- roi_use
+            roi_for_crop["ymin"] <- y_max_ref - roi_use["ymax"]
+            roi_for_crop["ymax"] <- y_max_ref - roi_use["ymin"]
+        }
+    }
     if (is.null(crop_bbox_px)) {
         mpp_auto <- .infer_visium_mpp(grid_layer, scalefactors)
         crop_auto <- .auto_histology_crop_bbox(
-            roi_bbox = roi_use,
+            roi_bbox = roi_for_crop,
             microns_per_pixel = mpp_auto,
             level_scalefactor = sf_val
         )
@@ -392,6 +404,70 @@ attach_histology <- function(scope_obj,
     )
     scope_obj@grid[[grid_name]] <- grid_layer
     scope_obj
+}
+
+#' @title Attach an H&E background to an existing scope_object
+#' @description
+#'   Convenience wrapper around `attach_histology()` that loads a PNG image
+#'   plus the corresponding scalefactors JSON after a scope object has been
+#'   constructed.
+#' @param scope_obj A pre-built \code{scope_object}.
+#' @param grid_name Target grid name that must exist inside \code{scope_obj@grid}.
+#' @param png_path Path to the H&E PNG/JPEG file.
+#' @param json_path Path to the Visium scalefactors JSON; set to \code{NULL}
+#'   when a scalefactor list is provided explicitly via \code{scalefactors}.
+#' @param level Either `"lowres"` or `"hires"`.
+#' @param crop_bbox_px Optional crop window in pixel coordinates (named vector).
+#' @param roi_bbox Optional ROI bounds in physical coordinates (named vector).
+#' @param coord_type Coordinate system label (default `"visium"`).
+#' @param scalefactors Optional pre-read scalefactor list containing hires/lowres entries.
+#' @param flip_reference Optional list mirroring the argument in `attach_histology()`
+#'   for cases where the grid axes have been flipped.
+#' @return The updated \code{scope_object}.
+#' @export
+addScopeHistology <- function(scope_obj,
+                              grid_name,
+                              png_path,
+                              json_path = NULL,
+                              level = c("lowres", "hires"),
+                              crop_bbox_px = NULL,
+                              roi_bbox = NULL,
+                              coord_type = c("visium", "manual"),
+                              scalefactors = NULL,
+                              y_origin = c("auto", "top-left", "bottom-left"),
+                              flip_reference = NULL) {
+    level <- match.arg(level)
+    coord_type <- match.arg(coord_type)
+    y_origin <- match.arg(y_origin)
+    if (!methods::is(scope_obj, "scope_object")) {
+        stop("`scope_obj` must be a scope_object.")
+    }
+    if (is.null(grid_name) || !nzchar(grid_name) || !(grid_name %in% names(scope_obj@grid))) {
+        stop("grid '", grid_name, "' does not exist in scope_obj@grid.")
+    }
+    if (is.null(png_path) || !file.exists(png_path)) {
+        stop("Image file not found: ", png_path)
+    }
+    sf_use <- scalefactors
+    if (is.null(sf_use)) {
+        if (is.null(json_path)) {
+            stop("Missing json_path or scalefactors; at least one source is required.")
+        }
+        sf_use <- .read_scalefactors_json(json_path, warn_if_missing = TRUE)
+    }
+    attach_histology(
+        scope_obj = scope_obj,
+        grid_name = grid_name,
+        png_path = png_path,
+        json_path = json_path,
+        level = level,
+        crop_bbox_px = crop_bbox_px,
+        roi_bbox = roi_bbox,
+        coord_type = coord_type,
+        scalefactors = sf_use,
+        y_origin = y_origin,
+        flip_reference = flip_reference
+    )
 }
 
 #' Map full-resolution Visium coordinates into a histology level.
