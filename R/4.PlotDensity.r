@@ -124,6 +124,12 @@ plotDensity <- function(scope_obj,
         }
     }
     histology_available <- !is.null(histology_slot) && !is.null(histology_slot$png)
+    y_flip_reference <- if (!is.null(histology_slot)) histology_slot$y_flip_reference else NULL
+    y_flip_max_val <- if (!is.null(y_flip_reference) && isTRUE(y_flip_reference$enabled)) {
+        suppressWarnings(as.numeric(y_flip_reference$y_max))
+    } else {
+        NA_real_
+    }
     histology_y_origin <- if (!is.null(histology_slot$y_origin)) {
         histology_slot$y_origin
     } else if (!is.null(image_info$y_origin)) {
@@ -136,6 +142,14 @@ plotDensity <- function(scope_obj,
         histology_slot$roi_bbox
     } else {
         default_roi
+    }
+    histology_roi_image <- histology_roi
+    if (!is.null(y_flip_reference) && isTRUE(y_flip_reference$enabled)) {
+        y_flip_max <- suppressWarnings(as.numeric(y_flip_reference$y_max))
+        if (is.finite(y_flip_max) && !is.null(histology_roi)) {
+            histology_roi_image["ymin"] <- y_flip_max - histology_roi["ymax"]
+            histology_roi_image["ymax"] <- y_flip_max - histology_roi["ymin"]
+        }
     }
     histology_ready <- histology_available &&
         !is.null(histology_roi) &&
@@ -236,8 +250,13 @@ plotDensity <- function(scope_obj,
 
     heat1 <- build_heat(density1_name, max.cutoff1)
     heat2 <- if (!is.null(density2_name)) build_heat(density2_name, max.cutoff2)
+    flip_histology_y_image <- flip_histology_y
+    if (use_image_coords && is.finite(y_flip_max_val)) {
+        flip_histology_y_image <- FALSE
+    }
+
     if (use_image_coords) {
-        roi <- histology_roi
+        roi <- if (!is.null(histology_roi_image)) histology_roi_image else histology_roi
         width_px <- histology_slot$width
         height_px <- histology_slot$height
         rx <- roi["xmax"] - roi["xmin"]
@@ -247,10 +266,14 @@ plotDensity <- function(scope_obj,
             if (axis == "x") {
                 (vals - roi["xmin"]) / rx * width_px
             } else {
-                if (flip_histology_y) {
-                    (1 - (vals - roi["ymin"]) / ry) * height_px
+                vals_use <- vals
+                if (is.finite(y_flip_max_val)) {
+                    vals_use <- y_flip_max_val - vals_use
+                }
+                if (flip_histology_y_image) {
+                    (1 - (vals_use - roi["ymin"]) / ry) * height_px
                 } else {
-                    (vals - roi["ymin"]) / ry * height_px
+                    (vals_use - roi["ymin"]) / ry * height_px
                 }
             }
         }
