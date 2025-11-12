@@ -391,8 +391,21 @@ attach_histology <- function(scope_obj,
     crop_bbox_px <- .standardize_crop_bbox(crop_bbox_px, warn_if_missing_names = !crop_auto_flag)
     img_info <- .read_histology_png(png_path, crop_bbox_px = crop_bbox_px)
 
+    y_flip_entry <- NULL
+    if (!is.null(flip_reference) && isTRUE(flip_reference$enabled)) {
+        y_max_ref <- .as_numeric_or_na(flip_reference$y_max)
+        if (is.finite(y_max_ref)) {
+            y_flip_entry <- list(enabled = TRUE, y_max = y_max_ref)
+        }
+    }
+
+    png_store <- img_info$png
+    if (!is.null(y_flip_reference) && isTRUE(y_flip_reference$enabled)) {
+        png_store <- flip_image_vertical(png_store)
+    }
+
     grid_layer$histology[[level]] <- list(
-        png = img_info$png,
+        png = png_store,
         width = img_info$width,
         height = img_info$height,
         scalefactor = sf_val,
@@ -400,7 +413,8 @@ attach_histology <- function(scope_obj,
         roi_bbox = roi_use,
         crop_bbox_px = img_info$crop_bbox_px,
         source_path = img_info$source_path,
-        y_origin = y_origin_final
+        y_origin = y_origin_final,
+        y_flip_reference = y_flip_entry
     )
     scope_obj@grid[[grid_name]] <- grid_layer
     scope_obj
@@ -518,15 +532,29 @@ addScopeHistology <- function(scope_obj,
     if (!all(is.finite(c(width, height))) || any(c(width, height) <= 0)) {
         stop("Histology entry must define positive numeric width/height.")
     }
-    rx <- roi["xmax"] - roi["xmin"]
-    ry <- roi["ymax"] - roi["ymin"]
-    if (rx == 0 || ry == 0) stop("roi_bbox has zero extent; cannot transform coordinates.")
 
+    roi_use <- roi
     x_phys <- as.numeric(df[[x_col]])
     y_phys <- as.numeric(df[[y_col]])
 
-    df$x_img <- (x_phys - roi["xmin"]) / rx * width
-    df$y_img <- (1 - (y_phys - roi["ymin"]) / ry) * height
+    y_flip_ref <- histo$y_flip_reference
+    y_flip_max <- if (!is.null(y_flip_ref) && isTRUE(y_flip_ref$enabled)) {
+        .as_numeric_or_na(y_flip_ref$y_max)
+    } else {
+        NA_real_
+    }
+    if (is.finite(y_flip_max)) {
+        roi_use["ymin"] <- y_flip_max - roi["ymax"]
+        roi_use["ymax"] <- y_flip_max - roi["ymin"]
+        y_phys <- y_flip_max - y_phys
+    }
+
+    rx <- roi_use["xmax"] - roi_use["xmin"]
+    ry <- roi_use["ymax"] - roi_use["ymin"]
+    if (rx == 0 || ry == 0) stop("roi_bbox has zero extent; cannot transform coordinates.")
+
+    df$x_img <- (x_phys - roi_use["xmin"]) / rx * width
+    df$y_img <- (1 - (y_phys - roi_use["ymin"]) / ry) * height
     df
 }
 
@@ -2028,3 +2056,13 @@ ensure_fdr_dimnames <- function(scope_obj, grid_name,
   }
   scope_obj
 }
+    flip_image_vertical <- function(img) {
+        if (is.null(img)) return(NULL)
+        dims <- dim(img)
+        if (length(dims) < 2L) return(img)
+        idx <- seq.int(dims[1], 1)
+        if (length(dims) == 2L) {
+            return(img[idx, , drop = FALSE])
+        }
+        img[idx, , , drop = FALSE]
+    }
