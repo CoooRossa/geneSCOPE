@@ -1565,6 +1565,8 @@
 
     if (!config$use_mh_weight && !config$CI95_filter) {
         .cluster_message_2(verbose, "[cluster]   No Stage-2 corrections requested; returning Stage-1 result.")
+
+        # --- Stage-1 membership cleanup (keeps behaviour identical to old pipeline) ----
         if (length(stage1_membership_labels) && length(kept_genes)) {
             stage1_mem <- stage1_membership_labels
             if (!is.null(names(stage1_mem))) {
@@ -1598,11 +1600,86 @@
                 stage1_membership_labels <- stage1_mem
             }
         }
+
+        # --- Rebuild consensus graph with L-based weights & sign (matches old script output) ----
+        cons_mat <- stage1_consensus_matrix
+        if (is.null(cons_mat)) {
+            cons_mat <- Matrix::sparseMatrix(i = integer(0), j = integer(0), x = numeric(0),
+                dims = c(length(kept_genes), length(kept_genes)),
+                dimnames = list(kept_genes, kept_genes))
+        }
+        edges_keep <- which(cons_mat > 0, arr.ind = TRUE)
+        edges_keep <- edges_keep[edges_keep[, 1] < edges_keep[, 2], , drop = FALSE]
+
+        A_sub_local <- stage1$similarity_sub %||% stage1$A_sub
+        if (!is.null(A_sub_local) && !identical(rownames(A_sub_local), kept_genes)) {
+            A_sub_local <- A_sub_local[kept_genes, kept_genes, drop = FALSE]
+        }
+        L_raw_sub <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
+
+        if (nrow(edges_keep)) {
+            intra_df <- data.frame(
+                from = kept_genes[edges_keep[, 1]],
+                to = kept_genes[edges_keep[, 2]],
+                weight = if (is.null(A_sub_local)) rep(1, nrow(edges_keep)) else A_sub_local[cbind(edges_keep[, 1], edges_keep[, 2])],
+                sign = ifelse(L_raw_sub[cbind(edges_keep[, 1], edges_keep[, 2])] < 0, "neg", "pos"),
+                stringsAsFactors = FALSE
+            )
+        } else {
+            intra_df <- data.frame(from = character(0), to = character(0),
+                weight = numeric(0), sign = character(0), stringsAsFactors = FALSE)
+        }
+
+        cross_df <- NULL
+        if (isTRUE(config$keep_cross_stable)) {
+            tbl_stable <- table(stage1_membership_labels, useNA = "no")
+            min_keep <- max(1L, as.integer(config$min_cluster_size %||% 2L))
+            stable_cl <- names(tbl_stable)[tbl_stable >= min_keep]
+            if (length(stable_cl) > 1 && !is.null(A_sub_local)) {
+                idx_stable <- stage1_membership_labels %in% as.integer(stable_cl)
+                genes_stable <- kept_genes[idx_stable]
+                if (length(genes_stable) > 1) {
+                    L_sub_raw <- L_raw_sub[genes_stable, genes_stable, drop = FALSE]
+                    ij <- which(L_sub_raw >= config$min_cutoff & upper.tri(L_sub_raw), arr.ind = TRUE)
+                    if (nrow(ij)) {
+                        g1 <- genes_stable[ij[, 1]]
+                        g2 <- genes_stable[ij[, 2]]
+                        cl1 <- stage1_membership_labels[g1]
+                        cl2 <- stage1_membership_labels[g2]
+                        keep_cross <- cl1 != cl2 & !is.na(cl1) & !is.na(cl2)
+                        if (any(keep_cross)) {
+                            g1 <- g1[keep_cross]; g2 <- g2[keep_cross]
+                            Lval <- L_sub_raw[cbind(match(g1, genes_stable), match(g2, genes_stable))]
+                            wgt <- if (isTRUE(config$use_log1p_weight)) log1p(Lval) else Lval
+                            mask <- wgt > 0
+                            if (any(mask)) {
+                                cross_df <- data.frame(
+                                    from = g1[mask],
+                                    to = g2[mask],
+                                    weight = wgt[mask],
+                                    sign = ifelse(Lval[mask] < 0, "neg", "pos"),
+                                    stringsAsFactors = FALSE
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        edges_df_final <- if (!is.null(cross_df)) unique(rbind(intra_df, cross_df)) else intra_df
+
+        g_cons <- igraph::graph_from_data_frame(
+            edges_df_final,
+            directed = FALSE,
+            vertices = kept_genes
+        )
+
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
             kept_genes = kept_genes,
-            consensus_graph = stage1$stage1_consensus_graph,
+            consensus_graph = g_cons,
             membership_matrix = stage1$stage1_membership_matrix,
             stage1_consensus = stage1_consensus_matrix,
             metrics_before = NULL,
