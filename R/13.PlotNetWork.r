@@ -32,7 +32,10 @@
 #' @param cluster_vec     Either a named vector of cluster assignments or the
 #'                        name of a column in \code{meta.data}.
 #' @param cluster_palette Character vector of colours (named or unnamed).
-#' @param vertex_size,base_edge_mult,label_cex Graph aesthetics.
+#' @param node_size      Node glyph size (replaces deprecated `vertex_size`).
+#' @param edge_width     Maximum edge width scaling (replaces deprecated `base_edge_mult`).
+#' @param label_size     Text size for node labels (replaces deprecated `label_cex`).
+#' @param vertex_size,base_edge_mult,label_cex Deprecated aliases kept for backwards compatibility.
 #' @param layout_niter    Iterations for the Fruchterman-Reingold layout.
 #' @param seed            Random seed for layout reproducibility.
 #' @param hub_factor      Degree multiplier defining "hub" nodes.
@@ -40,6 +43,7 @@
 #' @param show_sign       Draw negative edges with distinct linetype.
 #' @param neg_linetype    Linetype for negative edges.
 #' @param title           Optional plot title.
+#'
 #'
 #' @return A \code{ggplot} object.
 #' @importFrom ggraph ggraph create_layout geom_edge_link geom_node_point geom_node_text scale_edge_width scale_edge_colour_identity scale_edge_linetype_manual
@@ -70,7 +74,7 @@ plotNetwork <- function(
     weight_abs = TRUE,
     ## ---------- Consensus network ----------
     use_consensus_graph = TRUE,
-    graph_slot_name = "g_consensus",
+    graph_slot_name = NULL,
     ## ---------- New FDR source ----------
     fdr_source = c("FDR", "FDR_storey", "FDR_beta", "FDR_mid", "FDR_uniform", "FDR_disc"),
     ## ---------- Plot parameters ----------
@@ -80,14 +84,18 @@ plotNetwork <- function(
         "#A65628", "#984EA3", "#66C2A5", "#FC8D62", "#8DA0CB",
         "#E78AC3", "#A6D854", "#FFD92F", "#E5C494"
     ),
-    vertex_size = 8,
-    base_edge_mult = 12,
-    label_cex = 3,
+    node_size = 4,
+    edge_width = 3,
+    label_size = 4,
+    ## Backwards-compatible aliases (will override the above when provided)
+    vertex_size = NULL,
+    base_edge_mult = NULL,
+    label_cex = NULL,
     layout_niter = 1000,
     seed = 1,
-    hub_factor = 3,
+    hub_factor = 2,
     length_scale = 1,
-    max.overlaps = 20,
+    max.overlaps = 10,
     L_max = 1,
     hub_border_col = "#4B4B4B",
     hub_border_size = 0.8,
@@ -95,10 +103,14 @@ plotNetwork <- function(
     neg_linetype = "dashed",
     neg_legend_lab = "Negative",
     pos_legend_lab = "Positive",
-    show_qc_caption = TRUE,
     title = NULL) {
     CI_rule <- match.arg(CI_rule)
     fdr_source <- match.arg(fdr_source)
+
+    ## Backward-compatibility: honor old argument names if supplied
+    if (!is.null(vertex_size)) node_size <- vertex_size
+    if (!is.null(base_edge_mult)) edge_width <- base_edge_mult
+    if (!is.null(label_cex)) label_size <- label_cex
 
     ## ===== 0. Lock and validate grid layer =====
     g_layer <- .selectGridLayer(scope_obj, grid_name) # If grid_name=NULL auto select unique layer
@@ -128,6 +140,22 @@ plotNetwork <- function(
         grid_name = grid_name,
         lee_layer = lee_stats_layer
     ) # Only extract aligned L
+
+    ## Auto-detect graph slot when not supplied: prefer cluster_vec (if scalar) then g_consensus
+    if (is.null(graph_slot_name)) {
+        cand <- c(
+            if (is.character(cluster_vec) && length(cluster_vec) == 1) cluster_vec else NULL,
+            "g_consensus"
+        )
+        cand <- unique(na.omit(cand))
+        for (nm in cand) {
+            if (!is.null(leeStat[[nm]])) {
+                graph_slot_name <- nm
+                break
+            }
+        }
+        if (is.null(graph_slot_name)) graph_slot_name <- "g_consensus"
+    }
 
     ## ===== 2. Gene subset =====
     all_genes <- rownames(Lmat)
@@ -179,6 +207,10 @@ plotNetwork <- function(
         ## ---------- Reconstruct graph using thresholds ----------
         idx <- match(keep_genes, rownames(Lmat))
         A <- Lmat[idx, idx, drop = FALSE]
+        if (!is.matrix(A)) {
+            # Ensure standard matrix so downstream t(), symmetrisation and igraph calls work
+            A <- as.matrix(A)
+        }
 
         ## (i) Early filter by expression proportion (pct_min)
         A <- .filter_matrix_by_quantile(A, pct_min, "q100") # Fixed function name
@@ -263,6 +295,7 @@ plotNetwork <- function(
         }
 
         ## (vi) Symmetrise and zero the diagonal
+        A <- as.matrix(A)  # ensure base matrix for t()
         A <- (A + t(A)) / 2
         diag(A) <- 0
 
@@ -428,16 +461,6 @@ plotNetwork <- function(
     lay$deg <- deg_vec[lay$name]
     lay$hub <- lay$deg > hub_factor * median(lay$deg)
 
-    qc_txt <- if (show_qc_caption && !is.null(leeStat$qc)) {
-        with(leeStat$qc, sprintf(
-            "density = %.3f | comp = %d | Q = %.2f | mean‑deg = %.1f ± %.1f | hubs = %.1f%% | sig.edge = %.1f%%",
-            edge_density, components, modularity_Q,
-            mean_degree, sd_degree, hub_ratio * 100, sig_edge_frac * 100
-        ))
-    } else {
-        NULL
-    }
-
     ## ---- edge width / colour / linetype layers ----
     p <- ggraph(lay) +
         geom_edge_link(
@@ -446,19 +469,17 @@ plotNetwork <- function(
                 linetype = linetype
             ),
             lineend = "round",
-            show.legend = c(
-                width = TRUE, colour = FALSE,
-                linetype = show_sign
-            )
+            show.legend = FALSE
         ) +
-        scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult)) +
-        scale_edge_colour_identity() + {
+        scale_edge_width(name = "|L|", range = c(0.3, edge_width), guide = "none") +
+        scale_edge_colour_identity(guide = "none") + {
             if (show_sign) {
                 scale_edge_linetype_manual(
                     name   = "Direction",
                     values = c(pos = "solid", neg = neg_linetype),
                     breaks = c("pos", "neg"),
-                    labels = c(pos = pos_legend_lab, neg = neg_legend_lab)
+                    labels = c(pos = pos_legend_lab, neg = neg_legend_lab),
+                    guide  = "none"
                 )
             }
         }
@@ -468,7 +489,7 @@ plotNetwork <- function(
         geom_node_point(
             data = ~ dplyr::filter(.x, !hub),
             aes(size = deg, fill = basecol), shape = 21, stroke = 0,
-            show.legend = c(fill = TRUE, size = TRUE)
+            show.legend = c(fill = TRUE, size = FALSE)
         ) +
         geom_node_point(
             data = ~ dplyr::filter(.x, hub),
@@ -477,19 +498,19 @@ plotNetwork <- function(
             show.legend = FALSE
         ) +
         geom_node_text(aes(label = name),
-            size = label_cex,
+            size = label_size,
             repel = TRUE, vjust = 1.4,
             max.overlaps = max.overlaps
         ) +
         scale_size_continuous(
             name = "Node size",
-            range = c(vertex_size / 2, vertex_size * 1.5),
-            guide = guide_legend(override.aes = list(shape = 19))
+            range = c(node_size / 2, node_size * 1.5),
+            guide = "none"
         ) +
         scale_fill_identity(
             name = "Module",
             guide = guide_legend(
-                override.aes = list(shape = 21, size = vertex_size * 0.5),
+                override.aes = list(shape = 21, size = node_size * 0.5),
                 nrow = 2, order = 1
             ),
             breaks = unname(palette_vals),
@@ -510,18 +531,16 @@ plotNetwork <- function(
                 margin = margin(t = 6)
             )
         ) +
-        labs(title = title, caption = qc_txt)
+        labs(title = title)
 
     ## Optional legend order adjustment
     p <- p +
         guides(
             fill = guide_legend(order = 1),
-            size = guide_legend(order = 2),
-            edge_width = guide_legend(
-                order = 3, direction = "horizontal",
-                nrow = 1
-            ),
-            linetype = if (show_sign) guide_legend(order = 4, nrow = 1) else "none"
+            size = "none",
+            edge_width = "none",
+            linetype = "none",
+            colour = "none"
         )
 
     return(p)
@@ -604,7 +623,7 @@ plotDendroNetwork <- function(
     hub_border_size = 0.8,
     title = NULL,
     k_top = 1,
-    tree_mode = c("rooted", "radial")) {
+    tree_mode = c("radial", "rooted")) {
     tree_layout <- TRUE # keep tree layout
     ## ========= 0. Read consensus graph ========
     g_layer <- .selectGridLayer(scope_obj, grid_name)
@@ -625,7 +644,10 @@ plotDendroNetwork <- function(
         cand <- unique(na.omit(c(cluster_vec, "g_consensus")))
         graph_slot_name <- NULL
         for (nm in cand) {
-            if (!is.null(leeStat[[nm]])) { graph_slot_name <- nm; break }
+            if (!is.null(leeStat[[nm]])) {
+                graph_slot_name <- nm
+                break
+            }
         }
         if (is.null(graph_slot_name)) graph_slot_name <- "g_consensus"
     }
@@ -977,7 +999,12 @@ plotDendroNetwork <- function(
     library(dplyr)
     set.seed(seed)
 
-    tree_mode <- match.arg(tree_mode) # recently added parameter; default is "rooted"
+    ## Default to radial when argument is missing/empty; otherwise validate
+    tree_mode <- if (is.null(tree_mode) || length(tree_mode) == 0) {
+        "radial"
+    } else {
+        match.arg(tree_mode, c("radial", "rooted"))
+    }
 
     if (tree_mode == "rooted") {
         root_v <- V(g)[which.max(deg_vec)] # same approach as before
@@ -997,7 +1024,435 @@ plotDendroNetwork <- function(
             lineend = "round",
             show.legend = FALSE
         ) +
-        scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult), guide = "none") +
+        scale_edge_width(name = "|L|", range = c(0.3, edge_width), guide = "none") +
+        scale_edge_colour_identity(guide = "none") +
+        geom_node_point(
+            data = ~ dplyr::filter(.x, !hub),
+            aes(size = deg, fill = basecol), shape = 21, stroke = 0,
+            show.legend = c(fill = TRUE, size = FALSE)
+        ) +
+        geom_node_point(
+            data = ~ dplyr::filter(.x, hub),
+            aes(size = deg, fill = basecol),
+            shape = 21, colour = hub_border_col, stroke = hub_border_size,
+            show.legend = FALSE
+        ) +
+        geom_node_text(aes(label = name),
+            size = label_size,
+            repel = TRUE,
+            vjust = 1.4, max.overlaps = max.overlaps
+        ) +
+        scale_size_continuous(
+            name = "Node size",
+            range = c(node_size / 2, node_size * 1.5),
+            guide = "none"
+        ) +
+        scale_fill_identity(
+            name = "Module",
+            guide = guide_legend(
+                override.aes = list(shape = 21, size = node_size * 0.5),
+                nrow = 2, order = 1
+            ),
+            breaks = unname(palette_vals),
+            labels = names(palette_vals)
+        ) +
+        coord_fixed() + theme_void(base_size = 12) +
+        theme(
+            legend.text = element_text(size = 12),
+            legend.title = element_text(size = 15),
+            plot.title = element_text(size = 15, hjust = 0.5),
+            legend.position = "bottom",
+            legend.box = "vertical",
+            legend.box.just = "center",
+            legend.spacing.y = unit(0.2, "cm"),
+            legend.box.margin = margin(t = 5, b = 5),
+            plot.caption = element_text(
+                hjust = 0, size = 9,
+                margin = margin(t = 6)
+            )
+        ) +
+        labs(title = title, caption = qc_txt) +
+        guides(
+            fill = guide_legend(order = 1),
+            size = "none",
+            edge_width = "none",
+            linetype = "none",
+            colour = "none"
+        )
+
+    invisible(list(
+        graph       = g,
+        pagerank    = if (exists("pr")) pr else NULL,
+        cross_edges = cross_edges,
+        plot        = p
+    ))
+}
+
+
+#' @title Plot Dendrogram-style Network Layout (multi-run stochastic MST union)
+#'
+#' @description
+#'   Repeats the PageRank-weighted MST construction used in `plotDendroNetwork`
+#'   with small random perturbations, unions the resulting tree backbones, and
+#'   renders a graph that can include multiple plausible inter/ intra-cluster
+#'   paths instead of a single deterministic tree.
+#'
+#' @inheritParams plotDendroNetwork
+#' @param n_runs  Integer. Number of stochastic repeats to perform (default 10).
+#' @param noise_sd Numeric. Standard deviation of multiplicative Gaussian noise
+#'                 applied to edge weights before MST selection (default 0.01).
+#'                 Set to 0 to recover deterministic behaviour.
+#' @return Invisibly returns a list with components:
+#'   \describe{
+#'     \item{\code{graph}}{Union graph of MST edges across runs, with weights averaged over occurrences.}
+#'     \item{\code{pagerank}}{PageRank scores from the last run (for reference).}
+#'     \item{\code{run_edge_counts}}{Data frame of edge occurrence counts across runs.}
+#'     \item{\code{plot}}{ggraph object.}
+#'   }
+#' @export
+plotDendroNetworkMulti <- function(
+    scope_obj,
+    grid_name = NULL,
+    lee_stats_layer = "LeeStats_Xz",
+    gene_subset = NULL,
+    L_min = 0,
+    use_consensus_graph = TRUE,
+    graph_slot_name = NULL,
+    cluster_vec = NULL,
+    IDelta_col_name = NULL,
+    IDelta_invert = FALSE,
+    damping = 0.85,
+    weight_low_cut = 0,
+    cluster_palette = c(
+        "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00",
+        "#FFFF33", "#A65628", "#984EA3", "#66C2A5",
+        "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854",
+        "#FFD92F", "#E5C494"
+    ),
+    node_size = 4,
+    edge_width = 3,
+    label_size = 4,
+    seed = 1,
+    length_scale = 1,
+    max.overlaps = 10,
+    hub_border_col = "#4B4B4B",
+    hub_border_size = 0.8,
+    title = NULL,
+    k_top = 1,
+    tree_mode = c("radial", "rooted"),
+    n_runs = 10,
+    noise_sd = 0.01) {
+
+    # --- helper to run a single stochastic MST build ----
+    build_once <- function(run_id) {
+        set.seed(seed + run_id - 1)
+
+        g_layer <- .selectGridLayer(scope_obj, grid_name)
+        gname <- if (is.null(grid_name)) {
+            names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+        } else grid_name
+        leeStat <- if (!is.null(scope_obj@stats[[gname]]) &&
+            !is.null(scope_obj@stats[[gname]][[lee_stats_layer]])) {
+            scope_obj@stats[[gname]][[lee_stats_layer]]
+        } else {
+            g_layer[[lee_stats_layer]]
+        }
+
+        # Auto-detect graph slot: prefer supplied name, else cluster_vec, else "g_consensus"
+        gs <- graph_slot_name
+        if (is.null(gs)) {
+            cand <- unique(na.omit(c(cluster_vec, "g_consensus")))
+            for (nm in cand) {
+                if (!is.null(leeStat[[nm]])) { gs <- nm; break }
+            }
+            if (is.null(gs)) gs <- "g_consensus"
+        }
+
+        g_raw <- leeStat[[gs]]
+        if (is.null(g_raw) || !inherits(g_raw, "igraph")) {
+            stop("plotDendroNetworkMulti: consensus graph not found or invalid: ", gs)
+        }
+
+        keep_genes <- rownames(scope_obj@meta.data)
+        if (!is.null(gene_subset)) {
+            keep_genes <- intersect(keep_genes, .getGeneSubset(scope_obj, genes = gene_subset))
+        }
+        g <- igraph::induced_subgraph(g_raw, intersect(igraph::V(g_raw)$name, keep_genes))
+        g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
+        if (igraph::vcount(g) < 2) stop("Subgraph contains fewer than two vertices.")
+
+        # Personalized PageRank (with optional noise on weights)
+        delta <- NULL
+        if (!is.null(IDelta_col_name)) {
+            delta <- scope_obj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
+            delta[is.na(delta)] <- median(delta, na.rm = TRUE)
+            q <- stats::quantile(delta, c(.1, .9))
+            delta <- pmax(pmin(delta, q[2]), q[1])
+            if (isTRUE(IDelta_invert)) delta <- max(delta, na.rm = TRUE) - delta
+        }
+        pers <- if (!is.null(delta)) {
+            tmp <- exp(delta - max(delta))
+            tmp / sum(tmp)
+        } else {
+            rep(1 / igraph::vcount(g), igraph::vcount(g))
+        }
+        names(pers) <- V(g)$name
+
+        # add small multiplicative noise to edge weights to diversify paths
+        ew <- igraph::E(g)$weight
+        if (!is.null(noise_sd) && noise_sd > 0) {
+            ew <- ew * exp(rnorm(length(ew), mean = 0, sd = noise_sd))
+        }
+        igraph::E(g)$weight <- ew
+
+        pr <- igraph::page_rank(
+            g,
+            personalized = pers,
+            damping = damping,
+            weights = igraph::E(g)$weight,
+            directed = FALSE
+        )$vector
+
+        et <- igraph::as_data_frame(g, "edges")
+        w_rw <- igraph::E(g)$weight * ((pr[et$from] + pr[et$to]) / 2)
+        w_rw[w_rw <= weight_low_cut] <- 0
+        igraph::E(g)$weight <- w_rw
+
+        if (!is.null(length_scale) && length_scale != 1) {
+            igraph::E(g)$weight <- igraph::E(g)$weight * length_scale
+        }
+        if (!is.null(L_min) && L_min > 0) {
+            keep_e <- which(igraph::E(g)$weight >= L_min)
+            g <- igraph::subgraph.edges(g, keep_e, delete.vertices = TRUE)
+        }
+
+        # attach cluster labels
+        Vnames <- V(g)$name
+        clu <- rep(NA_character_, length(Vnames))
+        names(clu) <- Vnames
+        if (!is.null(cluster_vec)) {
+            cv <- if (length(cluster_vec) == 1) {
+                scope_obj@meta.data[Vnames, cluster_vec, drop = TRUE]
+            } else {
+                cluster_vec[Vnames]
+            }
+            clu[!is.na(cv)] <- as.character(cv[!is.na(cv)])
+        }
+        g <- igraph::induced_subgraph(g, names(clu)[!is.na(clu)])
+        Vnames <- V(g)$name
+        clu <- clu[Vnames]
+
+        # ----- MST backbone (reuse logic from plotDendroNetwork) -----
+        all_edges <- igraph::as_data_frame(g, "edges")
+        all_edges$key <- with(
+            all_edges,
+            ifelse(from < to, paste(from, to, sep = "|"),
+                paste(to, from, sep = "|")
+            )
+        )
+        keep_key <- character(0)
+
+        # intra-cluster MST
+        for (cl in unique(clu)) {
+            vsub <- Vnames[clu == cl]
+            if (length(vsub) < 2) next
+            g_sub <- igraph::induced_subgraph(g, vsub)
+            if (igraph::ecount(g_sub) == 0) next
+            mst_sub <- igraph::mst(g_sub, weights = 1 / (igraph::E(g_sub)$weight + 1e-9))
+            ks <- igraph::as_data_frame(mst_sub, "edges")
+            ks$key <- with(ks, ifelse(from < to, paste(from, to, sep = "|"), paste(to, from, sep = "|")))
+            keep_key <- c(keep_key, ks$key)
+        }
+
+        # inter-cluster MST + optional extra edges
+        if (length(unique(clu)) > 1) {
+            ed <- all_edges
+            ed$cl1 <- clu[ed$from]
+            ed$cl2 <- clu[ed$to]
+            inter <- ed[ed$cl1 != ed$cl2, ]
+            if (nrow(inter)) {
+                inter$pair <- ifelse(inter$cl1 < inter$cl2,
+                    paste(inter$cl1, inter$cl2, sep = "|"),
+                    paste(inter$cl2, inter$cl1, sep = "|")
+                )
+                agg <- aggregate(weight ~ pair + cl1 + cl2, data = inter, max)
+                g_clu <- igraph::graph_from_data_frame(
+                    agg[, c("cl1", "cl2", "weight")],
+                    directed = FALSE, vertices = unique(clu)
+                )
+                cmp <- igraph::components(g_clu)$membership
+                inter_keep <- character(0)
+                for (cc in unique(cmp)) {
+                    sub <- igraph::induced_subgraph(g_clu, which(cmp == cc))
+                    if (ecount(sub) == 0) next
+                    mstc <- igraph::mst(sub, weights = 1 / (E(sub)$weight + 1e-9))
+                    ks <- igraph::as_data_frame(mstc, "edges")
+                    ks$key <- with(ks, ifelse(from < to, paste(from, to, sep = "|"), paste(to, from, sep = "|")))
+                    for (k in ks$key) {
+                        cand <- inter[inter$pair == k, ]
+                        cand <- cand[order(cand$weight, decreasing = TRUE), ]
+                        inter_keep <- c(inter_keep, cand$key[1])
+                    }
+                }
+                extra_edges <- inter[!(inter$pair %in% unique(inter$pair[match(inter_keep, inter$key)])), ]
+                if (nrow(extra_edges)) {
+                    if (!is.null(k_top) && nrow(extra_edges) > k_top) {
+                        extra_edges <- extra_edges[order(extra_edges$weight, decreasing = TRUE)[seq_len(k_top)], ]
+                    }
+                    inter_keep <- c(inter_keep, extra_edges$key)
+                }
+                keep_key <- c(keep_key, inter_keep)
+            }
+        }
+
+        keep_eid <- which(all_edges$key %in% unique(keep_key))
+        g <- igraph::subgraph.edges(g, keep_eid, delete.vertices = TRUE)
+        g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
+
+        # map back the kept edges with weights
+        kept_edges <- igraph::as_data_frame(g, "edges")
+        kept_edges$key <- with(kept_edges, ifelse(from < to, paste(from, to, sep = "|"), paste(to, from, sep = "|")))
+        list(
+            edges = kept_edges,
+            clu   = clu,
+            pr    = pr
+        )
+    }
+
+    # ==== run multiple stochastic builds ====
+    run_list <- vector("list", n_runs)
+    for (i in seq_len(n_runs)) {
+        run_list[[i]] <- build_once(i)
+    }
+
+    # Union edges and aggregate weights / counts
+    all_edges <- do.call(rbind, lapply(seq_along(run_list), function(i) {
+        cbind(run = i, run_list[[i]]$edges)
+    }))
+    agg <- aggregate(weight ~ key + from + to, data = all_edges, FUN = mean)
+    counts <- aggregate(weight ~ key, data = all_edges, FUN = length)
+    names(counts)[2] <- "count"
+    agg <- merge(agg, counts, by = "key", all.x = TRUE)
+
+    # Build union graph
+    g_union <- igraph::graph_from_data_frame(
+        agg[, c("from", "to", "weight")],
+        directed = FALSE
+    )
+    igraph::E(g_union)$count <- agg$count
+
+    # Use clusters from first run (assumed consistent)
+    clu <- run_list[[1]]$clu
+    V(g_union)$clu <- clu[V(g_union)$name]
+
+    # Colours as in plotDendroNetwork
+    Vnames <- igraph::V(g_union)$name
+    deg_vec <- igraph::degree(g_union)
+    is_factor_input <- FALSE
+    factor_levels <- NULL
+    if (!is.null(cluster_vec)) {
+        cv <- if (length(cluster_vec) == 1) {
+            scope_obj@meta.data[Vnames, cluster_vec, drop = TRUE]
+        } else {
+            cluster_vec[Vnames]
+        }
+        if (is.factor(cv)) {
+            is_factor_input <- TRUE
+            factor_levels <- levels(cv)
+        }
+        clu <- as.character(cv)
+        names(clu) <- Vnames
+    }
+
+    uniq_clu <- if (is_factor_input && !is.null(factor_levels)) {
+        intersect(factor_levels, unique(clu))
+    } else {
+        sort(unique(clu))
+    }
+    n_clu <- length(uniq_clu)
+    palette_vals <- if (is.null(cluster_palette)) {
+        setNames(rainbow(n_clu), uniq_clu)
+    } else if (is.null(names(cluster_palette))) {
+        setNames(colorRampPalette(cluster_palette)(n_clu), uniq_clu)
+    } else {
+        pal <- cluster_palette
+        miss <- setdiff(uniq_clu, names(pal))
+        if (length(miss)) {
+            pal <- c(pal, setNames(colorRampPalette(cluster_palette)(length(miss)), miss))
+        }
+        pal[uniq_clu]
+    }
+    basecol <- setNames(palette_vals[clu], Vnames)
+
+    # Edge colours
+    e_idx <- igraph::as_edgelist(g_union, names = FALSE)
+    w_norm <- igraph::E(g_union)$weight / max(igraph::E(g_union)$weight)
+    cluster_ord <- setNames(seq_along(uniq_clu), uniq_clu)
+    edge_cols <- character(igraph::ecount(g_union))
+    for (i in seq_along(edge_cols)) {
+        v1 <- Vnames[e_idx[i, 1]]
+        v2 <- Vnames[e_idx[i, 2]]
+        ref_col <- if (!is.na(clu[v1]) && !is.na(clu[v2]) && clu[v1] == clu[v2]) {
+            basecol[v1]
+        } else {
+            if (deg_vec[v1] > deg_vec[v2]) {
+                basecol[v1]
+            } else if (deg_vec[v2] > deg_vec[v1]) {
+                basecol[v2]
+            } else if (!is.na(clu[v1]) && is.na(clu[v2])) {
+                basecol[v1]
+            } else if (!is.na(clu[v2]) && is.na(clu[v1])) {
+                basecol[v2]
+            } else if (!is.na(clu[v1]) && !is.na(clu[v2])) {
+                if (cluster_ord[clu[v1]] <= cluster_ord[clu[v2]]) {
+                    basecol[v1]
+                } else {
+                    basecol[v2]
+                }
+            } else {
+                "gray80"
+            }
+        }
+        rgb_ref <- grDevices::col2rgb(ref_col) / 255
+        tval <- w_norm[i]
+        edge_cols[i] <- grDevices::rgb(
+            1 - tval + tval * rgb_ref[1],
+            1 - tval + tval * rgb_ref[2],
+            1 - tval + tval * rgb_ref[3]
+        )
+    }
+    igraph::E(g_union)$edge_col <- edge_cols
+    igraph::E(g_union)$linetype <- "solid"
+
+    # ----- layout & plot (reuse tree_mode styling) -----
+    library(ggraph)
+    library(ggplot2)
+    library(dplyr)
+    set.seed(seed)
+
+    tree_mode <- if (is.null(tree_mode) || length(tree_mode) == 0) {
+        "radial"
+    } else {
+        match.arg(tree_mode, c("radial", "rooted"))
+    }
+
+    if (tree_mode == "rooted") {
+        root_v <- V(g_union)[which.max(deg_vec)]
+        lay <- create_layout(g_union, layout = "tree", root = root_v)
+    } else if (tree_mode == "radial") {
+        lay <- create_layout(g_union, layout = "tree", circular = TRUE)
+    }
+    lay$basecol <- basecol[lay$name]
+    lay$deg <- deg_vec[lay$name]
+    hub_factor <- 2
+    lay$hub <- lay$deg > hub_factor * median(lay$deg)
+
+    p <- ggraph(lay) +
+        geom_edge_link(aes(width = weight, colour = edge_col, linetype = linetype),
+            lineend = "round",
+            show.legend = FALSE
+        ) +
+        scale_edge_width(name = "|L|", range = c(0.3, edge_width), guide = "none") +
         scale_edge_colour_identity(guide = "none") +
         geom_node_point(
             data = ~ dplyr::filter(.x, !hub),
@@ -1044,7 +1499,7 @@ plotDendroNetwork <- function(
                 margin = margin(t = 6)
             )
        ) +
-       labs(title = title, caption = qc_txt) +
+       labs(title = title) +
        guides(
             fill = guide_legend(order = 1),
             size = "none",
@@ -1053,13 +1508,27 @@ plotDendroNetwork <- function(
             colour = "none"
         )
 
+    occ_df <- data.frame(
+        edge = agg$key,
+        count = agg$count,
+        stringsAsFactors = FALSE
+    )
+
     invisible(list(
-        graph       = g,
-        pagerank    = if (exists("pr")) pr else NULL,
-        cross_edges = cross_edges,
-        plot        = p
+        graph = g_union,
+        pagerank = run_list[[length(run_list)]]$pr,
+        run_edge_counts = occ_df,
+        plot = p
     ))
 }
+
+#' @rdname plotDendroNetworkMulti
+#' @export
+plotDendroNetwork_multi <- function(...) {
+    .Deprecated("plotDendroNetworkMulti")
+    plotDendroNetworkMulti(...)
+}
+
 
 #' @title Compare cluster assignments produced by multiple CI³ parameter sets
 #'
@@ -1184,7 +1653,9 @@ plotClusterComparison <- function(scope_obj,
 .order_levels_numeric <- function(lev) {
     lev <- as.character(lev)
     num <- suppressWarnings(as.numeric(lev))
-    if (all(!is.na(num))) return(lev[order(num)])
+    if (all(!is.na(num))) {
+        return(lev[order(num)])
+    }
     rx <- regmatches(lev, regexpr("-?\\d+\\.?\\d*", lev))
     num2 <- suppressWarnings(as.numeric(rx))
     ord <- order(is.na(num2), num2, lev)
@@ -1228,8 +1699,9 @@ plotClusterComparison <- function(scope_obj,
     point_cex, text_cex, x_range, y_range,
     max_width, dot_gap_factor = 0.6, item_gap_factor = 0.5,
     row_spacing_factor = 1.2) {
-
-    if (!length(labels)) return(invisible(NULL))
+    if (!length(labels)) {
+        return(invisible(NULL))
+    }
 
     width_user <- function(txt, cex) {
         strwidth(txt, cex = cex, units = "figure") * x_range
@@ -1359,7 +1831,6 @@ plotDendro <- function(
     legend_ncol1 = 1,
     legend_ncol2 = 1,
     title = "Graph-weighted Dendrogram") {
-
     leaf_order <- match.arg(leaf_order)
     length_mode <- match.arg(length_mode)
     height_rescale <- match.arg(height_rescale)
@@ -1433,7 +1904,8 @@ plotDendro <- function(
         delta[is.na(delta)] <- stats::median(delta, na.rm = TRUE)
         q <- stats::quantile(delta, c(.1, .9))
         delta <- pmax(pmin(delta, q[2]), q[1])
-        pers <- exp(delta - max(delta)); pers <- pers / sum(pers)
+        pers <- exp(delta - max(delta))
+        pers <- pers / sum(pers)
         pr_tmp <- igraph::page_rank(
             g,
             personalized = pers,
@@ -1473,12 +1945,15 @@ plotDendro <- function(
 
     # 3.2 Inter-cluster MST: aggregate by each pair's max-weight edge
     if (length(unique(clu)) > 1) {
-        ed_tab <- igraph::as_data_frame(g, "edges"); ed_tab$eid <- igraph::E(g)$eid
-        ed_tab$cl1 <- clu[ed_tab$from]; ed_tab$cl2 <- clu[ed_tab$to]
+        ed_tab <- igraph::as_data_frame(g, "edges")
+        ed_tab$eid <- igraph::E(g)$eid
+        ed_tab$cl1 <- clu[ed_tab$from]
+        ed_tab$cl2 <- clu[ed_tab$to]
         inter <- ed_tab[ed_tab$cl1 != ed_tab$cl2, , drop = FALSE]
         if (nrow(inter) > 0) {
             inter$pair <- ifelse(inter$cl1 < inter$cl2,
-                paste(inter$cl1, inter$cl2, sep = "|"), paste(inter$cl2, inter$cl1, sep = "|"))
+                paste(inter$cl1, inter$cl2, sep = "|"), paste(inter$cl2, inter$cl1, sep = "|")
+            )
             # drop rows with NA weights to avoid aggregate() zero-row error
             inter <- inter[!is.na(inter$weight) & is.finite(inter$weight), , drop = FALSE]
             if (nrow(inter) == 0) {
@@ -1487,7 +1962,8 @@ plotDendro <- function(
                 agg <- stats::aggregate(weight ~ pair + cl1 + cl2, data = inter, max)
             }
             g_clu <- igraph::graph_from_data_frame(
-                agg[, c("cl1", "cl2", "weight")], directed = FALSE, vertices = unique(clu)
+                agg[, c("cl1", "cl2", "weight")],
+                directed = FALSE, vertices = unique(clu)
             )
             if (igraph::ecount(g_clu) > 0) {
                 mstc <- igraph::mst(g_clu, weights = 1 / (igraph::E(g_clu)$weight + 1e-9))
@@ -1527,7 +2003,7 @@ plotDendro <- function(
             inverse      = 1 / pmax(ew, 1e-9),
             inverse_sqrt = 1 / sqrt(pmax(ew, 1e-9))
         )
-        elen <- (elen ^ height_power) * height_scale
+        elen <- (elen^height_power) * height_scale
         igraph::E(g_full)$length <- elen
         Dm <- igraph::distances(g_full, v = igraph::V(g_full), to = igraph::V(g_full), weights = igraph::E(g_full)$length)
         rownames(Dm) <- igraph::V(g_full)$name
@@ -1550,7 +2026,7 @@ plotDendro <- function(
             inverse      = 1 / pmax(ew_t, 1e-9),
             inverse_sqrt = 1 / sqrt(pmax(ew_t, 1e-9))
         )
-        elen_t <- (elen_t ^ height_power) * height_scale
+        elen_t <- (elen_t^height_power) * height_scale
         igraph::E(g_tree)$length <- elen_t
         Dm <- igraph::distances(g_tree, v = genes, to = genes, weights = igraph::E(g_tree)$length)
         rownames(Dm) <- genes
@@ -1564,13 +2040,16 @@ plotDendro <- function(
         if (k > 3) {
             ut <- upper.tri(Dm, diag = FALSE)
             dv <- as.numeric(Dm[ut])
-            ord <- order(dv); x <- dv[ord]
+            ord <- order(dv)
+            x <- dv[ord]
             xs <- stats::runmed(x, k = k, endrule = "keep")
             # guard NA from runmed at boundaries
             xs[!is.finite(xs)] <- 0
             dv[ord] <- pmax(xs, 0)
-            Dm2 <- Dm; Dm2[ut] <- dv
-            Dm2 <- Dm2 + t(Dm2); diag(Dm2) <- 0
+            Dm2 <- Dm
+            Dm2[ut] <- dv
+            Dm2 <- Dm2 + t(Dm2)
+            diag(Dm2) <- 0
             Dm <- Dm2
         }
     }
@@ -1583,7 +2062,7 @@ plotDendro <- function(
     }
     diag(Dm) <- 0
 
-        # Optionally force within-cluster merges to occur first
+    # Optionally force within-cluster merges to occur first
     if (isTRUE(enforce_cluster_contiguity)) {
         clv <- memb_all[genes]
         within_mask <- outer(clv, clv, "==")
@@ -1632,14 +2111,17 @@ plotDendro <- function(
     labs <- labels(dend)
     x <- seq_along(labs)
 
-    tip1 <- list(show = isTRUE(tip_dots) && length(labs) > 0,
-                 title = tip_row1_label)
+    tip1 <- list(
+        show = isTRUE(tip_dots) && length(labs) > 0,
+        title = tip_row1_label
+    )
     if (tip1$show) {
         cl_raw1 <- scope_obj@meta.data[labs, cluster_name, drop = TRUE]
         cl_chr1 <- as.character(cl_raw1)
         lev1 <- .order_levels_numeric(unique(cl_chr1))
         pal_map1 <- .make_pal_map(lev1, cluster_palette, tip_palette)
-        cols1 <- unname(pal_map1[cl_chr1]); cols1[is.na(cols1)] <- "gray80"
+        cols1 <- unname(pal_map1[cl_chr1])
+        cols1[is.na(cols1)] <- "gray80"
         tip1$cols <- cols1
         tip1$legend_labels <- .format_label_display(lev1)
         tip1$legend_colors <- unname(pal_map1[lev1])
@@ -1652,18 +2134,26 @@ plotDendro <- function(
     }
     if (is.null(tip1$title)) tip1$title <- ""
 
-    tip2 <- list(show = !is.null(cluster_name2) && length(labs) > 0,
-                 title = if (is.null(tip_row2_label)) "" else tip_row2_label)
+    tip2 <- list(
+        show = !is.null(cluster_name2) && length(labs) > 0,
+        title = if (is.null(tip_row2_label)) "" else tip_row2_label
+    )
     if (tip2$show) {
         cl_raw2 <- scope_obj@meta.data[labs, cluster_name2, drop = TRUE]
         cl_chr2 <- as.character(cl_raw2)
         lev2 <- .order_levels_numeric(unique(cl_chr2))
         pal_map2 <- .make_pal_map(lev2, cluster_palette, tip_palette2)
-        cols2 <- unname(pal_map2[cl_chr2]); cols2[is.na(cols2)] <- "gray80"
+        cols2 <- unname(pal_map2[cl_chr2])
+        cols2[is.na(cols2)] <- "gray80"
         tip2$cols <- cols2
         tip2$legend_labels <- .format_label_display(lev2)
         tip2$legend_colors <- unname(pal_map2[lev2])
-        tip2$pch <- rep(switch(tip_shape2, square = 22, circle = 21, diamond = 23, triangle = 24), length(lev2))
+        tip2$pch <- rep(switch(tip_shape2,
+            square = 22,
+            circle = 21,
+            diamond = 23,
+            triangle = 24
+        ), length(lev2))
         tip2$lev_order <- lev2
     } else {
         tip2$legend_labels <- character(0)
@@ -1759,10 +2249,12 @@ plotDendro <- function(
         }
 
         y_lab <- rep(tip_label_offset * y_gap, length(labs_local))
-        graphics::text(x_local, y_lab, labels = labs_local,
+        graphics::text(x_local, y_lab,
+            labels = labs_local,
             srt = tip_label_srt, xpd = NA,
             cex = tip_label_cex, adj = tip_label_adj,
-            col = tip_label_col)
+            col = tip_label_col
+        )
     }
 
     render_legend_panel <- function() {
@@ -1782,21 +2274,25 @@ plotDendro <- function(
         }
         y_top <- usr[4] - 0.15 * y_span
         if (tip1$show && length(tip1$legend_labels)) {
-            graphics::legend(x_left, y_top, legend = tip1$legend_labels,
+            graphics::legend(x_left, y_top,
+                legend = tip1$legend_labels,
                 title = tip1$title, pch = tip1$pch,
                 pt.bg = tip1$legend_colors, col = "black",
                 pt.cex = tip_point_cex, cex = 0.9, bty = "n",
                 ncol = legend_ncol1, xjust = 0, yjust = 1,
-                x.intersp = 0.6, y.intersp = 0.8)
+                x.intersp = 0.6, y.intersp = 0.8
+            )
         }
         if (tip2$show && length(tip2$legend_labels)) {
             pch2_sym <- if (length(tip2$pch)) tip2$pch[1] else 21
-            graphics::legend(x_right, y_top, legend = tip2$legend_labels,
+            graphics::legend(x_right, y_top,
+                legend = tip2$legend_labels,
                 title = tip2$title, pch = rep(pch2_sym, length(tip2$legend_labels)),
                 pt.bg = tip2$legend_colors, col = "black",
                 pt.cex = tip_point_cex, cex = 0.9, bty = "n",
                 ncol = legend_ncol2, xjust = 1, yjust = 1,
-                x.intersp = 0.6, y.intersp = 0.8)
+                x.intersp = 0.6, y.intersp = 0.8
+            )
         }
     }
     if (!is.null(compose_outfile)) {
@@ -1851,14 +2347,14 @@ plotDendro <- function(
     }
 
     invisible(list(
-        dend        = dend,
-        hclust      = hc,
-        dist        = stats::as.dist(Dm),
-        genes       = genes,
+        dend = dend,
+        hclust = hc,
+        dist = stats::as.dist(Dm),
+        genes = genes,
         cluster_map = setNames(memb_all[genes], genes),
-        tree_graph  = g_tree,
-        graph       = g_full,
-        PageRank    = if (!is.null(pr)) pr[names(pr) %in% genes] else NULL,
+        tree_graph = g_tree,
+        graph = g_full,
+        PageRank = if (!is.null(pr)) pr[names(pr) %in% genes] else NULL,
         legend_row1 = list(
             labels = tip1$legend_labels,
             colors = tip1$legend_colors,
