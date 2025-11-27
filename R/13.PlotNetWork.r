@@ -487,7 +487,7 @@ plotNetwork <- function(
             guide = guide_legend(override.aes = list(shape = 19))
         ) +
         scale_fill_identity(
-            name = "Cluster",
+            name = "Module",
             guide = guide_legend(
                 override.aes = list(shape = 21, size = vertex_size * 0.5),
                 nrow = 2, order = 1
@@ -539,7 +539,9 @@ plotNetwork <- function(
 #' @inheritParams plotNetwork
 #' @param IDelta_col_name Character. Column name in \code{meta.data} containing
 #'                        Morisita's Iδ values for PageRank weighting. If \code{NULL},
-#'                        no PageRank weighting is applied.
+#'                        uniform PageRank weighting is used.
+#' @param IDelta_reverse   Logical. When \code{TRUE}, reverses Iδ before
+#'                        personalisation (highest Iδ receives lowest weight).
 #' @param damping         Numeric. Damping factor for PageRank algorithm (default 0.85).
 #' @param weight_low_cut  Numeric. Minimum edge weight threshold after PageRank
 #'                        weighting (default 0).
@@ -551,7 +553,7 @@ plotNetwork <- function(
 #' @return Invisibly returns a list with components:
 #'   \describe{
 #'     \item{\code{graph}}{The processed \code{igraph} object.}
-#'     \item{\code{pagerank}}{PageRank scores if \code{IDelta_col_name} was provided.}
+#'     \item{\code{pagerank}}{PageRank scores (personalised when \code{IDelta_col_name} is provided).}
 #'     \item{\code{cross_edges}}{Data frame of inter-cluster edges in the final graph.}
 #'   }
 #'
@@ -559,8 +561,9 @@ plotNetwork <- function(
 #'   The algorithm first constructs minimum spanning trees within each cluster,
 #'   then connects clusters using a second MST on the cluster-level graph.
 #'   Optionally, high-weight non-tree edges between clusters are preserved
-#'   based on \code{k_top}. If \code{IDelta_col_name} is provided, edge weights
-#'   are re-scaled by the mean PageRank of incident vertices.
+#'   based on \code{k_top}. Edge weights are always re-scaled by the mean
+#'   PageRank of incident vertices (personalized by Iδ when available,
+#'   otherwise using a uniform random walk).
 #'
 #' @importFrom igraph mst components subgraph.edges delete_edges delete_vertices degree E V as_data_frame ends edge_attr page_rank induced_subgraph ecount vcount
 #' @importFrom stats quantile median
@@ -573,14 +576,14 @@ plotDendroNetwork <- function(
     gene_subset = NULL,
     ## ---------- Filtering thresholds ----------
     L_min = 0,
-    drop_isolated = TRUE,
     ## ---------- Network source ----------
     use_consensus_graph = TRUE,
-    graph_slot_name = "g_consensus",
+    graph_slot_name = NULL,
     ## ---------- Cluster labels ----------
     cluster_vec = NULL,
     ## ---------- Iδ-PageRank options ----------
-    IDelta_col_name = NULL, # New option; NULL disables Iδ-PageRank
+    IDelta_col_name = NULL, # When NULL, use uniform PageRank (simple random walk)
+    IDelta_invert = FALSE,
     damping = 0.85,
     weight_low_cut = 0,
     ## ---------- Tree construction ----------
@@ -591,23 +594,17 @@ plotDendroNetwork <- function(
         "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854",
         "#FFD92F", "#E5C494"
     ),
-    vertex_size = 8,
-    base_edge_mult = 12,
-    label_cex = 3,
+    node_size = 4,
+    edge_width = 3,
+    label_size = 4,
     seed = 1,
-    hub_factor = 3,
     length_scale = 1,
-    max.overlaps = 20,
+    max.overlaps = 10,
     hub_border_col = "#4B4B4B",
     hub_border_size = 0.8,
-    show_sign = FALSE,
-    neg_linetype = "dashed",
-    neg_legend_lab = "Negative",
-    pos_legend_lab = "Positive",
-    show_qc_caption = TRUE,
     title = NULL,
     k_top = 1,
-    tree_mode = c("rooted", "radial", "forest")) {
+    tree_mode = c("rooted", "radial")) {
     tree_layout <- TRUE # keep tree layout
     ## ========= 0. Read consensus graph ========
     g_layer <- .selectGridLayer(scope_obj, grid_name)
@@ -621,6 +618,16 @@ plotDendroNetwork <- function(
         scope_obj@stats[[grid_name]][[lee_stats_layer]]
     } else {
         g_layer[[lee_stats_layer]]
+    }
+
+    # Auto-detect graph slot: prefer supplied name, else cluster_vec, else "g_consensus"
+    if (is.null(graph_slot_name)) {
+        cand <- unique(na.omit(c(cluster_vec, "g_consensus")))
+        graph_slot_name <- NULL
+        for (nm in cand) {
+            if (!is.null(leeStat[[nm]])) { graph_slot_name <- nm; break }
+        }
+        if (is.null(graph_slot_name)) graph_slot_name <- "g_consensus"
     }
 
     g_raw <- leeStat[[graph_slot_name]]
@@ -641,28 +648,45 @@ plotDendroNetwork <- function(
         )
     }
     g <- igraph::induced_subgraph(g_raw, intersect(V(g_raw)$name, keep_genes))
-    if (drop_isolated) g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
+    g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
     if (igraph::vcount(g) < 2) stop("Subgraph contains fewer than two vertices.")
 
-    ## ========= 2. Iδ-PageRank reweighting =========
+    ## ========= 2. Iδ-PageRank reweighting / random walk =========
+    ## Always run a random-walk weighting step. When Iδ is provided, use it to
+    ## personalise PageRank (with optional reversal); otherwise, use uniform
+    ## personalization for a simple random walk.
+    delta <- NULL
     if (!is.null(IDelta_col_name)) {
         delta <- scope_obj@meta.data[V(g)$name, IDelta_col_name, drop = TRUE]
         delta[is.na(delta)] <- median(delta, na.rm = TRUE)
         q <- stats::quantile(delta, c(.1, .9))
         delta <- pmax(pmin(delta, q[2]), q[1]) # align with dendroRW behaviour
-        pers <- exp(delta - max(delta))
-        pers <- pers / sum(pers)
-        pr <- igraph::page_rank(g,
-            personalized = pers,
-            damping = damping,
-            weights = igraph::E(g)$weight,
-            directed = FALSE
-        )$vector
-        et <- igraph::as_data_frame(g, "edges")
-        w_rw <- igraph::E(g)$weight * ((pr[et$from] + pr[et$to]) / 2)
-        w_rw[w_rw <= weight_low_cut] <- 0
-        igraph::E(g)$weight <- w_rw
+        if (isTRUE(IDelta_invert)) {
+            # flip preference: higher Iδ gets lower personalization weight
+            delta <- max(delta, na.rm = TRUE) - delta
+        }
     }
+
+    pers <- if (!is.null(delta)) {
+        tmp <- exp(delta - max(delta))
+        tmp / sum(tmp)
+    } else {
+        rep(1 / igraph::vcount(g), igraph::vcount(g))
+    }
+    names(pers) <- V(g)$name
+
+    pr <- igraph::page_rank(
+        g,
+        personalized = pers,
+        damping = damping,
+        weights = igraph::E(g)$weight,
+        directed = FALSE
+    )$vector
+
+    et <- igraph::as_data_frame(g, "edges")
+    w_rw <- igraph::E(g)$weight * ((pr[et$from] + pr[et$to]) / 2)
+    w_rw[w_rw <= weight_low_cut] <- 0
+    igraph::E(g)$weight <- w_rw
 
     ## ========= 3. Global rescaling / L_min =========
     if (!is.null(length_scale) && length_scale != 1) {
@@ -913,9 +937,7 @@ plotDendroNetwork <- function(
     for (i in seq_along(edge_cols)) {
         v1 <- Vnames[e_idx[i, 1]]
         v2 <- Vnames[e_idx[i, 2]]
-        if (show_sign && igraph::E(g)$sign[i] == "neg") {
-            edge_cols[i] <- "gray40"
-        } else {
+        {
             ref_col <- if (!is.na(clu[v1]) && !is.na(clu[v2]) && clu[v1] == clu[v2]) {
                 basecol[v1]
             } else {
@@ -947,7 +969,7 @@ plotDendroNetwork <- function(
         }
     }
     igraph::E(g)$edge_col <- edge_cols
-    igraph::E(g)$linetype <- if (show_sign) igraph::E(g)$sign else "solid"
+    igraph::E(g)$linetype <- "solid"
 
     ## ===== 9. ggraph rendering =====
     library(ggraph)
@@ -962,48 +984,25 @@ plotDendroNetwork <- function(
         lay <- create_layout(g, layout = "tree", root = root_v)
     } else if (tree_mode == "radial") {
         lay <- create_layout(g, layout = "tree", circular = TRUE)
-    } else if (tree_mode == "forest") {
-        root_v <- V(g)[which.max(deg_vec)]
-        lay <- create_layout(g, layout = "tree", root = root_v, circular = TRUE)
     }
     lay$basecol <- basecol[lay$name]
     lay$deg <- deg_vec[lay$name]
+    hub_factor <- 2
     lay$hub <- lay$deg > hub_factor * median(lay$deg)
 
-    qc_txt <- if (show_qc_caption && !is.null(leeStat$qc)) {
-        with(leeStat$qc, sprintf(
-            "density = %.3f | comp = %d | Q = %.2f | mean‑deg = %.1f ± %.1f | hubs = %.1f%% | sig.edge = %.1f%%",
-            edge_density, components, modularity_Q,
-            mean_degree, sd_degree, hub_ratio * 100, sig_edge_frac * 100
-        ))
-    } else {
-        NULL
-    }
+    qc_txt <- NULL
 
     p <- ggraph(lay) +
         geom_edge_link(aes(width = weight, colour = edge_col, linetype = linetype),
             lineend = "round",
-            show.legend = c(
-                width = TRUE, colour = FALSE,
-                linetype = show_sign
-            )
+            show.legend = FALSE
         ) +
-        scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult)) +
-        scale_edge_colour_identity() +
-        {
-            if (show_sign) {
-                scale_edge_linetype_manual(
-                    name = "Direction",
-                    values = c(pos = "solid", neg = neg_linetype),
-                    breaks = c("pos", "neg"),
-                    labels = c(pos = pos_legend_lab, neg = neg_legend_lab)
-                )
-            }
-        } +
+        scale_edge_width(name = "|L|", range = c(0.3, base_edge_mult), guide = "none") +
+        scale_edge_colour_identity(guide = "none") +
         geom_node_point(
             data = ~ dplyr::filter(.x, !hub),
             aes(size = deg, fill = basecol), shape = 21, stroke = 0,
-            show.legend = c(fill = TRUE, size = TRUE)
+            show.legend = c(fill = TRUE, size = FALSE)
         ) +
         geom_node_point(
             data = ~ dplyr::filter(.x, hub),
@@ -1012,19 +1011,19 @@ plotDendroNetwork <- function(
             show.legend = FALSE
         ) +
         geom_node_text(aes(label = name),
-            size = label_cex,
+            size = label_size,
             repel = TRUE,
             vjust = 1.4, max.overlaps = max.overlaps
         ) +
         scale_size_continuous(
             name = "Node size",
-            range = c(vertex_size / 2, vertex_size * 1.5),
-            guide = guide_legend(override.aes = list(shape = 19))
+            range = c(node_size / 2, node_size * 1.5),
+            guide = "none"
         ) +
         scale_fill_identity(
-            name = "Cluster",
+            name = "Module",
             guide = guide_legend(
-                override.aes = list(shape = 21, size = vertex_size * 0.5),
+                override.aes = list(shape = 21, size = node_size * 0.5),
                 nrow = 2, order = 1
             ),
             breaks = unname(palette_vals),
@@ -1044,13 +1043,14 @@ plotDendroNetwork <- function(
                 hjust = 0, size = 9,
                 margin = margin(t = 6)
             )
-        ) +
-        labs(title = title, caption = qc_txt) +
-        guides(
-            fill        = guide_legend(order = 1),
-            size        = guide_legend(order = 2),
-            edge_width  = guide_legend(order = 3, direction = "horizontal", nrow = 1),
-            linetype    = if (show_sign) guide_legend(order = 4, nrow = 1) else "none"
+       ) +
+       labs(title = title, caption = qc_txt) +
+       guides(
+            fill = guide_legend(order = 1),
+            size = "none",
+            edge_width = "none",
+            linetype = "none",
+            colour = "none"
         )
 
     invisible(list(
