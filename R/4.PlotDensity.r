@@ -1252,3 +1252,582 @@ addScopeHistology <- function(scope_obj,
         y_flip_reference_um = y_flip_ref_arg
     )
 }
+#' @title plotDensityMulti - visualise grid-level density stored in @density
+#'
+#' @param scope_obj  A \code{scope_object}.
+#' @param grid_name Name of the grid layer to plot (e.g. "grid50").
+#' @param density1_name,density2_name Column names to plot.
+#' @param density_layers Optional specification of additional density layers.
+#'   Accepts a character vector, a list of per-layer lists, or a data frame.
+#'   Each layer can define `column`/`name`, `palette`, `alpha`, `max_cutoff`,
+#'   and `label` (legend title). Missing aesthetics fall back to the
+#'   `palette1/palette2`, `alpha1/alpha2`, and `max.cutoff1/max.cutoff2`
+#'   recycling pattern.
+#' @param palette1,palette2 Color palettes for density1 and density2.
+#' @param alpha1,alpha2 Alpha transparency for density layers.
+#' @param layer_blend Blend mode controlling how stacked density layers mix.
+#'   Use "normal" for classic painter's algorithm, choose one of
+#'   "add"/"screen"/"lighten"/"darken"/"multiply"/"overlay" (requires
+#'   \pkg{ggfx}+\pkg{magick}) for GPU-style blending, or "rgb_mix" to
+#'   assign each grid tile the linear RGB sum of all genes after weighting
+#'   by their relative expression.
+#' @param seg_type Segmentation overlay type: "cell", "nucleus", or "both".
+#' @param colour_cell,colour_nucleus Colors for cell and nucleus segmentation.
+#' @param alpha_seg Alpha transparency for segmentation overlay.
+#' @param grid_gap Spacing for background grid lines.
+#' @param scale_text_size Font size for scale bar text.
+#' @param bar_len Length of scale bar in micrometers.
+#' @param bar_offset Vertical offset of scale bar as fraction of y-range.
+#' @param arrow_pt Arrow point size for scale bar.
+#' @param scale_legend_colour Color of scale bar and text.
+#' @param max.cutoff1,max.cutoff2 Maximum cutoff fractions for density values.
+#' @param legend_digits Number of decimal places in legend.
+#' @return A \code{ggplot} object.
+#' @importFrom ggplot2 ggplot geom_tile geom_blank aes scale_fill_gradient scale_fill_identity scale_alpha_identity guide_colorbar geom_vline geom_hline scale_x_continuous scale_y_continuous coord_fixed theme_minimal theme element_blank element_rect element_text element_line unit margin annotate arrow
+#' @importFrom ggnewscale new_scale_fill
+#' @importFrom ggforce geom_shape
+#' @importFrom scales alpha number_format squish
+#' @importFrom data.table rbindlist
+#' @export
+plotDensityMulti <- function(scope_obj,
+                        grid_name,
+                        density1_name = NULL,
+                        density2_name = NULL,
+                        palette1 = "#fc3d5d",
+                        palette2 = "#4753f8",
+                        alpha1 = 0.5,
+                        alpha2 = 0.5,
+                        overlay_image = FALSE,
+                        image_path = NULL,
+                        image_alpha = 0.6,
+                        image_choice = c("auto", "hires", "lowres"),
+                        seg_type = c("cell", "nucleus", "both"),
+                        colour_cell = "black",
+                        colour_nucleus = "#3182bd",
+                        alpha_seg = 0.2,
+                        grid_gap = 100,
+                        scale_text_size = 2.4,
+                        bar_len = 400,
+                        bar_offset = 0.01,
+                        arrow_pt = 4,
+                        scale_legend_colour = "black",
+                        max.cutoff1 = 1,
+                        max.cutoff2 = 1,
+                        legend_digits = 1,
+                        density_layers = NULL,
+                        layer_blend = c("normal", "add", "screen", "lighten", "darken", "multiply", "overlay", "rgb_mix")) {
+    layer_blend <- match.arg(layer_blend)
+    seg_type <- match.arg(seg_type)
+    image_choice <- match.arg(image_choice)
+    accuracy_val <- 1 / (10^legend_digits)
+    use_blend_filters <- !layer_blend %in% c("normal", "rgb_mix")
+    blend_ref_id <- NULL
+    if (use_blend_filters) {
+        if (!requireNamespace("ggfx", quietly = TRUE)) {
+            stop("layer_blend '", layer_blend, "' requires the 'ggfx' package to be installed.")
+        }
+        blend_ref_id <- paste0("densityBlend_", sample.int(1e9, 1))
+    }
+
+    ## ------------------------------------------------------------------ 1
+    ## validate grid layer & retrieve geometry
+    g_layer <- .selectGridLayer(scope_obj, grid_name)
+    grid_layer_name <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+    grid_info <- g_layer$grid_info
+    if (is.null(grid_info) ||
+        !all(c("grid_id", "xmin", "xmax", "ymin", "ymax") %in% names(grid_info))) {
+        stop("grid_info is missing required columns for layer '", grid_layer_name, "'.")
+    }
+
+    ## ------------------------------------------------------------------ 2
+    ## locate density data frame (new slot first, old slot as fallback)
+    densityDF <- scope_obj@density[[grid_layer_name]]
+    if (is.null(densityDF)) {
+        densityDF <- g_layer$densityDF
+    } # legacy
+    if (is.null(densityDF)) {
+        stop("No density table found for grid '", grid_layer_name, "'.")
+    }
+
+    ## make sure rownames are grid IDs
+    if (is.null(rownames(densityDF)) && "grid_id" %in% names(densityDF)) {
+        rownames(densityDF) <- densityDF$grid_id
+    }
+
+    `%||%` <- function(x, y) if (!is.null(x)) x else y
+
+    normalize_density_layers <- function(dl) {
+        if (is.null(dl)) {
+            return(list())
+        }
+        if (is.character(dl) || is.factor(dl)) {
+            dl <- as.character(dl)
+            dl <- lapply(dl, function(nm) list(column = nm))
+        } else if (is.data.frame(dl)) {
+            if (!nrow(dl)) {
+                return(list())
+            }
+            dl <- split(dl, seq_len(nrow(dl)))
+            dl <- lapply(dl, function(row_df) as.list(row_df))
+        } else if (is.list(dl) && length(dl) && !is.list(dl[[1]]) &&
+            (!is.null(dl$column) || !is.null(dl$name) || !is.null(dl$density))) {
+            dl <- list(dl)
+        } else if (!is.list(dl)) {
+            stop("`density_layers` must be a character vector, list, or data.frame.")
+        }
+
+        lapply(dl, function(layer) {
+            if (!is.list(layer)) {
+                if (length(layer) == 1 && (is.character(layer) || is.factor(layer))) {
+                    layer <- list(column = as.character(layer))
+                } else {
+                    stop("Each entry in `density_layers` must be a list or single character string.")
+                }
+            }
+            col_name <- layer$column %||% layer$name %||% layer$density
+            if (is.null(col_name) || length(col_name) != 1L) {
+                stop("Each density layer needs a single `column` (or alias `name`/`density`).")
+            }
+            list(
+                column = col_name,
+                palette = layer$palette %||% layer$colour %||% layer$color,
+                alpha = layer$alpha %||% layer$opacity,
+                max_cutoff = layer$max_cutoff %||% layer$cutoff %||% layer$max.cutoff,
+                label = layer$label %||% layer$legend %||% layer$title %||% col_name
+            )
+        })
+    }
+
+    density_specs <- list()
+    if (!is.null(density1_name)) {
+        density_specs <- c(density_specs, list(list(
+            column = density1_name,
+            palette = palette1,
+            alpha = alpha1,
+            max_cutoff = max.cutoff1,
+            label = density1_name
+        )))
+    }
+    if (!is.null(density2_name)) {
+        density_specs <- c(density_specs, list(list(
+            column = density2_name,
+            palette = palette2,
+            alpha = alpha2,
+            max_cutoff = max.cutoff2,
+            label = density2_name
+        )))
+    }
+    density_specs <- c(density_specs, normalize_density_layers(density_layers))
+
+    if (!length(density_specs)) {
+        stop("Provide at least one density column via density1_name/density2_name or density_layers.")
+    }
+
+    all_density_cols <- vapply(density_specs, `[[`, character(1), "column")
+    missing_cols <- setdiff(unique(all_density_cols), colnames(densityDF))
+    if (length(missing_cols)) {
+        stop(
+            "Density column(s) '", paste(missing_cols, collapse = "', '"),
+            "' not found in table for grid '", grid_layer_name, "'."
+        )
+    }
+
+    palette_defaults <- Filter(function(x) !is.null(x) && length(x) == 1L && nchar(x),
+        c(palette1, palette2)
+    )
+    if (!length(palette_defaults)) {
+        palette_defaults <- "#fc3d5d"
+    }
+    alpha_defaults <- c(alpha1, alpha2)
+    alpha_defaults <- alpha_defaults[is.finite(alpha_defaults)]
+    if (!length(alpha_defaults)) {
+        alpha_defaults <- 0.5
+    }
+
+    resolve_palette <- function(value, idx) {
+        pal <- value
+        if (is.null(pal) || !length(pal)) {
+            pal <- palette_defaults[((idx - 1) %% length(palette_defaults)) + 1]
+        }
+        if (length(pal) != 1L) {
+            stop("Each density layer must specify a single palette colour.")
+        }
+        pal
+    }
+
+    resolve_alpha <- function(value, idx) {
+        aval <- value
+        if (is.null(aval) || !is.numeric(aval) || !length(aval) || !is.finite(aval[1])) {
+            aval <- alpha_defaults[((idx - 1) %% length(alpha_defaults)) + 1]
+        }
+        aval <- max(0, min(1, aval[1]))
+        aval
+    }
+
+    resolve_cutoff <- function(value) {
+        if (is.null(value) || !is.numeric(value) || !is.finite(value)) {
+            return(1)
+        }
+        max(0, value)
+    }
+
+    ## helper to assemble heatmap data.frame
+    build_heat <- function(d_col, cutoff_frac) {
+        df <- data.frame(
+            grid_id = rownames(densityDF),
+            d = densityDF[[d_col]],
+            stringsAsFactors = FALSE
+        )
+        heat <- merge(grid_info, df, by = "grid_id", all.x = TRUE)
+        heat$d[is.na(heat$d)] <- 0
+        maxv <- max(heat$d, na.rm = TRUE)
+        heat$cut <- maxv * cutoff_frac
+        heat$d <- pmin(heat$d, heat$cut)
+        heat
+    }
+
+    ## ------------------------------------------------------------------ 3
+    ## tile geometry (centre & size)
+    tile_df <- function(df) {
+        transform(df,
+            x = (xmin + xmax) / 2,
+            y = (ymin + ymax) / 2,
+            w = xmax - xmin,
+            h = ymax - ymin
+        )
+    }
+
+    density_layers_prepared <- lapply(seq_along(density_specs), function(idx) {
+        spec <- density_specs[[idx]]
+        cutoff_use <- resolve_cutoff(spec$max_cutoff)
+        heat_df <- build_heat(spec$column, cutoff_use)
+        tile_data <- tile_df(heat_df)
+        list(
+            data = tile_data,
+            label = spec$label %||% spec$column,
+            palette = resolve_palette(spec$palette, idx),
+            alpha = resolve_alpha(spec$alpha, idx),
+            cutoff = max(tile_data$cut, na.rm = TRUE)
+        )
+    })
+
+    library(ggplot2)
+    p <- ggplot()
+
+    ## ------------------------------------------------------------------ 3.0
+    ## optional background image overlay (auto-detect from grid layer)
+    if (isTRUE(overlay_image)) {
+        img_info <- g_layer$image_info
+        mpp_fullres <- g_layer$microns_per_pixel
+        hires_path <- if (!is.null(img_info)) img_info$hires_path else NULL
+        lowres_path <- if (!is.null(img_info)) img_info$lowres_path else NULL
+        if (!is.null(image_path)) {
+            hires_path <- image_path
+            lowres_path <- NULL
+        }
+        sel_path <- switch(image_choice,
+            auto = if (!is.null(hires_path)) hires_path else lowres_path,
+            hires = hires_path,
+            lowres = lowres_path
+        )
+        if (!is.null(sel_path) && file.exists(sel_path) && is.finite(mpp_fullres)) {
+            ext <- tolower(tools::file_ext(sel_path))
+            img <- NULL
+            if (ext %in% c("png") && requireNamespace("png", quietly = TRUE)) {
+                img <- png::readPNG(sel_path)
+            } else if (ext %in% c("jpg","jpeg") && requireNamespace("jpeg", quietly = TRUE)) {
+                img <- jpeg::readJPEG(sel_path)
+            }
+            if (!is.null(img)) {
+                # Normalize to RGBA array and apply alpha (annotation_raster has no alpha arg)
+                if (length(dim(img)) == 2L) {
+                    # grayscale -> RGB
+                    img_rgb <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 3L))
+                    img_rgb[,,1] <- img; img_rgb[,,2] <- img; img_rgb[,,3] <- img
+                    img <- img_rgb
+                }
+                if (length(dim(img)) == 3L) {
+                    if (dim(img)[3] == 3L) {
+                        img_rgba <- array(NA_real_, dim = c(dim(img)[1], dim(img)[2], 4L))
+                        img_rgba[,,1:3] <- img
+                        img_rgba[,,4]   <- max(0, min(1, image_alpha))
+                        img <- img_rgba
+                    } else if (dim(img)[3] == 4L) {
+                        img[,,4] <- pmin(1, pmax(0, img[,,4] * image_alpha))
+                    }
+                }
+
+                # image size (width x height) in um
+                wpx <- dim(img)[2]; hpx <- dim(img)[1]
+                # Determine effective microns-per-pixel depending on image type and scalefactors
+                hires_sf <- if (!is.null(img_info)) img_info$tissue_hires_scalef else NA_real_
+                lowres_sf <- if (!is.null(img_info)) img_info$tissue_lowres_scalef else NA_real_
+                eff_mpp <- mpp_fullres
+                # Detect by filename if necessary
+                is_hires <- grepl("tissue_hires_image", basename(sel_path), ignore.case = TRUE)
+                is_lowres <- grepl("tissue_lowres_image", basename(sel_path), ignore.case = TRUE)
+                is_aligned <- grepl("aligned_tissue_image", basename(sel_path), ignore.case = TRUE)
+                if (is_hires && is.finite(hires_sf)) eff_mpp <- mpp_fullres / hires_sf
+                if (is_lowres && is.finite(lowres_sf)) eff_mpp <- mpp_fullres / lowres_sf
+                if (is_aligned) eff_mpp <- mpp_fullres
+                # Fallback: if cannot infer, try to match grid width to image width by simple ratio
+                if (!is.finite(eff_mpp) || eff_mpp <= 0) eff_mpp <- mpp_fullres
+                w_um <- as.numeric(wpx) * as.numeric(eff_mpp)
+                h_um <- as.numeric(hpx) * as.numeric(eff_mpp)
+                y_origin <- if (!is.null(img_info$y_origin)) img_info$y_origin else "top-left"
+                # If grid was not flipped (top-left), flip image vertically by swapping ymin/ymax
+                if (identical(y_origin, "top-left")) {
+                    p <- p + annotation_raster(img,
+                        xmin = 0, xmax = w_um,
+                        ymin = h_um, ymax = 0,
+                        interpolate = TRUE
+                    )
+                } else {
+                    p <- p + annotation_raster(img,
+                        xmin = 0, xmax = w_um,
+                        ymin = 0, ymax = h_um,
+                        interpolate = TRUE
+                    )
+                }
+            }
+        }
+    }
+
+    add_density_layer <- function(p_obj, layer, idx, draw_tiles = TRUE) {
+        if (idx > 1) {
+            if (!requireNamespace("ggnewscale", quietly = TRUE)) {
+                stop("Package 'ggnewscale' is required for multiple density layers.")
+            }
+            p_obj <- p_obj + ggnewscale::new_scale_fill()
+        }
+        low_col <- "transparent"
+        high_col <- layer$palette
+        tile_layer <- if (isTRUE(draw_tiles)) {
+            layer_geom <- geom_tile(
+                data = layer$data,
+                aes(x = x, y = y, width = w, height = h, fill = d),
+                colour = NA,
+                alpha = layer$alpha,
+                inherit.aes = FALSE
+            )
+            if (use_blend_filters) {
+                if (idx == 1) {
+                    layer_geom <- ggfx::as_reference(
+                        layer_geom,
+                        id = blend_ref_id,
+                        include = TRUE
+                    )
+                } else {
+                    layer_geom <- ggfx::with_blend(
+                        layer_geom,
+                        bg_layer = blend_ref_id,
+                        blend_type = layer_blend,
+                        id = blend_ref_id,
+                        include = TRUE
+                    )
+                }
+            }
+            layer_geom
+        } else {
+            geom_tile(
+                data = layer$data,
+                aes(x = x, y = y, width = w, height = h, fill = d),
+                colour = NA,
+                alpha = 0,
+                inherit.aes = FALSE
+            )
+        }
+        p_obj +
+            tile_layer +
+            scale_fill_gradient(
+                name = layer$label,
+                low = low_col,
+                high = high_col,
+                limits = c(0, layer$cutoff),
+                oob = scales::squish,
+                labels = scales::number_format(accuracy = accuracy_val),
+                na.value = low_col,
+                guide = guide_colorbar(order = idx)
+            )
+    }
+
+    blend_rgb_mix <- function(layers) {
+        if (!length(layers)) return(NULL)
+        base_df <- layers[[1]]$data[, c("grid_id", "x", "y", "w", "h")]
+        channel_sum_r <- rep(0, nrow(base_df))
+        channel_sum_g <- rep(0, nrow(base_df))
+        channel_sum_b <- rep(0, nrow(base_df))
+        intensity_sum <- rep(0, nrow(base_df))
+        for (layer in layers) {
+            layer_df <- layer$data[, c("grid_id", "d")]
+            merged <- merge(base_df[, "grid_id", drop = FALSE], layer_df,
+                by = "grid_id", all.x = TRUE
+            )
+            intensity <- merged$d / layer$cutoff
+            intensity[!is.finite(intensity)] <- 0
+            intensity <- pmax(0, pmin(1, intensity))
+            intensity <- intensity * layer$alpha
+            rgb_vals <- grDevices::col2rgb(layer$palette) / 255
+            channel_sum_r <- channel_sum_r + intensity * rgb_vals[1]
+            channel_sum_g <- channel_sum_g + intensity * rgb_vals[2]
+            channel_sum_b <- channel_sum_b + intensity * rgb_vals[3]
+            intensity_sum <- intensity_sum + intensity
+        }
+        safe_intensity <- ifelse(intensity_sum > 0, intensity_sum, 1)
+        base_df$fill_hex <- grDevices::rgb(
+            pmax(0, pmin(1, channel_sum_r / safe_intensity)),
+            pmax(0, pmin(1, channel_sum_g / safe_intensity)),
+            pmax(0, pmin(1, channel_sum_b / safe_intensity))
+        )
+        base_df$fill_alpha <- pmax(0, pmin(1, intensity_sum))
+        base_df
+    }
+
+    if (identical(layer_blend, "rgb_mix")) {
+        for (idx in seq_along(density_layers_prepared)) {
+            p <- add_density_layer(
+                p,
+                density_layers_prepared[[idx]],
+                idx,
+                draw_tiles = FALSE
+            )
+        }
+        if (!requireNamespace("ggnewscale", quietly = TRUE)) {
+            stop("layer_blend 'rgb_mix' requires the 'ggnewscale' package.")
+        }
+        p <- p + ggnewscale::new_scale_fill()
+        rgb_df <- blend_rgb_mix(density_layers_prepared)
+        if (!is.null(rgb_df) && nrow(rgb_df)) {
+            p <- p +
+                geom_tile(
+                    data = rgb_df,
+                    aes(x = x, y = y, width = w, height = h, fill = fill_hex, alpha = fill_alpha),
+                    colour = NA,
+                    inherit.aes = FALSE
+                ) +
+                scale_fill_identity(guide = "none") +
+                scale_alpha_identity(guide = "none")
+        }
+    } else {
+        for (idx in seq_along(density_layers_prepared)) {
+            p <- add_density_layer(p, density_layers_prepared[[idx]], idx)
+        }
+    }
+
+    ## ------------------------------------------------------------------ 4
+    ## segmentation overlay
+    seg_layers <- switch(seg_type,
+        cell    = "segmentation_cell",
+        nucleus = "segmentation_nucleus",
+        both    = c("segmentation_cell", "segmentation_nucleus")
+    )
+    seg_layers <- seg_layers[seg_layers %in% names(scope_obj@coord)]
+
+    if (length(seg_layers)) {
+        seg_dt <- data.table::rbindlist(scope_obj@coord[seg_layers],
+            use.names = TRUE, fill = TRUE
+        )
+        if (seg_type == "both") {
+            is_cell <- seg_dt$cell %in% scope_obj@coord$segmentation_cell$cell
+            seg_dt[, segClass := ifelse(is_cell, "cell", "nucleus")]
+            p <- p +
+                ggforce::geom_shape(
+                    data = seg_dt[segClass == "cell"],
+                    aes(x = x, y = y, group = cell),
+                    colour = scales::alpha(colour_cell, alpha_seg),
+                    fill = NA,
+                    linewidth = 0.05
+                ) +
+                ggforce::geom_shape(
+                    data = seg_dt[segClass == "nucleus"],
+                    aes(x = x, y = y, group = cell),
+                    colour = scales::alpha(colour_nucleus, alpha_seg),
+                    fill = NA,
+                    linewidth = 0.05
+                )
+        } else {
+            ## Single type overlay (stroke transparency baked into colour)
+            col_use <- if (seg_type == "cell") colour_cell else colour_nucleus
+            p <- p +
+                ggforce::geom_shape(
+                    data = seg_dt,
+                    aes(x = x, y = y, group = cell),
+                    colour = scales::alpha(col_use, alpha_seg),
+                    fill = NA,
+                    linewidth = 0.05
+                )
+        }
+    }
+
+    ## ------------------------------------------------------------------ 5
+    ## aesthetics: square, gridlines, scale‑bar
+    x_rng <- range(grid_info$xmin, grid_info$xmax)
+    y_rng <- range(grid_info$ymin, grid_info$ymax)
+
+    # pad shorter axis
+    dx <- diff(x_rng)
+    dy <- diff(y_rng)
+    if (dx < dy) {
+        pad <- (dy - dx) / 2
+        x_rng <- x_rng + c(-pad, pad)
+    }
+    if (dy < dx) {
+        pad <- (dx - dy) / 2
+        y_rng <- y_rng + c(-pad, pad)
+    }
+
+    # gridlines
+    grid_x <- seq(x_rng[1], x_rng[2], by = grid_gap)
+    grid_y <- seq(y_rng[1], y_rng[2], by = grid_gap)
+    p <- p +
+        geom_vline(xintercept = grid_x, linewidth = 0.05, colour = "grey80") +
+        geom_hline(yintercept = grid_y, linewidth = 0.05, colour = "grey80")
+
+    p <- p +
+        scale_x_continuous(limits = x_rng, expand = c(0, 0)) +
+        scale_y_continuous(limits = y_rng, expand = c(0, 0)) +
+        coord_fixed() +
+        theme_minimal(base_size = 9) +
+        theme(
+            panel.grid = element_blank(),
+            panel.border = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.box = "horizontal",
+            legend.key.width = unit(0.4, "cm"), # key 的“宽度”
+            legend.key.height = unit(0.15, "cm"), # key 的“高度”
+            legend.text = element_text(size = 9, angle = 90),
+            legend.title = element_text(size = 8, hjust = 0, vjust = 1),
+            plot.title = element_text(size = 10, hjust = 0.5),
+            plot.margin = margin(1.2, 1, 1.5, 1, "cm"),
+            axis.line.x.bottom = element_line(colour = "black"),
+            axis.line.y.left = element_line(colour = "black"),
+            axis.line.x.top = element_blank(),
+            axis.line.y.right = element_blank(),
+            axis.title = element_blank()
+        ) +
+        theme(panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.8))
+
+    ## scale‑bar
+    x0 <- x_rng[1] + 0.01 * diff(x_rng) # 3% padding from left
+    y_bar <- y_rng[1] + bar_offset * diff(y_rng) # inside plot area
+    p <- p +
+        annotate("segment",
+            x = x0, xend = x0 + bar_len,
+            y = y_bar,
+            yend = y_bar,
+            arrow = arrow(length = unit(arrow_pt, "pt"), ends = "both"),
+            colour = scale_legend_colour,
+            linewidth = 0.4
+        ) +
+        annotate("text",
+            x = x0 + bar_len / 2,
+            y = y_bar + 0.025 * diff(y_rng),
+            label = paste0(bar_len, " \u00B5m"),
+            colour = scale_legend_colour,
+            vjust = 1, size = scale_text_size
+        )
+    return(p)
+}
