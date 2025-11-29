@@ -4,7 +4,7 @@
 [![License: GPL-3](https://img.shields.io/badge/License-GPL%203-yellow.svg)](https://opensource.org/licenses/GPL-3.0)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 
-**geneSCOPE** is an R package for comprehensive spatial gene expression analysis using Lee's L statistics. It provides a complete workflow for analyzing spatially resolved transcriptomics data, particularly designed for spatial transcriptomics datasets such as Xenium.
+**geneSCOPE** is an R package for comprehensive spatial gene expression analysis using Lee's L statistics. It provides a complete workflow for analyzing spatially resolved transcriptomics data, particularly designed for spatial transcriptomics datasets such as Xenium/Cosmx/Visium.
 
 ## Features
 
@@ -92,7 +92,7 @@ scope_obj <- createSCOPE(
 # Step 2: Add single cell data (Optional but recommended)
 scope_obj <- addSingleCells(
     scope_obj = scope_obj,
-    xenium_dir = data_path
+    data_dir = data_path
 )
 
 # Step 3: Data normalization
@@ -120,6 +120,7 @@ scope_obj <- clusterGenes(
     scope_obj = scope_obj,
     grid_name = "grid30",
     pct_min = "q95.0",
+    resolution = 0.1, # 0.1 for Leiden 
     cluster_name = "spatial_clusters"
 )
 
@@ -127,8 +128,7 @@ scope_obj <- clusterGenes(
 plotNetwork(
     scope_obj = scope_obj,
     grid_name = "grid30",
-    cluster_vec = "spatial_clusters",
-    pct_min = "q95.0"
+    cluster_vec = "spatial_clusters"
 )
 
 # Step 7: Compute L vs R and identify top gene pairs
