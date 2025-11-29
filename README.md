@@ -27,11 +27,11 @@ Create a new conda environment with all required packages in one step:
 
 ```bash
 conda create -n genescope -c conda-forge -c bioconda \
-    r-base>=4.4.1 \
-    r-data.table r-dplyr r-foreach r-ggplot2 r-ggraph r-ggrepel \
-    r-igraph r-scales r-sf r-tidyr r-devtools r-arrow \
-    r-rcpparmadillo r-rcppeigen r-future.apply r-ggforce \
-    r-ggnewscale r-spdep r-rhdf5 r-rhpcblasctl
+  "r-base>=4.4.1" \
+  r-data.table r-dplyr r-foreach r-ggplot2 r-ggraph r-ggrepel \
+  r-igraph r-scales r-sf r-tidyr r-devtools r-arrow \
+  r-rcpparmadillo r-rcppeigen r-future.apply r-ggforce \
+  r-ggnewscale r-spdep r-rhdf5 r-rhpcblasctl
 
 # Activate the environment
 conda activate genescope
