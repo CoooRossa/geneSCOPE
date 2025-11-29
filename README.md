@@ -31,7 +31,7 @@ conda create -n genescope -c conda-forge -c bioconda \
   r-data.table r-dplyr r-foreach r-ggplot2 r-ggraph r-ggrepel \
   r-igraph r-scales r-sf r-tidyr r-devtools r-arrow \
   r-rcpparmadillo r-rcppeigen r-future.apply r-ggforce \
-  r-ggnewscale r-spdep r-rhdf5 r-rhpcblasctl
+  r-ggnewscale r-spdep r-rhpcblasctl
 
 # Activate the environment
 conda activate genescope
