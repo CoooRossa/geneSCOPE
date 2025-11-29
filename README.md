@@ -31,7 +31,7 @@ conda create -n genescope -c conda-forge -c bioconda \
   r-data.table r-dplyr r-foreach r-ggplot2 r-ggraph r-ggrepel \
   r-igraph r-scales r-sf r-tidyr r-devtools r-arrow \
   r-rcpparmadillo r-rcppeigen r-future.apply r-ggforce \
-  r-ggnewscale r-spdep r-rhpcblasctl
+  r-ggnewscale r-spdep r-rhpcblasctl bioconductor-rhdf5
 
 # Activate the environment
 conda activate genescope
@@ -49,25 +49,11 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 
 # Install CRAN packages
 install.packages(c(
-  "rhpcBLASctl",
-  "arrow",
   "data.table",
-  "dplyr",
-  "foreach",
   "future.apply",
-  "ggforce",
-  "ggnewscale",
   "ggplot2",
   "ggraph",
   "ggrepel",
-  "igraph",
-  "scales",
-  "sf",
-  "spdep",
-  "tidyr",
-  "RcppArmadillo",
-  "RcppEigen",
-  "devtools"
 ))
 
 # Install Bioconductor packages
