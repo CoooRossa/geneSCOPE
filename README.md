@@ -83,7 +83,7 @@ data_path <- "/path/to/your/xenium/data"
 
 # Step 1: Create SCOPE object
 scope_obj <- createSCOPE(
-    xenium_dir = data_path,
+    data_dir = data_path,
     grid_length = c(30),
     seg_type = "cell",
     ncores = 8
