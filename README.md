@@ -210,14 +210,14 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 ```bash
 # Convert CosMx flat files to parquet (improves load speed)
-python genescope/cosmx_flatfiles_to_parquet.py \
+python path/to/geneSCOPE/cosmx_flatfiles_to_parquet.py \
   --root "<COSMX_ROOT_DIR>" \
   --pixel-size-um 0.120280945 \
   --build-transcripts --build-cells --build-segmentation \
   --overwrite
 
 # If you don't have QuPath ROIs, build ROI bundles automatically from FOVs
-python genescope/scripts/auto_rois_from_fovs.py \
+python path/to/geneSCOPE/auto_rois_from_fovs.py \
   --root "<COSMX_ROOT_DIR>" \
   --method graph --k 0 --min-fovs 3 \
   --eps-um 800 \
@@ -325,7 +325,7 @@ Prerequisites (Seurat + SCT). Current Visium support assumes SCT normalization; 
 ```r
 # install sctransform >= 0.3.3, requires Seurat >= 4.1
 install.packages(c("Seurat", "sctransform"))
-
+```
 ```r
 library(geneSCOPE)
 
@@ -453,7 +453,7 @@ The geneSCOPE analysis pipeline consists of three main parts:
 ### Part 3: Gene Clustering and Networks
 - **Gene Clustering**: Identify spatially co-expressed gene modules
 - **Network Construction**: Build gene co-expression networks
-- **Visualization**: Create publication-ready network plots and dendrograms
+- **Visualization**: Create module footprints and density maps
 
 ## Key Functions
 
