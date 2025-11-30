@@ -485,7 +485,6 @@ This project is licensed under the GPL-3 License - see the [LICENSE](LICENSE) fi
 ## Support
 
 - **Issues**: Report bugs or request features via [GitHub Issues](../../issues)
-- **Discussions**: Join the community discussion in [GitHub Discussions](../../discussions)
 - **Email**: Contact the maintainers at [0322704@ed.tus.ac.jp]
 
 ---
