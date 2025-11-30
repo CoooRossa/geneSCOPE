@@ -428,11 +428,8 @@ plotDensity(
     density1_name = "q95_r0.1_g30_density_cluster_1",
     grid_name = "grid30",
     palette1 = "red",
-    palette2 = "blue",
     max.cutoff1 = 0.5,
-    max.cutoff2 = 0.5,
-    alpha1 = 1,
-    alpha2 = 0.5
+    alpha1 = 1
 )
 ```
 
