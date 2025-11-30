@@ -4,7 +4,7 @@
 [![License: GPL-3](https://img.shields.io/badge/License-GPL%203-yellow.svg)](https://opensource.org/licenses/GPL-3.0)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 
-**geneSCOPE** is an R package for comprehensive spatial gene expression analysis using Lee's L statistics. It provides a complete workflow for analyzing spatially resolved transcriptomics data, particularly designed for spatial transcriptomics datasets such as Xenium/Cosmx/Visium.
+**geneSCOPE** is an R package for comprehensive spatial gene expression analysis using Lee's L statistics. It provides a complete workflow for analyzing SVGs in spatial transcriptomics data, particularly designed for spatial transcriptomics datasets such as Xenium/Cosmx/Visium.
 
 ## Features
 
