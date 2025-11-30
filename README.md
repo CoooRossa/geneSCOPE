@@ -474,14 +474,6 @@ geneSCOPE works with Xenium spatial transcriptomics data format, including:
 - Spatial coordinate information
 - Cell segmentation data
 
-## Documentation
-
-For detailed usage examples and function references, see:
-
-- [Complete Workflow Tutorial](vignettes/geneSCOPE_basic_workflow.html)
-- [Function Reference](man/)
-- [GitHub Issues](../../issues) for questions and bug reports
-
 ## Citation
 
 If you use geneSCOPE in your research, please cite:
