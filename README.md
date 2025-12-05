@@ -351,7 +351,7 @@ visium <- computeL_visium(
     grid_name = "grid55",
     norm_layer = "SCT",
     use_idelta = TRUE,
-    S_target = 500, # Most variable genes
+    S_target = 500, # Target number of genes after prescreening.
     ncores = 32
 )
 
