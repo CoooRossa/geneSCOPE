@@ -8,9 +8,9 @@
 
 ## Features
 
-- **Spatial Statistics**: Compute Lee's L statistics for spatial gene co-expression analysis
-- **Gene Network Analysis**: Build and visualize gene co-expression networks with spatial context
-- **Gene Clustering**: Identify spatially co-expressed gene modules using advanced clustering algorithms
+- **Spatial Statistics**: Compute Lee's L statistics for spatial gene co-occurence analysis
+- **Gene Network Analysis**: Build and visualize gene co-occurence networks with spatial context
+- **Gene Clustering**: Identify spatially co-occured gene modules using advanced clustering algorithms
 - **Quality Control & Visualization**: Plot-ready QC and exploratory views for grids, single cells, and modules
 - **High Performance**: Optimized C++ implementations for large-scale spatial datasets
 - **Flexible Workflow**: Modular design allowing customization for different analysis needs
@@ -68,7 +68,7 @@ xenium_path <- "<XENIUM_DATA_DIR>"  # path to Xenium export directory
 # 1) Create SCOPE object from raw data
 xenium <- createSCOPE(
     data_dir = xenium_path,  # input directory
-    grid_length = c(30),     # grid size (µm) for binning; 30 works well for ~100k cells
+    grid_length = c(30),     # grid size (µm) for binning; 30 works well for Xenium datasets with about ~100k cells
     seg_type = "cell",       # segmentation type used for filtering/visualization
     ncores = 32,             # CPU cores for parallel parsing
     # If your data contain extra non-gene signals, extend the default exclude_prefixes:
@@ -216,7 +216,7 @@ python path/to/geneSCOPE/cosmx_flatfiles_to_parquet.py \
   --build-transcripts --build-cells --build-segmentation \
   --overwrite
 
-# If you don't have QuPath ROIs, build ROI bundles automatically from FOVs
+# If you don't have QuPath ROIs, build ROI bundles automatically from FOVs (optionally)
 python path/to/geneSCOPE/auto_rois_from_fovs.py \
   --root "<COSMX_ROOT_DIR>" \
   --method graph --k 0 --min-fovs 3 \
@@ -351,7 +351,7 @@ visium <- computeL_visium(
     grid_name = "grid55",
     norm_layer = "SCT",
     use_idelta = TRUE,
-    S_target = 500,
+    S_target = 500, # Most variable genes
     ncores = 32
 )
 
