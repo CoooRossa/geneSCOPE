@@ -476,6 +476,9 @@ geneSCOPE works with Xenium spatial transcriptomics data format, including:
 If you use geneSCOPE in your research, please cite:
 
 ```
+geneSCOPE: gene Spatial Co-Occurrence of Pairwise Expression
+Shicheng Zhang, Koichi Saeki, Hiroshi Haeno
+bioRxiv 2025.12.03.691993; doi: https://doi.org/10.64898/2025.12.03.691993
 ```
 
 ## License
