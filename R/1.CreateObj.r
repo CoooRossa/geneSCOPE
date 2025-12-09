@@ -111,14 +111,12 @@
 #' @keywords internal
 .configure_worker_threads <- function(state) {
     p <- state$params
-    thread_config <- configureThreadsFor("io_bound", p$ncores, restore_after = TRUE)
-    restore_fn <- attr(thread_config, "restore_function")
-    ncores_io <- thread_config$r_threads
-    ncores_cpp <- thread_config$openmp_threads
     log_prefix <- p$log_prefix
 
     os_type <- detectOS()
-    max_cores <- parallel::detectCores()
+    max_cores <- max(1L, parallel::detectCores())
+    requested_cores <- if (is.null(p$ncores) || is.na(p$ncores)) max_cores else p$ncores
+    target_cores <- min(requested_cores, max_cores)
 
     sys_mem_gb <- tryCatch({
         if (os_type == "linux") {
@@ -136,44 +134,23 @@
         }
     }, error = function(e) 32)
 
-    mem_based_limit <- if (sys_mem_gb > 500) {
-        min(p$ncores, max_cores - 2)
-    } else {
-        switch(cut(sys_mem_gb, breaks = c(0, 8, 32, 64, 128, Inf), labels = FALSE),
-            1,
-            min(4, max_cores - 1),
-            min(8, max_cores - 1),
-            min(16, max_cores - 1),
-            min(p$ncores, max_cores - 2)
-        )
-    }
-
-    platform_limit <- switch(os_type,
-        windows = min(8, max_cores - 1),
-        macos = min(12, max_cores - 1),
-        linux = if (sys_mem_gb > 100) min(p$ncores, max_cores - 2) else min(32, max_cores - 1)
-    )
-
-    test_cores <- min(p$ncores, mem_based_limit, platform_limit)
+    # Aggressive mode: attempt the requested core count first, only backing off if cluster setup fails.
+    test_cores <- target_cores
     ncores_safe <- 1L
-    test_step <- if (sys_mem_gb > 100 || max_cores > 32) 8 else 2
 
-    for (test_nc in seq(test_cores, 1, by = -test_step)) {
+    for (test_nc in seq(test_cores, 1, by = -1L)) {
+        cl <- NULL
         ok <- tryCatch({
-            if (test_nc > 1) {
-                if (sys_mem_gb > 100) {
-                    TRUE
-                } else {
-                    cl <- parallel::makeCluster(min(test_nc, 4))
-                    on.exit(parallel::stopCluster(cl), add = TRUE)
-                    parallel::clusterEvalQ(cl, 1 + 1)
-                    parallel::stopCluster(cl)
-                }
+            if (test_nc > 1 && sys_mem_gb <= 100) {
+                cl <- parallel::makeCluster(min(test_nc, 4))
+                parallel::clusterEvalQ(cl, 1 + 1)
             }
             TRUE
         }, error = function(e) {
-            if (p$verbose) message(log_prefix, " Testing ", test_nc, " cores failed, trying fewer")
+            if (p$verbose) message(log_prefix, " Testing ", test_nc, " cores failed, trying fewer: ", e$message)
             FALSE
+        }, finally = {
+            if (!is.null(cl)) try(parallel::stopCluster(cl), silent = TRUE)
         })
         if (isTRUE(ok)) {
             ncores_safe <- test_nc
@@ -183,12 +160,17 @@
 
     if (p$verbose) {
         mem_display <- if (sys_mem_gb >= 1024) paste0(round(sys_mem_gb / 1024, 1), "TB") else paste0(round(sys_mem_gb, 1), "GB")
-        if (ncores_safe < p$ncores) {
-            message(log_prefix, " Core configuration: using ", ncores_safe, "/", p$ncores, " cores (", mem_display, " RAM, ", os_type, ")")
+        if (ncores_safe < target_cores) {
+            message(log_prefix, " Core configuration: using ", ncores_safe, "/", target_cores, " cores (", mem_display, " RAM, ", os_type, ")")
         } else {
-            message(log_prefix, " Core configuration: using ", ncores_safe, " cores")
+            message(log_prefix, " Core configuration: using ", ncores_safe, " cores (", mem_display, " RAM, ", os_type, ")")
         }
     }
+
+    thread_config <- configureThreadsFor("io_bound", ncores_safe, restore_after = TRUE)
+    restore_fn <- attr(thread_config, "restore_function")
+    ncores_io <- thread_config$r_threads
+    ncores_cpp <- thread_config$openmp_threads
 
     state$thread_context <- list(
         thread_config = thread_config,
