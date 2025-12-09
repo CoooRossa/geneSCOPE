@@ -57,34 +57,13 @@ computeL <- function(scope_obj,
         ncores <- ncore
     }
 
-    # Get system information and safe thread count
+    # Get system information and aggressive thread count (use all visible cores up to request)
     os_type <- detectOS()
-    total_cores <- parallel::detectCores(logical = FALSE)
-    logical_cores <- parallel::detectCores(logical = TRUE)
-
-    # System-specific safe defaults
-    safe_cores <- switch(os_type,
-        windows = min(4, total_cores),
-        linux = min(total_cores - 2, ceiling(logical_cores * 0.6)),
-        macos = min(total_cores - 1, ceiling(logical_cores * 0.5)),
-        2 # default conservative value
-    )
-
-    # Take the safest core count
-    cores_to_use <- min(ncores, safe_cores)
-
-    # Only warn if user setting significantly exceeds safe range
+    avail_cores <- max(1L, parallel::detectCores(logical = TRUE))
+    ncores <- max(1L, min(ncores, avail_cores))
     if (verbose) {
-        if (cores_to_use < ncores * 0.75) {
-            message("[geneSCOPE::computeL] Core configuration: using ", cores_to_use, "/", ncores, " cores (", os_type, " system limit)")
-        } else if (cores_to_use < ncores) {
-            message("[geneSCOPE::computeL] Core configuration: using ", cores_to_use, "/", ncores, " cores (optimized)")
-        } else {
-            message("[geneSCOPE::computeL] Core configuration: using ", ncores, " cores")
-        }
+        message("[geneSCOPE::computeL] Core configuration: using ", ncores, "/", avail_cores, " logical cores")
     }
-
-    ncores <- cores_to_use
 
     # Use thread configuration for mixed OpenMP/BLAS operations
     thread_config <- configureThreadsFor("mixed", ncores, restore_after = TRUE)
@@ -127,21 +106,6 @@ computeL <- function(scope_obj,
     n_genes_use <- if (!is.null(genes)) length(genes) else all_genes
     matrix_size_gb <- (n_genes_use^2 * 8) / (1024^3)
 
-    # More reasonable platform-specific memory limits
-    max_memory_gb <- switch(os_type,
-        windows = 64, # More reasonable value for Windows
-        linux = 128, # Higher for Linux
-        macos = 96 # Higher for macOS
-    )
-
-    if (matrix_size_gb > max_memory_gb) {
-        stop(
-            "Estimated matrix size (", round(matrix_size_gb, 1), " GB) exceeds ",
-            "platform limit (", max_memory_gb, " GB). ",
-            "Please reduce the number of genes or use smaller grid sizes."
-        )
-    }
-
     # More reasonable bigmemory configuration
     if (matrix_size_gb > mem_limit_GB) {
         if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
@@ -150,12 +114,6 @@ computeL <- function(scope_obj,
         } else {
             if (verbose) message("[geneSCOPE::computeL] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
             use_bigmemory <- TRUE
-            # Less conservative chunk size
-            chunk_size <- min(chunk_size, switch(os_type,
-                windows = 16L,
-                macos = 32L,
-                linux = 64L
-            ))
         }
     }
 
@@ -317,7 +275,7 @@ computeL <- function(scope_obj,
                     p_result <- .leeL_perm_block(X_used, W, L_reg,
                         block_id   = block_id,
                         perms      = perms,
-                        block_size = min(block_size, 32),
+                        block_size = block_size,
                         n_threads  = perm_cores
                     )
                     t_end <- Sys.time()
