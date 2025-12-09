@@ -25,6 +25,8 @@
 #'   and additionally stores a row-normalised matrix to support fuzzy diffusion
 #'   analyses, while `"fuzzy_hex"` performs the same preparation on the
 #'   hexagonal lattice.
+#' @param ncores Integer; number of R processes to use when relabelling neighbours
+#'   for large grids. Defaults to all visible cores; falls back to serial on Windows.
 #'
 #' @return Invisibly returns the modified \code{scope_object}.
 #'
@@ -39,7 +41,8 @@ computeWeights <- function(scope_obj,
                            zero_policy = TRUE,
                            store_listw = TRUE,
                            verbose = TRUE,
-                           topology = c("auto", "queen", "rook", "hex", "fuzzy_queen", "fuzzy_hex")) {
+                           topology = c("auto", "queen", "rook", "hex", "fuzzy_queen", "fuzzy_hex"),
+                           ncores = parallel::detectCores(logical = TRUE)) {
   topology <- match.arg(topology)
   use_fuzzy <- grepl("^fuzzy", topology)
   topo_arg <- if (use_fuzzy) {
@@ -57,12 +60,14 @@ computeWeights <- function(scope_obj,
   grid_name <- layer_info$grid_name
   layer <- layer_info$layer
   meta <- .spw_validate_grid_metadata(layer, grid_name)
+  ncores_use <- max(1L, min(ncores, parallel::detectCores(logical = TRUE)))
+  if (.Platform$OS.type == "windows") ncores_use <- 1L
 
   # 2) Determine lattice topology (auto or forced)
   topo_info <- .spw_choose_topology(scope_obj, layer, topo_arg, verbose)
 
   # 3) Build the full neighbourhood structure and relabel to active cells
-  nb_bundle <- .spw_build_neighbourhood(meta, topo_info, zero_policy)
+  nb_bundle <- .spw_build_neighbourhood(meta, topo_info, zero_policy, ncores = ncores_use, verbose = verbose)
   relabel_nb <- nb_bundle$nb
   zero_idx <- nb_bundle$zero_idx
 
@@ -367,7 +372,7 @@ computeWeights <- function(scope_obj,
   "hex-evenq"
 }
 
-.spw_build_neighbourhood <- function(meta, topo_info, zero_policy) {
+.spw_build_neighbourhood <- function(meta, topo_info, zero_policy, ncores = 1L, verbose = FALSE) {
   topology <- topo_info$topology
   xbins_eff <- meta$xbins_eff
   ybins_eff <- meta$ybins_eff
@@ -394,10 +399,21 @@ computeWeights <- function(scope_obj,
   }
 
   sub_nb <- full_nb[cell_id]
-  relabel_nb <- lapply(sub_nb, function(v) {
-    idx <- match(v, cell_id)
-    idx[!is.na(idx)]
-  })
+  idx_map <- rep.int(NA_integer_, length(full_nb))
+  idx_map[cell_id] <- seq_along(cell_id)
+
+  map_fn <- function(v) {
+    out <- idx_map[v]
+    out[!is.na(out)]
+  }
+
+  use_parallel <- (ncores > 1L) && length(sub_nb) > 5000L
+  relabel_nb <- if (use_parallel) {
+    if (verbose) message("[geneSCOPE::computeWeights] Relabelling neighbours with ", ncores, " processes")
+    parallel::mclapply(sub_nb, map_fn, mc.cores = ncores)
+  } else {
+    lapply(sub_nb, map_fn)
+  }
 
   attr(relabel_nb, "class") <- "nb"
   attr(relabel_nb, "region.id") <- meta$grid_id
