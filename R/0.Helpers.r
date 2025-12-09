@@ -1782,6 +1782,15 @@ build_segmentation_geometries <- function(path,
     block_id
 }
 
+#' Compact block identifiers to consecutive integers (1..k) sorted by ID.
+#' This reduces factor overhead and keeps permutation shuffles stable.
+#' @noRd
+.compact_block_id <- function(block_id) {
+    if (length(block_id) == 0L) return(block_id)
+    uniq_sorted <- sort(unique(block_id))
+    match(block_id, uniq_sorted)
+}
+
 #' Summarize cluster metrics using dense matrices for smaller cases.
 #' Provides a simple dense fallback when sparse machinery is unnecessary.
 #' @noRd
