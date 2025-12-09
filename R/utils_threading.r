@@ -134,8 +134,8 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
 
 #' @title Configure for compute-intensive operations
 .configureComputeIntensive <- function(ncores_requested) {
-  max_cores <- parallel::detectCores()
-  safe_cores <- min(ncores_requested, max_cores - 1, 16) # conservative cap
+  max_cores <- max(1L, parallel::detectCores())
+  safe_cores <- max(1L, min(ncores_requested, max_cores))
 
   list(
     openmp_threads = safe_cores,
@@ -146,32 +146,33 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
 
 #' @title Configure for I/O bound operations
 .configureIOBound <- function(ncores_requested) {
-  max_cores <- parallel::detectCores()
-  safe_cores <- min(ncores_requested, max_cores - 1, 8)
+  max_cores <- max(1L, parallel::detectCores())
+  safe_cores <- max(1L, min(ncores_requested, max_cores))
 
   list(
-    openmp_threads = 2, # limited OpenMP usage
-    r_threads = safe_cores, # allow more R threads for I/O
+    openmp_threads = max(1, min(4, safe_cores)), # light OMP to keep schedulers responsive
+    r_threads = safe_cores, # aggressive use of R-level threads
     blas_threads = 1
   )
 }
 
 #' @title Configure for mixed operations
 .configureMixed <- function(ncores_requested) {
-  max_cores <- parallel::detectCores()
-  safe_cores <- min(ncores_requested, max_cores - 1, 12)
+  max_cores <- max(1L, parallel::detectCores())
+  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  openmp_share <- max(1, floor(safe_cores / 2))
 
   list(
-    openmp_threads = max(1, safe_cores %/% 2),
-    r_threads = max(1, safe_cores %/% 2),
+    openmp_threads = openmp_share,
+    r_threads = max(1, safe_cores - openmp_share),
     blas_threads = 1
   )
 }
 
 #' @title Configure for OpenMP-only operations
 .configureOpenMPOnly <- function(ncores_requested) {
-  max_cores <- parallel::detectCores()
-  safe_cores <- min(ncores_requested, max_cores - 1, 16)
+  max_cores <- max(1L, parallel::detectCores())
+  safe_cores <- max(1L, min(ncores_requested, max_cores))
 
   list(
     openmp_threads = safe_cores,
