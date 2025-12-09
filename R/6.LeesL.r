@@ -22,6 +22,7 @@
 #' @param chunk_size Integer. Number of columns processed per chunk (default 128).
 #' @param use_bigmemory Logical. Use file-backed matrices for large computations (default TRUE).
 #' @param backing_path Character. Directory for temporary files (default tempdir()).
+#' @param cache_inputs Logical. Cache preprocessed X/Z/W and block IDs for reuse across calls (default TRUE).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @param ncore Deprecated. Use \code{ncores} instead.
 #' @return The modified \code{scope_object}.
@@ -45,6 +46,7 @@ computeL <- function(scope_obj,
                      chunk_size = 32L,
                      use_bigmemory = TRUE,
                      backing_path = tempdir(),
+                     cache_inputs = TRUE,
                      verbose = TRUE,
                      ncore = NULL) {
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
@@ -56,6 +58,9 @@ computeL <- function(scope_obj,
         )
         ncores <- ncore
     }
+
+    user_set_bigmemory <- !missing(use_bigmemory)
+    user_set_chunk <- !missing(chunk_size)
 
     # Get system information and aggressive thread count (use all visible cores up to request)
     os_type <- detectOS()
@@ -106,14 +111,21 @@ computeL <- function(scope_obj,
     n_genes_use <- if (!is.null(genes)) length(genes) else all_genes
     matrix_size_gb <- (n_genes_use^2 * 8) / (1024^3)
 
-    # More reasonable bigmemory configuration
+    # Respect user bigmemory/chunk overrides while still hinting when streaming is advisable
     if (matrix_size_gb > mem_limit_GB) {
-        if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
+        if (use_bigmemory) {
+            if (verbose) {
+                message("[geneSCOPE::computeL] Large matrix detected (", round(matrix_size_gb, 1), " GB); staying in bigmemory/streaming mode.",
+                    if (!user_set_chunk) " You may tune chunk_size to trade IO vs RAM." else "")
+            }
+        } else if (user_set_bigmemory) {
+            if (verbose) message("[geneSCOPE::computeL] Warning: requested use_bigmemory=FALSE with large matrix (", round(matrix_size_gb, 1), " GB); proceeding in-memory as requested.")
+        } else if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
             if (verbose) message("[geneSCOPE::computeL] !!! Warning: bigmemory not available on Windows; using regular matrices !!!")
             use_bigmemory <- FALSE
         } else {
-            if (verbose) message("[geneSCOPE::computeL] Large matrix detected (", round(matrix_size_gb, 1), " GB). ", "Using bigmemory file-backed storage.")
             use_bigmemory <- TRUE
+            if (verbose) message("[geneSCOPE::computeL] Large matrix detected (", round(matrix_size_gb, 1), " GB); enabling bigmemory/streaming.")
         }
     }
 
@@ -158,7 +170,14 @@ computeL <- function(scope_obj,
                     mem_limit_GB = mem_limit_GB,
                     chunk_size = chunk_size,
                     use_bigmemory = use_bigmemory,
-                    backing_path = backing_path
+                    backing_path = backing_path,
+                    block_side = block_side,
+                    cache_inputs = cache_inputs,
+                    input_cache = if (cache_inputs && !is.null(scope_obj@stats[[grid_name]])) {
+                        scope_obj@stats[[grid_name]][["_lee_input_cache"]]
+                    } else {
+                        NULL
+                    }
                 )
                 t_end <- Sys.time()
 
@@ -237,7 +256,8 @@ computeL <- function(scope_obj,
         dimnames(Z_mat) <- dimnames(L)
     }
 
-    block_id <- .assign_block_id(grid_inf, block_side = block_side)
+    block_id <- res$block_id
+    input_cache <- res$input_cache
 
     ## --- 4. Monte Carlo p-values with BLAS control and error recovery ---
     P <- if (perms > 0) {
@@ -536,6 +556,11 @@ computeL <- function(scope_obj,
         )
     )
 
+    if (cache_inputs) {
+        if (is.null(scope_obj@stats[[gname]])) scope_obj@stats[[gname]] <- list()
+        scope_obj@stats[[gname]][["_lee_input_cache"]] <- input_cache
+    }
+
     invisible(scope_obj)
 }
 
@@ -550,7 +575,10 @@ computeL <- function(scope_obj,
                          mem_limit_GB = 16,
                          chunk_size = 256L,
                          use_bigmemory = TRUE,
-                         backing_path = tempdir()) {
+                         backing_path = tempdir(),
+                         block_side = 8,
+                         cache_inputs = FALSE,
+                         input_cache = NULL) {
     if (use_bigmemory && !requireNamespace("bigmemory", quietly = TRUE)) {
         stop("Package 'bigmemory' is required.")
     }
@@ -564,11 +592,27 @@ computeL <- function(scope_obj,
         ]
     }
 
-    ## ---- 1. Extract expression matrix and weight matrix ----------------------------------
-    Xz_full <- as.matrix(g_layer[[norm_layer]])
-    ord <- match(g_layer$grid_info$grid_id, rownames(Xz_full))
-    Xz_full <- Xz_full[ord, , drop = FALSE]
-    W <- g_layer$W[ord, ord]
+    ## ---- 1. Extract expression matrix and weight matrix (with optional reuse) ----
+    grid_info <- g_layer$grid_info
+    cache_valid <- cache_inputs &&
+        !is.null(input_cache) &&
+        identical(input_cache$norm_layer, norm_layer) &&
+        identical(input_cache$grid_id, grid_info$grid_id) &&
+        identical(input_cache$block_side, block_side)
+
+    if (cache_valid) {
+        Xz_full <- input_cache$Xz_full
+        W <- input_cache$W
+        block_id <- input_cache$block_id
+    } else {
+        Xz_full <- as.matrix(g_layer[[norm_layer]])
+        ord <- match(grid_info$grid_id, rownames(Xz_full))
+        Xz_full <- Xz_full[ord, , drop = FALSE]
+        W <- g_layer$W[ord, ord]
+        block_id <- .assign_block_id(grid_info, block_side = block_side)
+    }
+
+    block_id <- .compact_block_id(block_id)
 
 
     all_genes <- colnames(Xz_full)
@@ -662,7 +706,20 @@ computeL <- function(scope_obj,
         cells     = rownames(Xz_full),
         W         = W,
         grid_info = g_layer$grid_info,
-        grid_name = grid_name # ← Additional return, convenient for computeL
+        grid_name = grid_name, # ← Additional return, convenient for computeL
+        block_id  = block_id,
+        input_cache = if (cache_inputs) {
+            list(
+                norm_layer = norm_layer,
+                grid_id = grid_info$grid_id,
+                block_side = block_side,
+                Xz_full = Xz_full,
+                W = W,
+                block_id = block_id
+            )
+        } else {
+            NULL
+        }
     )
 }
 
