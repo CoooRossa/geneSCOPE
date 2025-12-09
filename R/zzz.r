@@ -231,61 +231,22 @@ getOptimalThreadConfig <- function(ncores_requested = parallel::detectCores(),
                                    task_type = "mixed",
                                    memory_gb = NULL) {
   max_cores <- parallel::detectCores()
-  os_type <- detectOS()
 
-  if (is.null(memory_gb)) {
-    memory_gb <- tryCatch(
-      {
-        if (os_type == "linux") {
-          mem_info <- readLines("/proc/meminfo")
-          mem_total <- grep("MemTotal", mem_info, value = TRUE)
-          as.numeric(gsub("[^0-9]", "", mem_total)) / 1024 / 1024
-        } else if (os_type == "macos") {
-          mem_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
-          mem_bytes / 1024^3
-        } else {
-          16
-        }
-      },
-      error = function(e) 16
-    )
-  }
-
-  platform_limit <- switch(os_type,
-    windows = min(16, max_cores),
-    macos = min(20, max_cores),
-    linux = min(24, max_cores)
-  )
-
-  memory_limit <- switch(task_type,
-    "openmp_only" = max(1, floor(memory_gb / 1.5)),
-    "blas_heavy" = max(1, floor(memory_gb / 2)),
-    "mixed" = max(1, floor(memory_gb / 2.5)),
-    "io_bound" = max(1, floor(memory_gb / 1))
-  )
+  safe_cores <- max(1L, min(ncores_requested, max_cores))
 
   thread_config <- switch(task_type,
-    "openmp_only" = list(openmp_threads = min(ncores_requested, platform_limit, memory_limit), blas_threads = 1, r_threads = 1),
-    "blas_heavy" = list(openmp_threads = 1, blas_threads = min(ncores_requested, platform_limit, memory_limit), r_threads = 1),
+    "openmp_only" = list(openmp_threads = safe_cores, blas_threads = 1, r_threads = 1),
+    "blas_heavy" = list(openmp_threads = 1, blas_threads = safe_cores, r_threads = 1),
     "mixed" = {
-      total_safe <- min(ncores_requested, platform_limit, memory_limit)
-      openmp_share <- max(1, ceiling(total_safe * 0.7))
-      blas_share <- max(1, min(4, total_safe - openmp_share + 1))
-      list(openmp_threads = openmp_share, blas_threads = blas_share, r_threads = 1)
+      openmp_share <- max(1, ceiling(safe_cores * 0.7))
+      r_share <- max(1, safe_cores - openmp_share)
+      list(openmp_threads = openmp_share, blas_threads = 1, r_threads = r_share)
     },
-    "io_bound" = list(openmp_threads = min(8, max_cores), blas_threads = 1, r_threads = min(ncores_requested, 12))
+    "io_bound" = list(openmp_threads = max(1, min(8, safe_cores)), blas_threads = 1, r_threads = safe_cores)
   )
 
-  total_threads <- thread_config$openmp_threads + thread_config$blas_threads
-  max_allowed <- max_cores - 1
-  if (total_threads > max_allowed) {
-    scale_factor <- max_allowed / total_threads
-    thread_config$openmp_threads <- max(1, floor(thread_config$openmp_threads * scale_factor))
-    thread_config$blas_threads <- max(1, min(4, floor(thread_config$blas_threads * scale_factor)))
-  }
-
-  thread_config$total_used <- thread_config$openmp_threads + thread_config$blas_threads
-  thread_config$efficiency <- thread_config$total_used / max_cores
+  thread_config$total_used <- safe_cores
+  thread_config$efficiency <- safe_cores / max_cores
   thread_config$task_type <- task_type
   return(thread_config)
 }
