@@ -51,11 +51,8 @@ computeCorrelation <- function(scope_obj,
     if (verbose) message("[geneSCOPE::computeCorrelation] !!! Warning: Could not detect cores, using single core !!!")
   }
 
-  # Simple safety limit
-  ncores_safe <- min(ncores, max_cores - 1, 16) # Maximum 16 cores
-  if (ncores_safe <= 0) {
-    ncores_safe <- 1
-  }
+  # Aggressive: use requested cores up to available logical cores
+  ncores_safe <- max(1L, min(ncores, max_cores))
 
   if (ncores_safe < ncores && verbose) {
     message("[geneSCOPE::computeCorrelation] Reduced ncores from ", ncores, " to ", ncores_safe, " for safety")
