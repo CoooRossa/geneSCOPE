@@ -6,6 +6,8 @@
 #include <omp.h>
 #endif
 #include <RcppEigen.h>
+#include <algorithm>
+#include <cmath>
 using namespace Rcpp;
 
 /*------------------------------------------------------------------*/
@@ -294,6 +296,452 @@ SEXP listw_B_omp(const List nb)
     W.makeCompressed();
 
     return Rcpp::wrap(W); // dgCMatrix
+}
+
+/*------------------------------------------------------------------*/
+/* 3. Kernel-smoothed sparse weights for active cells              */
+/*------------------------------------------------------------------*/
+
+namespace {
+
+struct RectOffset {
+    int dr;
+    int dc;
+    double dist;
+};
+
+inline std::vector<RectOffset> make_rect_offsets(const int radius, const bool queen) {
+    std::vector<RectOffset> offsets;
+    if (radius < 1) return offsets;
+    offsets.reserve((2 * radius + 1) * (2 * radius + 1) - 1);
+    for (int dr = -radius; dr <= radius; ++dr) {
+        for (int dc = -radius; dc <= radius; ++dc) {
+            if (dr == 0 && dc == 0) continue;
+            if (!queen && (std::abs(dr) + std::abs(dc) > radius)) continue;
+            double d = std::sqrt(static_cast<double>(dr * dr + dc * dc));
+            offsets.push_back({dr, dc, d});
+        }
+    }
+    return offsets;
+}
+
+struct CubeOffset {
+    int dx;
+    int dy;
+    int dz;
+    int dist;
+};
+
+inline std::vector<CubeOffset> make_cube_offsets(const int radius) {
+    std::vector<CubeOffset> out;
+    if (radius < 1) return out;
+    out.reserve(3 * radius * (radius + 1)); // exclude self
+    for (int dx = -radius; dx <= radius; ++dx) {
+        int dy_min = std::max(-radius, -dx - radius);
+        int dy_max = std::min(radius, -dx + radius);
+        for (int dy = dy_min; dy <= dy_max; ++dy) {
+            int dz = -dx - dy;
+            if (dx == 0 && dy == 0 && dz == 0) continue;
+            int dist = std::max({std::abs(dx), std::abs(dy), std::abs(dz)});
+            out.push_back({dx, dy, dz, dist});
+        }
+    }
+    return out;
+}
+
+inline double raw_weight(const int dist, const bool flat, const double sigma) {
+    if (flat) return 1.0;
+    const double s2 = sigma * sigma;
+    return std::exp(-(static_cast<double>(dist * dist)) / (2.0 * s2));
+}
+
+// RedBlobGames conversions: odd-r / even-r (row-offset)
+inline std::pair<int, int> offset_to_axial_oddr(const int row, const int col) {
+    int q = col - ((row - (row & 1)) / 2);
+    int r = row;
+    return {q, r};
+}
+
+inline std::pair<int, int> offset_to_axial_evenr(const int row, const int col) {
+    int q = col - ((row + (row & 1)) / 2);
+    int r = row;
+    return {q, r};
+}
+
+inline std::pair<int, int> axial_to_offset_oddr(const int q, const int r) {
+    int col = q + ((r - (r & 1)) / 2);
+    int row = r;
+    return {row, col};
+}
+
+inline std::pair<int, int> axial_to_offset_evenr(const int q, const int r) {
+    int col = q + ((r + (r & 1)) / 2);
+    int row = r;
+    return {row, col};
+}
+
+// RedBlobGames conversions: odd-q / even-q (col-offset)
+inline std::pair<int, int> offset_to_axial_oddq(const int row, const int col) {
+    int q = col;
+    int r = row - ((col - (col & 1)) / 2);
+    return {q, r};
+}
+
+inline std::pair<int, int> offset_to_axial_evenq(const int row, const int col) {
+    int q = col;
+    int r = row - ((col + (col & 1)) / 2);
+    return {q, r};
+}
+
+inline std::pair<int, int> axial_to_offset_oddq(const int q, const int r) {
+    int col = q;
+    int row = r + ((q - (q & 1)) / 2);
+    return {row, col};
+}
+
+inline std::pair<int, int> axial_to_offset_evenq(const int q, const int r) {
+    int col = q;
+    int row = r + ((q + (q & 1)) / 2);
+    return {row, col};
+}
+
+} // namespace
+
+// [[Rcpp::export]]
+SEXP grid_weights_kernel_rect_omp(
+    const int nrow,
+    const int ncol,
+    const IntegerVector gx,   // 1-based active x
+    const IntegerVector gy,   // 1-based active y
+    const bool queen = true,
+    const int radius = 2,
+    const std::string kernel = "gaussian", // "gaussian" | "flat"
+    const double sigma = 1.0
+) {
+    const int n_active = gx.size();
+    if (gy.size() != n_active) {
+        stop("gx and gy must have the same length.");
+    }
+    if (nrow <= 0 || ncol <= 0) {
+        stop("nrow and ncol must be positive.");
+    }
+    const int rad = radius;
+    if (rad < 1) {
+        stop("radius must be >= 1.");
+    }
+    const bool flat = (kernel == "flat");
+    if (!flat && kernel != "gaussian") {
+        stop("kernel must be 'gaussian' or 'flat'.");
+    }
+    const double sigma_use = (sigma > 0.0) ? sigma : 1.0;
+
+    const int n_full = nrow * ncol;
+    std::vector<int> idx_map(n_full, -1);
+    std::vector<int> active_row(n_active);
+    std::vector<int> active_col(n_active);
+
+    for (int i = 0; i < n_active; ++i) {
+        int col0 = gx[i] - 1;
+        int row0 = gy[i] - 1;
+        if (col0 < 0 || col0 >= ncol || row0 < 0 || row0 >= nrow) {
+            stop("gx/gy out of bounds for the provided nrow/ncol.");
+        }
+        active_row[i] = row0;
+        active_col[i] = col0;
+        int full_id0 = row0 * ncol + col0; // row-major
+        idx_map[full_id0] = i;
+    }
+
+    const std::vector<RectOffset> offsets = make_rect_offsets(rad, queen);
+
+#ifdef _OPENMP
+    const int nThreads = omp_get_max_threads();
+#else
+    const int nThreads = 1;
+#endif
+    std::vector<std::vector<Eigen::Triplet<double>>> trip_tls(nThreads);
+
+#pragma omp parallel for schedule(static)
+    for (int i_act = 0; i_act < n_active; ++i_act) {
+        int tid =
+#ifdef _OPENMP
+            omp_get_thread_num();
+#else
+            0;
+#endif
+        auto &trip = trip_tls[tid];
+
+        const int r0 = active_row[i_act];
+        const int c0 = active_col[i_act];
+
+        std::vector<int> neigh_idx;
+        std::vector<double> neigh_raw;
+        neigh_idx.reserve(offsets.size());
+        neigh_raw.reserve(offsets.size());
+        double wsum = 0.0;
+
+        for (const auto &off : offsets) {
+            int rr = r0 + off.dr;
+            int cc = c0 + off.dc;
+            if (rr < 0 || rr >= nrow || cc < 0 || cc >= ncol) continue;
+            int full_j0 = rr * ncol + cc;
+            int j_act = idx_map[full_j0];
+            if (j_act < 0) continue; // inactive
+            double w_raw = flat ? 1.0 : std::exp(-(off.dist * off.dist) / (2.0 * sigma_use * sigma_use));
+            neigh_idx.push_back(j_act);
+            neigh_raw.push_back(w_raw);
+            wsum += w_raw;
+        }
+
+        if (wsum > 0.0) {
+            trip.reserve(trip.size() + neigh_idx.size());
+            for (size_t k = 0; k < neigh_idx.size(); ++k) {
+                trip.emplace_back(i_act, neigh_idx[k], neigh_raw[k] / wsum);
+            }
+        }
+    }
+
+    size_t total = 0;
+    for (auto &v : trip_tls) total += v.size();
+    std::vector<Eigen::Triplet<double>> trip;
+    trip.reserve(total);
+    for (auto &v : trip_tls) {
+        std::move(v.begin(), v.end(), std::back_inserter(trip));
+        std::vector<Eigen::Triplet<double>>().swap(v);
+    }
+
+    Eigen::SparseMatrix<double, Eigen::ColMajor, int> W(n_active, n_active);
+    W.setFromTriplets(trip.begin(), trip.end());
+    W.makeCompressed();
+    return Rcpp::wrap(W);
+}
+
+// [[Rcpp::export]]
+SEXP grid_weights_kernel_hexr_omp(
+    const int nrow,
+    const int ncol,
+    const IntegerVector gx,   // 1-based active x
+    const IntegerVector gy,   // 1-based active y
+    const bool oddr = true,
+    const int radius = 2,
+    const std::string kernel = "gaussian",
+    const double sigma = 1.0
+) {
+    const int n_active = gx.size();
+    if (gy.size() != n_active) stop("gx and gy must have the same length.");
+    if (nrow <= 0 || ncol <= 0) stop("nrow and ncol must be positive.");
+    const int rad = radius;
+    if (rad < 1) stop("radius must be >= 1.");
+    const bool flat = (kernel == "flat");
+    if (!flat && kernel != "gaussian") stop("kernel must be 'gaussian' or 'flat'.");
+    const double sigma_use = (sigma > 0.0) ? sigma : 1.0;
+
+    const int n_full = nrow * ncol;
+    std::vector<int> idx_map(n_full, -1);
+    std::vector<int> active_row(n_active);
+    std::vector<int> active_col(n_active);
+
+    for (int i = 0; i < n_active; ++i) {
+        int col0 = gx[i] - 1;
+        int row0 = gy[i] - 1;
+        if (col0 < 0 || col0 >= ncol || row0 < 0 || row0 >= nrow) {
+            stop("gx/gy out of bounds for the provided nrow/ncol.");
+        }
+        active_row[i] = row0;
+        active_col[i] = col0;
+        int full_id0 = row0 * ncol + col0; // row-major (matches grid_nb_hex_omp)
+        idx_map[full_id0] = i;
+    }
+
+    const std::vector<CubeOffset> cube_offs = make_cube_offsets(rad);
+
+#ifdef _OPENMP
+    const int nThreads = omp_get_max_threads();
+#else
+    const int nThreads = 1;
+#endif
+    std::vector<std::vector<Eigen::Triplet<double>>> trip_tls(nThreads);
+
+#pragma omp parallel for schedule(static)
+    for (int i_act = 0; i_act < n_active; ++i_act) {
+        int tid =
+#ifdef _OPENMP
+            omp_get_thread_num();
+#else
+            0;
+#endif
+        auto &trip = trip_tls[tid];
+
+        const int r0 = active_row[i_act];
+        const int c0 = active_col[i_act];
+        std::pair<int, int> axial0 = oddr ? offset_to_axial_oddr(r0, c0) : offset_to_axial_evenr(r0, c0);
+        const int q0 = axial0.first;
+        const int ar0 = axial0.second;
+
+        const int x0 = q0;
+        const int z0 = ar0;
+        const int y0 = -x0 - z0;
+
+        std::vector<int> neigh_idx;
+        std::vector<double> neigh_raw;
+        neigh_idx.reserve(cube_offs.size());
+        neigh_raw.reserve(cube_offs.size());
+        double wsum = 0.0;
+
+        for (const auto &off : cube_offs) {
+            int x1 = x0 + off.dx;
+            int y1 = y0 + off.dy;
+            int z1 = z0 + off.dz;
+            int q1 = x1;
+            int r1 = z1;
+            std::pair<int, int> offset1 = oddr ? axial_to_offset_oddr(q1, r1) : axial_to_offset_evenr(q1, r1);
+            int rr = offset1.first;
+            int cc = offset1.second;
+            if (rr < 0 || rr >= nrow || cc < 0 || cc >= ncol) continue;
+            int full_j0 = rr * ncol + cc;
+            int j_act = idx_map[full_j0];
+            if (j_act < 0) continue;
+            double w_raw = raw_weight(off.dist, flat, sigma_use);
+            neigh_idx.push_back(j_act);
+            neigh_raw.push_back(w_raw);
+            wsum += w_raw;
+        }
+
+        if (wsum > 0.0) {
+            trip.reserve(trip.size() + neigh_idx.size());
+            for (size_t k = 0; k < neigh_idx.size(); ++k) {
+                trip.emplace_back(i_act, neigh_idx[k], neigh_raw[k] / wsum);
+            }
+        }
+    }
+
+    size_t total = 0;
+    for (auto &v : trip_tls) total += v.size();
+    std::vector<Eigen::Triplet<double>> trip;
+    trip.reserve(total);
+    for (auto &v : trip_tls) {
+        std::move(v.begin(), v.end(), std::back_inserter(trip));
+        std::vector<Eigen::Triplet<double>>().swap(v);
+    }
+
+    Eigen::SparseMatrix<double, Eigen::ColMajor, int> W(n_active, n_active);
+    W.setFromTriplets(trip.begin(), trip.end());
+    W.makeCompressed();
+    return Rcpp::wrap(W);
+}
+
+// [[Rcpp::export]]
+SEXP grid_weights_kernel_hexq_omp(
+    const int nrow,
+    const int ncol,
+    const IntegerVector gx,   // 1-based active x
+    const IntegerVector gy,   // 1-based active y
+    const bool oddq = true,
+    const int radius = 2,
+    const std::string kernel = "gaussian",
+    const double sigma = 1.0
+) {
+    const int n_active = gx.size();
+    if (gy.size() != n_active) stop("gx and gy must have the same length.");
+    if (nrow <= 0 || ncol <= 0) stop("nrow and ncol must be positive.");
+    const int rad = radius;
+    if (rad < 1) stop("radius must be >= 1.");
+    const bool flat = (kernel == "flat");
+    if (!flat && kernel != "gaussian") stop("kernel must be 'gaussian' or 'flat'.");
+    const double sigma_use = (sigma > 0.0) ? sigma : 1.0;
+
+    const int n_full = nrow * ncol;
+    std::vector<int> idx_map(n_full, -1);
+    std::vector<int> active_row(n_active);
+    std::vector<int> active_col(n_active);
+
+    for (int i = 0; i < n_active; ++i) {
+        int col0 = gx[i] - 1;
+        int row0 = gy[i] - 1;
+        if (col0 < 0 || col0 >= ncol || row0 < 0 || row0 >= nrow) {
+            stop("gx/gy out of bounds for the provided nrow/ncol.");
+        }
+        active_row[i] = row0;
+        active_col[i] = col0;
+        int full_id0 = col0 * nrow + row0; // column-major (matches grid_nb_hexq_omp)
+        idx_map[full_id0] = i;
+    }
+
+    const std::vector<CubeOffset> cube_offs = make_cube_offsets(rad);
+
+#ifdef _OPENMP
+    const int nThreads = omp_get_max_threads();
+#else
+    const int nThreads = 1;
+#endif
+    std::vector<std::vector<Eigen::Triplet<double>>> trip_tls(nThreads);
+
+#pragma omp parallel for schedule(static)
+    for (int i_act = 0; i_act < n_active; ++i_act) {
+        int tid =
+#ifdef _OPENMP
+            omp_get_thread_num();
+#else
+            0;
+#endif
+        auto &trip = trip_tls[tid];
+
+        const int r0 = active_row[i_act];
+        const int c0 = active_col[i_act];
+        std::pair<int, int> axial0 = oddq ? offset_to_axial_oddq(r0, c0) : offset_to_axial_evenq(r0, c0);
+        const int q0 = axial0.first;
+        const int ar0 = axial0.second;
+
+        const int x0 = q0;
+        const int z0 = ar0;
+        const int y0 = -x0 - z0;
+
+        std::vector<int> neigh_idx;
+        std::vector<double> neigh_raw;
+        neigh_idx.reserve(cube_offs.size());
+        neigh_raw.reserve(cube_offs.size());
+        double wsum = 0.0;
+
+        for (const auto &off : cube_offs) {
+            int x1 = x0 + off.dx;
+            int y1 = y0 + off.dy;
+            int z1 = z0 + off.dz;
+            int q1 = x1;
+            int r1 = z1;
+            std::pair<int, int> offset1 = oddq ? axial_to_offset_oddq(q1, r1) : axial_to_offset_evenq(q1, r1);
+            int rr = offset1.first;
+            int cc = offset1.second;
+            if (rr < 0 || rr >= nrow || cc < 0 || cc >= ncol) continue;
+            int full_j0 = cc * nrow + rr; // column-major
+            int j_act = idx_map[full_j0];
+            if (j_act < 0) continue;
+            double w_raw = raw_weight(off.dist, flat, sigma_use);
+            neigh_idx.push_back(j_act);
+            neigh_raw.push_back(w_raw);
+            wsum += w_raw;
+        }
+
+        if (wsum > 0.0) {
+            trip.reserve(trip.size() + neigh_idx.size());
+            for (size_t k = 0; k < neigh_idx.size(); ++k) {
+                trip.emplace_back(i_act, neigh_idx[k], neigh_raw[k] / wsum);
+            }
+        }
+    }
+
+    size_t total = 0;
+    for (auto &v : trip_tls) total += v.size();
+    std::vector<Eigen::Triplet<double>> trip;
+    trip.reserve(total);
+    for (auto &v : trip_tls) {
+        std::move(v.begin(), v.end(), std::back_inserter(trip));
+        std::vector<Eigen::Triplet<double>>().swap(v);
+    }
+
+    Eigen::SparseMatrix<double, Eigen::ColMajor, int> W(n_active, n_active);
+    W.setFromTriplets(trip.begin(), trip.end());
+    W.makeCompressed();
+    return Rcpp::wrap(W);
 }
 
 // Compatibility alias that calls the original function
