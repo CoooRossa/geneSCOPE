@@ -164,11 +164,24 @@ computeCorrelation <- function(scope_obj,
   ## ---- Data preprocessing --------------------------------------
   if (!bigmemory_mode && verbose) message("[geneSCOPE::computeCorrelation] Preprocessing expression matrix...")
 
-  # Transpose matrix to cells × genes (pearson_cor expects this)
-  expr_dense <- if (bigmemory_mode) NULL else as.matrix(Matrix::t(expr_mat))
+  # If densifying a huge sparse matrix would exceed memory, use sparse Pearson path.
+  dense_input_gb <- (as.double(n_genes) * as.double(n_samples) * 8) / (1024^3)
+  densify_risky <- inherits(expr_mat, "dgCMatrix") &&
+    identical(method, "pearson") &&
+    dense_input_gb * 2 > min(memory_limit_gb, sys_mem_gb * 0.8)
 
-  # Center data (pearson_cor expects centered data)
-  if (!bigmemory_mode) {
+  expr_centered <- NULL
+  if (!bigmemory_mode && densify_risky) {
+    if (verbose) {
+      message("[geneSCOPE::computeCorrelation] Input densification estimated at ~",
+              round(dense_input_gb, 1), " GB; using sparse Pearson path.")
+    }
+    cor_matrix <- .computeCorrelationSparsePearson(expr_mat, verbose = verbose)
+  } else if (!bigmemory_mode) {
+    # Transpose matrix to cells × genes (pearson_cor expects this)
+    expr_dense <- as.matrix(Matrix::t(expr_mat))
+
+    # Center data (pearson_cor expects centered data)
     if (verbose) message("[geneSCOPE::computeCorrelation] Centering data...")
     expr_centered <- scale(expr_dense, center = TRUE, scale = FALSE)
 
@@ -179,7 +192,7 @@ computeCorrelation <- function(scope_obj,
   }
 
   ## ---- Call C++ correlation function --------------------------------
-  if (!bigmemory_mode) {
+  if (!bigmemory_mode && is.null(cor_matrix)) {
     if (verbose) message("[geneSCOPE::computeCorrelation] Starting correlation matrix computation (using ", ncores_safe, " threads)...")
 
     start_time <- Sys.time()
@@ -548,6 +561,43 @@ computeCorrelation <- function(scope_obj,
   attr(cor_bm, "temp_files") <- c(bm_file, bm_desc)
 
   return(cor_bm)
+}
+
+#' @title Sparse-safe Pearson correlation for dgCMatrix inputs
+#' @description Computes Pearson correlation using sparse tcrossprod without densifying the full samples × genes matrix.
+#' @param mat dgCMatrix genes × samples.
+#' @param verbose Logical.
+#' @return Dense Pearson correlation matrix (genes × genes).
+#' @noRd
+.computeCorrelationSparsePearson <- function(mat, verbose = TRUE) {
+  if (!inherits(mat, "dgCMatrix")) mat <- as(mat, "dgCMatrix")
+  n_genes <- nrow(mat)
+  n_samples <- ncol(mat)
+
+  if (n_genes > 50000L) {
+    stop("[geneSCOPE::computeCorrelation] Sparse Pearson path is intended for moderate gene counts; reduce genes or increase memory_limit_gb.")
+  }
+
+  if (verbose) message("[geneSCOPE::computeCorrelation] Computing Pearson correlation via sparse tcrossprod...")
+
+  mu <- Matrix::rowMeans(mat)
+  xxT <- Matrix::tcrossprod(mat)
+  xxT_dense <- as.matrix(xxT)
+
+  cov_mat <- (xxT_dense - n_samples * (mu %o% mu)) / max(1, n_samples - 1)
+  cov_mat[!is.finite(cov_mat)] <- 0
+
+  sd_vec <- sqrt(pmax(diag(cov_mat), 0))
+  denom <- sd_vec %o% sd_vec
+  cor_mat <- cov_mat
+  pos <- denom > 0
+  cor_mat[pos] <- cov_mat[pos] / denom[pos]
+  cor_mat[!pos] <- 0
+  diag(cor_mat) <- 1
+
+  rownames(cor_mat) <- rownames(mat)
+  colnames(cor_mat) <- rownames(mat)
+  cor_mat
 }
 
 #' @title Compute correlation between two sparse matrix blocks
