@@ -90,7 +90,7 @@
             verbose = verbose,
             flip_y = flip_y,
             data_type = data_type,
-            log_prefix = sprintf("[geneSCOPE::build_scope/%s]", data_type)
+            log_prefix = "[geneSCOPE::createSCOPE]"
         ),
         thread_context = NULL,
         env_restore = NULL,
@@ -837,13 +837,7 @@
 #' @keywords internal
 .finalize_output_object <- function(state) {
     scope_obj <- state$objects$scope_obj
-    type_raw <- state$params$data_type
-    platform_label <- switch(tolower(type_raw),
-        xenium = "Xenium",
-        cosmx = "CosMx",
-        visium = "Visium",
-        `default` = type_raw
-    )
+    platform_label <- "geneSCOPE"
     if (length(scope_obj@grid) == 0 ||
         all(vapply(scope_obj@grid, function(g) nrow(g$grid_info) == 0L, logical(1)))) {
         warning("No effective grid layer generated – please check filters/parameters.")
@@ -1023,7 +1017,7 @@ build_scope_from_cosmx <- function(input_dir,
     stopifnot(dir.exists(input_dir))
     segmentation_strategy <- match.arg(segmentation_strategy, c("cell", "nucleus", "both", "none"))
 
-    if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Root = ", input_dir)
+    if (verbose) message("[geneSCOPE::createSCOPE] Root = ", input_dir)
 
     transcripts_path <- file.path(input_dir, "transcripts.parquet")
     cells_path <- file.path(input_dir, "cells.parquet")
@@ -1047,7 +1041,7 @@ build_scope_from_cosmx <- function(input_dir,
     need_temp <- using_temp_dir
 
     if (!file.exists(transcripts_path) && allow_flatfile_generation) {
-        if (verbose) message("[geneSCOPE::build_scope_from_cosmx] transcripts.parquet not found; generating from flatFiles …")
+        if (verbose) message("[geneSCOPE::createSCOPE] transcripts.parquet not found; generating from flatFiles …")
         ff_dir <- file.path(input_dir, "flatFiles")
         if (!dir.exists(ff_dir)) stop("flatFiles/ not found under ", input_dir)
         tx_candidates <- c(
@@ -1066,7 +1060,7 @@ build_scope_from_cosmx <- function(input_dir,
             library(data.table)
             library(arrow)
         })
-        if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Reading ", tx_path)
+        if (verbose) message("[geneSCOPE::createSCOPE] Reading ", tx_path)
         tx <- tryCatch({ data.table::fread(tx_path) }, error = function(e) stop("Failed to read ", tx_path, ": ", e$message))
         cn <- tolower(names(tx)); names(tx) <- cn
         headerless <- all(grepl("^v[0-9]+$", cn))
@@ -1076,7 +1070,7 @@ build_scope_from_cosmx <- function(input_dir,
             nd <- if ("nucleus_distance" %in% cn) tx[["nucleus_distance"]] else 0
         } else {
             if (ncol(tx) < 9L) stop("headerless tx_file has insufficient columns (<9)")
-            if (verbose) message("[geneSCOPE::build_scope_from_cosmx] tx_file headerless – using positional mapping col6/col7/col9 (and col8 as nucleus_distance)")
+            if (verbose) message("[geneSCOPE::createSCOPE] tx_file headerless – using positional mapping col6/col7/col9 (and col8 as nucleus_distance)")
             xg <- tx[[6]]; yg <- tx[[7]]; tgt <- tx[[9]]
             qv <- if (ncol(tx) >= 10 && is.numeric(tx[[10]])) tx[[10]] else Inf
             nd <- if (ncol(tx) >= 8 && is.numeric(tx[[8]])) tx[[8]] else 0
@@ -1092,21 +1086,21 @@ build_scope_from_cosmx <- function(input_dir,
         if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
         need_temp <- TRUE
         tf_parq <- file.path(work_dir, "transcripts.parquet")
-        if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Writing ", tf_parq)
+        if (verbose) message("[geneSCOPE::createSCOPE] Writing ", tf_parq)
         arrow::write_parquet(tx_out, tf_parq)
     } else if (verbose) {
-        message("[geneSCOPE::build_scope_from_cosmx] Using existing transcripts.parquet")
+        message("[geneSCOPE::createSCOPE] Using existing transcripts.parquet")
     }
 
     have_cell_seg <- file.exists(seg_cell) || file.exists(seg_any)
     have_nuc_seg <- file.exists(nuc_parq)
 
     if (seg_type %in% c("cell", "both") && !have_cell_seg) {
-        if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Cell segmentation parquet not found; downgrade segmentation strategy")
+        if (verbose) message("[geneSCOPE::createSCOPE] Cell segmentation parquet not found; downgrade segmentation strategy")
         seg_type <- if (have_nuc_seg) "nucleus" else "none"
     }
     if (seg_type %in% c("nucleus", "both") && !have_nuc_seg) {
-        if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Nucleus segmentation parquet not found; downgrade segmentation strategy")
+        if (verbose) message("[geneSCOPE::createSCOPE] Nucleus segmentation parquet not found; downgrade segmentation strategy")
         seg_type <- if (have_cell_seg) "cell" else "none"
     }
 
@@ -1116,7 +1110,7 @@ build_scope_from_cosmx <- function(input_dir,
         cand <- c(Sys.glob(file.path(ff_dir, "*/*-polygons.csv.gz")), Sys.glob(file.path(ff_dir, "*/*_polygons.csv.gz")))
         if (length(cand)) poly_path <- cand[[1]]
         if (!is.null(poly_path)) {
-            if (verbose) message("[geneSCOPE::build_scope_from_cosmx] cells.parquet not found; deriving centroids from polygons: ", basename(poly_path))
+            if (verbose) message("[geneSCOPE::createSCOPE] cells.parquet not found; deriving centroids from polygons: ", basename(poly_path))
             pol <- data.table::fread(poly_path)
             cn <- tolower(names(pol)); names(pol) <- cn
             headerless <- all(grepl("^v[0-9]+$", cn))
@@ -1141,10 +1135,10 @@ build_scope_from_cosmx <- function(input_dir,
                 need_temp <- TRUE
             }
             cell_parq <- file.path(work_dir, "cells.parquet")
-            if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Writing ", cell_parq)
+            if (verbose) message("[geneSCOPE::createSCOPE] Writing ", cell_parq)
             arrow::write_parquet(cent, cell_parq)
         } else if (verbose) {
-            message("[geneSCOPE::build_scope_from_cosmx] polygons not found; cannot derive cells.parquet")
+            message("[geneSCOPE::createSCOPE] polygons not found; cannot derive cells.parquet")
         }
     }
 
@@ -1161,7 +1155,7 @@ build_scope_from_cosmx <- function(input_dir,
         link_or_copy(file.path(input_dir, "nucleus_boundaries.parquet"), file.path(work_dir, "nucleus_boundaries.parquet"))
     }
 
-    if (verbose) message("[geneSCOPE::build_scope_from_cosmx] Delegating to build_scope_from_xenium() …")
+    if (verbose) message("[geneSCOPE::createSCOPE] Delegating to parquet builder …")
     scope_obj <- build_scope_from_xenium(
         input_dir = work_dir,
         grid_sizes = grid_length,
@@ -1304,7 +1298,7 @@ build_scope_from_visium <- function(input_dir,
     if (is.na(matrix_dir)) {
         stop("Could not find filtered_feature_bc_matrix/ or raw_feature_bc_matrix/ under ", visium_dir)
     }
-    if (verbose) message("[geneSCOPE::build_scope_from_visium] Using matrix directory: ", basename(matrix_dir))
+    if (verbose) message("[geneSCOPE::createSCOPE] Using matrix directory: ", basename(matrix_dir))
 
     matrix_file <- file.path(matrix_dir, "matrix.mtx.gz")
     if (!file.exists(matrix_file)) matrix_file <- file.path(matrix_dir, "matrix.mtx")
@@ -1356,7 +1350,7 @@ build_scope_from_visium <- function(input_dir,
         stop("Could not find tissue_positions_list.csv or tissue_positions.csv under ", spatial_dir)
     }
     pos_raw <- data.table::fread(pos_path)
-    if (verbose) message("[geneSCOPE::build_scope_from_visium] Loaded ", nrow(pos_raw), " spot positions")
+    if (verbose) message("[geneSCOPE::createSCOPE] Loaded ", nrow(pos_raw), " spot positions")
 
     standardize_positions <- function(dt) {
         if (!data.table::is.data.table(dt)) dt <- data.table::as.data.table(dt)
@@ -1401,7 +1395,7 @@ build_scope_from_visium <- function(input_dir,
     pos_dt <- standardize_positions(pos_raw)
     if (isTRUE(include_in_tissue)) {
         pos_dt <- pos_dt[in_tissue == 1L]
-        if (verbose) message("[geneSCOPE::build_scope_from_visium] Retained ", nrow(pos_dt), " in-tissue spots")
+        if (verbose) message("[geneSCOPE::createSCOPE] Retained ", nrow(pos_dt), " in-tissue spots")
     }
     if (nrow(pos_dt) == 0L) {
         stop("No spots remain after applying the in_tissue filter.")
@@ -2003,13 +1997,13 @@ createSCOPE <- function(data_dir = NULL,
     dots$xenium_dir <- NULL; dots$visium_dir <- NULL; dots$cosmx_root <- NULL
 
     if (pick == "xenium") {
-        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE/xenium] Dispatching to build_scope_from_xenium() …")
+        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE] Dispatching to builder …")
         if (is.null(dots$grid_length)) stop("grid_length is required for Xenium. Pass grid_length= ...")
         dots$xenium_dir <- data_dir
         return(do.call(createSCOPE_xenium, dots))
     }
     if (pick == "cosmx") {
-        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE/cosmx] Dispatching to build_scope_from_cosmx() …")
+        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE] Dispatching to builder …")
         if (is.null(dots$grid_length)) stop("grid_length is required for CosMx. Pass grid_length= ...")
         dots$cosmx_root <- data_dir
         return(do.call(createSCOPE_cosmx, dots))
@@ -2019,7 +2013,7 @@ createSCOPE <- function(data_dir = NULL,
     if (isTRUE(sctransform)) {
         if (is.null(dots$run_sctransform)) dots$run_sctransform <- TRUE
         if (isTRUE(verbose)) {
-            message(sprintf("[geneSCOPE::createSCOPE visium] Dispatching to Seurat pipeline (SCTransform=%s) …",
+            message(sprintf("[geneSCOPE::createSCOPE] Dispatching to Seurat pipeline (SCTransform=%s) …",
                 if (is.null(dots$run_sctransform)) "NULL" else as.character(dots$run_sctransform)))
         }
         rename_map <- list(
@@ -2041,7 +2035,7 @@ createSCOPE <- function(data_dir = NULL,
         res <- do.call(build_scope_from_visium_seurat, dots)
         res
     } else {
-        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE visium] Dispatching to createSCOPE_visium (SCTransform=FALSE) …")
+        if (isTRUE(verbose)) message("[geneSCOPE::createSCOPE] Dispatching to builder …")
         obj <- do.call(createSCOPE_visium, dots)
         obj
     }
