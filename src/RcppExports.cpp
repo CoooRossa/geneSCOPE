@@ -62,6 +62,60 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// grid_weights_kernel_rect_omp
+SEXP grid_weights_kernel_rect_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool queen, const int radius, const std::string kernel, const double sigma);
+RcppExport SEXP _geneSCOPE_grid_weights_kernel_rect_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP queenSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gx(gxSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gy(gySEXP);
+    Rcpp::traits::input_parameter< const bool >::type queen(queenSEXP);
+    Rcpp::traits::input_parameter< const int >::type radius(radiusSEXP);
+    Rcpp::traits::input_parameter< const std::string >::type kernel(kernelSEXP);
+    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_weights_kernel_rect_omp(nrow, ncol, gx, gy, queen, radius, kernel, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
+// grid_weights_kernel_hexr_omp
+SEXP grid_weights_kernel_hexr_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool oddr, const int radius, const std::string kernel, const double sigma);
+RcppExport SEXP _geneSCOPE_grid_weights_kernel_hexr_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP oddrSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gx(gxSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gy(gySEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddr(oddrSEXP);
+    Rcpp::traits::input_parameter< const int >::type radius(radiusSEXP);
+    Rcpp::traits::input_parameter< const std::string >::type kernel(kernelSEXP);
+    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_weights_kernel_hexr_omp(nrow, ncol, gx, gy, oddr, radius, kernel, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
+// grid_weights_kernel_hexq_omp
+SEXP grid_weights_kernel_hexq_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool oddq, const int radius, const std::string kernel, const double sigma);
+RcppExport SEXP _geneSCOPE_grid_weights_kernel_hexq_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP oddqSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gx(gxSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector >::type gy(gySEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddq(oddqSEXP);
+    Rcpp::traits::input_parameter< const int >::type radius(radiusSEXP);
+    Rcpp::traits::input_parameter< const std::string >::type kernel(kernelSEXP);
+    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_weights_kernel_hexq_omp(nrow, ncol, gx, gy, oddq, radius, kernel, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
 // grid_nb
 SEXP grid_nb(const int nrow, const int ncol, const bool queen);
 RcppExport SEXP _geneSCOPE_grid_nb(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
@@ -437,6 +491,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_grid_nb_hex_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hex_omp, 3},
     {"_geneSCOPE_grid_nb_hexq_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hexq_omp, 3},
     {"_geneSCOPE_listw_B_omp", (DL_FUNC) &_geneSCOPE_listw_B_omp, 1},
+    {"_geneSCOPE_grid_weights_kernel_rect_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_rect_omp, 8},
+    {"_geneSCOPE_grid_weights_kernel_hexr_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_hexr_omp, 8},
+    {"_geneSCOPE_grid_weights_kernel_hexq_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_hexq_omp, 8},
     {"_geneSCOPE_grid_nb", (DL_FUNC) &_geneSCOPE_grid_nb, 3},
     {"_geneSCOPE_nb2mat", (DL_FUNC) &_geneSCOPE_nb2mat, 1},
     {"_geneSCOPE_lee_L", (DL_FUNC) &_geneSCOPE_lee_L, 3},
