@@ -17,7 +17,7 @@
 #' @param level     Character. Either \code{"grid"} (default) to compute Iδ
 #'                  across spatial grids, or \code{"cell"} to compute across
 #'                  single cells.
-#' @param ncore     Integer. Number of OpenMP threads passed to the
+#' @param ncores    Integer. Number of OpenMP threads passed to the
 #'                  C++ routine (default 4).
 #' @param verbose   Logical. Whether to print progress messages (default TRUE).
 #'
@@ -33,19 +33,20 @@
 #' @examples
 #' \dontrun{
 #' # Grid-level Iδ
-#' coord <- computeIDelta(coord, grid_name = "25um", level = "grid", ncore = 8)
+#' coord <- computeIDelta(coord, grid_name = "25um", level = "grid", ncores = 8)
 #'
 #' # Single-cell Iδ
-#' coord <- computeIDelta(coord, level = "cell", ncore = 8)
+#' coord <- computeIDelta(coord, level = "cell", ncores = 8)
 #' }
 #' @importFrom Matrix sparseMatrix
 #' @export
 computeIDelta <- function(scope_obj,
                           grid_name = NULL,
                           level = c("grid", "cell"),
-                          ncore = 4,
+                          ncores = 4,
                           verbose = getOption("geneSCOPE.verbose", TRUE)) {
     level <- match.arg(level)
+    ncores <- max(1L, min(as.integer(ncores), parallel::detectCores(logical = TRUE)))
 
     if (level == "grid") {
         if (verbose) message("[geneSCOPE::computeIDelta] Selecting grid layer and building sparse gene-by-grid matrix")
@@ -91,8 +92,21 @@ computeIDelta <- function(scope_obj,
     }
 
     ## ---- 3. Call C++ kernel to compute Iδ -----------------------------------------
-    if (verbose) message("[geneSCOPE::computeIDelta] Computing Iδ for ", length(genes), " genes using ", ncore, " thread(s)")
-    delta_raw <- idelta_sparse_cpp(Gsp, n_threads = ncore)
+    # Memory guard: approximate sparse footprint (values + indices) per thread
+    nnz <- length(Gsp@x)
+    approx_gb <- (nnz * 16) / (1024^3) # rough estimate of numeric + index bytes
+    sys_mem_gb <- .getSystemMemoryGB()
+    est_total_gb <- approx_gb * ncores
+    if (est_total_gb > sys_mem_gb) {
+        stop(
+            "[geneSCOPE::computeIDelta] Estimated memory requirement (",
+            round(est_total_gb, 1), " GB) exceeds system capacity (",
+            round(sys_mem_gb, 1), " GB). Reduce ncores or gene/cell counts."
+        )
+    }
+
+    if (verbose) message("[geneSCOPE::computeIDelta] Computing Iδ for ", length(genes), " genes using ", ncores, " thread(s)")
+    delta_raw <- idelta_sparse_cpp(Gsp, n_threads = ncores)
     names(delta_raw) <- genes
 
     ## ---- 4. Ensure delta_raw is a numeric vector, not matrix ----------------------
