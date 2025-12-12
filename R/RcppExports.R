@@ -113,6 +113,18 @@ nb2mat <- function(nb) {
     .Call(`_geneSCOPE_nb2mat`, nb)
 }
 
+grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+    .Call(`_geneSCOPE_grid_weights_kernel_rect_omp`, nrow, ncol, gx, gy, queen, radius, kernel, sigma)
+}
+
+grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+    .Call(`_geneSCOPE_grid_weights_kernel_hexr_omp`, nrow, ncol, gx, gy, oddr, radius, kernel, sigma)
+}
+
+grid_weights_kernel_hexq_omp <- function(nrow, ncol, gx, gy, oddq = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+    .Call(`_geneSCOPE_grid_weights_kernel_hexq_omp`, nrow, ncol, gx, gy, oddq, radius, kernel, sigma)
+}
+
 #' @title Lee's L (single pass)
 #' @description Computes the Lee's L statistic for all gene pairs using a zero-mean,
 #'   sample-size–scaled formulation and a canonical S0 term. Matrix multiplication
@@ -421,4 +433,3 @@ consensus_coo_cpp <- function(memb, thr = 0.0, n_threads = 1L) {
 test_64bit_support <- function() {
     .Call(`_geneSCOPE_test_64bit_support`)
 }
-
