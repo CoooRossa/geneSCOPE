@@ -150,8 +150,8 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
   safe_cores <- max(1L, min(ncores_requested, max_cores))
 
   list(
-    openmp_threads = max(1, min(4, safe_cores)), # light OMP to keep schedulers responsive
-    r_threads = safe_cores, # aggressive use of R-level threads
+    openmp_threads = safe_cores, # use all requested cores for OpenMP
+    r_threads = safe_cores, # parallel R-level tasks can also use requested cores
     blas_threads = 1
   )
 }
@@ -160,7 +160,7 @@ configureThreadsFor <- function(operation_type = c("compute_intensive", "io_boun
 .configureMixed <- function(ncores_requested) {
   max_cores <- max(1L, parallel::detectCores())
   safe_cores <- max(1L, min(ncores_requested, max_cores))
-  openmp_share <- max(1, floor(safe_cores / 2))
+  openmp_share <- safe_cores
 
   list(
     openmp_threads = openmp_share,
@@ -217,6 +217,27 @@ detectOS <- function() {
   } else {
     return("linux")
   }
+}
+
+#' @title Detect total system memory in GB
+#' @description Lightweight cross-platform helper used to guard against overcommitting threads.
+#' @return Numeric scalar, best-effort estimate of total system RAM in GB.
+.getSystemMemoryGB <- function() {
+  os_type <- detectOS()
+  tryCatch({
+    if (os_type == "linux") {
+      mem_info <- readLines("/proc/meminfo")
+      mem_total <- grep("MemTotal", mem_info, value = TRUE)
+      mem_kb <- as.numeric(gsub("[^0-9]", "", mem_total))
+      mem_kb / 1024 / 1024
+    } else if (os_type == "macos") {
+      mem_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
+      mem_bytes / 1024^3
+    } else {
+      # Windows or fallback; conservatively assume 32GB if unknown
+      32
+    }
+  }, error = function(e) 32)
 }
 
 #' @title Get safe thread count
