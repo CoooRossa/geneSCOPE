@@ -21,7 +21,7 @@
 #' @param L_min      Numeric. Minimum Lee's L value required for an edge.
 #' @param area_norm  Logical. Divide counts by grid area before similarity
 #'                   calculation (default \code{TRUE}).
-#' @param ncore      Integer. Number of OpenMP threads for the C++ kernel.
+#' @param ncores     Integer. Number of OpenMP threads for the C++ kernel.
 #' @param use_chao   Logical. Apply Chao bias correction when estimating
 #'                   lambda terms (default \code{TRUE}).
 #' @param verbose    Logical. Whether to print progress messages (default TRUE).
@@ -35,7 +35,7 @@
 #' coord <- morisitaHorn_on_network2(coord,
 #'     grid_name = "25um",
 #'     L_min     = 0.2,
-#'     ncore     = 8
+#'     ncores    = 8
 #' )
 #' igraph::edge_attr(coord@grid$`25um`$LeeStats_Xz$g_morisita, "CMH")[1:5]
 #' }
@@ -51,7 +51,7 @@ computeMH <- function(scope_obj,
                       out = c("matrix", "igraph", "both"),
                       L_min = 0,
                       area_norm = TRUE,
-                      ncore = 8,
+                      ncores = 8,
                       use_chao = TRUE,
                       verbose = TRUE) {
     out <- match.arg(out)
@@ -61,7 +61,7 @@ computeMH <- function(scope_obj,
         message("[geneSCOPE::computeMH]   L_min threshold: ", L_min)
         message("[geneSCOPE::computeMH]   Area normalization: ", area_norm)
         message("[geneSCOPE::computeMH]   Chao correction: ", use_chao)
-        message("[geneSCOPE::computeMH]   OpenMP threads: ", ncore)
+        message("[geneSCOPE::computeMH]   OpenMP threads: ", ncores)
         message("[geneSCOPE::computeMH]   Output: ", out)
     }
 
@@ -194,12 +194,12 @@ computeMH <- function(scope_obj,
 
     if (verbose) {
         message("[geneSCOPE::computeMH]   Processing ", ncol(ed), " edges")
-        message("[geneSCOPE::computeMH]   C++ threads: ", ncore)
+        message("[geneSCOPE::computeMH]   C++ threads: ", ncores)
     }
 
     mh_vec <- morisita_horn_sparse(
         G = Gsp, edges = ed,
-        use_chao = use_chao, nthreads = ncore
+        use_chao = use_chao, nthreads = ncores
     )
 
     if (verbose) {
