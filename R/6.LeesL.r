@@ -48,7 +48,11 @@ computeL <- function(scope_obj,
                      backing_path = tempdir(),
                      cache_inputs = TRUE,
                      verbose = TRUE,
-                     ncore = NULL) {
+                     ncore = NULL,
+                     weights_scheme = c("adjacency", "kernel"),
+                     kernel = c("gaussian", "flat"),
+                     kernel_radius = 2L,
+                     kernel_sigma = 1.0) {
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
 
     # Handle deprecated parameter
@@ -57,6 +61,17 @@ computeL <- function(scope_obj,
             call. = FALSE, immediate. = TRUE
         )
         ncores <- ncore
+    }
+
+    weights_scheme <- match.arg(weights_scheme)
+    kernel <- match.arg(kernel)
+    kernel_radius <- as.integer(kernel_radius)
+    kernel_sigma <- as.numeric(kernel_sigma)
+    if (!is.finite(kernel_radius) || kernel_radius < 1L) {
+        stop("kernel_radius must be >= 1.")
+    }
+    if (!is.finite(kernel_sigma) || kernel_sigma <= 0) {
+        stop("kernel_sigma must be > 0.")
     }
 
     user_set_bigmemory <- !missing(use_bigmemory)
@@ -95,7 +110,11 @@ computeL <- function(scope_obj,
             grid_name = grid_name,
             style = "B",
             store_mat = TRUE,
-            store_listw = FALSE
+            store_listw = FALSE,
+            weights_scheme = weights_scheme,
+            kernel = kernel,
+            kernel_radius = kernel_radius,
+            kernel_sigma = kernel_sigma
         )
         # Re-extract layer after computing weights
         g_layer <- .selectGridLayer(scope_obj, grid_name)
