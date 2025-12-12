@@ -121,6 +121,17 @@ computeCorrelation <- function(scope_obj,
   # Estimate correlation matrix size (n_genes × n_genes × 8 bytes)
   cor_matrix_gb <- (n_genes^2 * 8) / (1024^3)
 
+  # Memory guard: assume each thread needs at least single-core footprint
+  sys_mem_gb <- .getSystemMemoryGB()
+  est_total_gb <- cor_matrix_gb * ncores_safe
+  if (est_total_gb > sys_mem_gb) {
+    stop(
+      "[geneSCOPE::computeCorrelation] Estimated memory requirement (",
+      round(est_total_gb, 1), " GB) exceeds system capacity (",
+      round(sys_mem_gb, 1), " GB). Reduce ncores or gene count."
+    )
+  }
+
   if (verbose) message("[geneSCOPE::computeCorrelation] Estimated correlation matrix size: ", round(cor_matrix_gb, 2), " GB")
 
   if (cor_matrix_gb > memory_limit_gb) {
