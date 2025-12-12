@@ -25,6 +25,15 @@
 #'   and additionally stores a row-normalised matrix to support fuzzy diffusion
 #'   analyses, while `"fuzzy_hex"` performs the same preparation on the
 #'   hexagonal lattice.
+#' @param nb_order Integer neighbourhood order (≥1). `1` uses the classic
+#'   3×3 queen/rook (or 6-neighbour hex) stencil; larger values expand to
+#'   multi-ring neighbours via `spdep::nblag_cumul()`.
+#' @param min_neighbors Optional numeric target for the average neighbour count.
+#'   When provided, the neighbourhood is automatically expanded to higher
+#'   orders (up to \code{max_order}) until the average degree reaches this
+#'   target or the cap is hit.
+#' @param max_order Integer cap for automatic expansion. Ignored unless
+#'   \code{min_neighbors} is set. Defaults to \code{max(nb_order, 4)}.
 #' @param ncores Integer; number of R processes to use when relabelling neighbours
 #'   for large grids. Defaults to all visible cores; falls back to serial on Windows.
 #'
@@ -42,13 +51,33 @@ computeWeights <- function(scope_obj,
                            store_listw = TRUE,
                            verbose = TRUE,
                            topology = c("auto", "queen", "rook", "hex", "fuzzy_queen", "fuzzy_hex"),
-                           ncores = parallel::detectCores(logical = TRUE)) {
+                           nb_order = 1L,
+                           min_neighbors = NULL,
+                           max_order = NULL,
+                           ncores = parallel::detectCores(logical = TRUE),
+                           weights_scheme = c("adjacency", "kernel"),
+                           kernel = c("gaussian", "flat"),
+                           kernel_radius = 2L,
+                           kernel_sigma = 1.0) {
   topology <- match.arg(topology)
+  weights_scheme <- match.arg(weights_scheme)
+  kernel <- match.arg(kernel)
+  kernel_radius <- as.integer(kernel_radius)
+  kernel_sigma <- as.numeric(kernel_sigma)
+  if (!is.finite(kernel_radius) || kernel_radius < 1L) {
+    stop("kernel_radius must be >= 1.")
+  }
+  if (!is.finite(kernel_sigma) || kernel_sigma <= 0) {
+    stop("kernel_sigma must be > 0.")
+  }
   use_fuzzy <- grepl("^fuzzy", topology)
   topo_arg <- if (use_fuzzy) {
     if (identical(topology, "fuzzy_hex")) "hex" else "queen"
   } else {
     topology
+  }
+  if (identical(weights_scheme, "kernel") && use_fuzzy) {
+    stop("weights_scheme = 'kernel' is incompatible with fuzzy_* topology.")
   }
   if (verbose) message("[geneSCOPE::computeWeights] Computing spatial weights for grid layer")
 
@@ -61,15 +90,93 @@ computeWeights <- function(scope_obj,
   layer <- layer_info$layer
   meta <- .spw_validate_grid_metadata(layer, grid_name)
   ncores_use <- max(1L, min(ncores, parallel::detectCores(logical = TRUE)))
-  if (.Platform$OS.type == "windows") ncores_use <- 1L
 
   # 2) Determine lattice topology (auto or forced)
   topo_info <- .spw_choose_topology(scope_obj, layer, topo_arg, verbose)
 
+  if (identical(weights_scheme, "kernel")) {
+    if (!store_mat && verbose) {
+      message("[geneSCOPE::computeWeights] weights_scheme='kernel' forces store_mat=TRUE; storing W.")
+    }
+    topology_resolved <- topo_info$topology
+
+    if (topology_resolved %in% c("queen", "rook")) {
+      W <- geneSCOPE:::grid_weights_kernel_rect_omp(
+        nrow = meta$ybins_eff,
+        ncol = meta$xbins_eff,
+        gx = meta$gx,
+        gy = meta$gy,
+        queen = identical(topology_resolved, "queen"),
+        radius = kernel_radius,
+        kernel = kernel,
+        sigma = kernel_sigma
+      )
+    } else if (topology_resolved %in% c("hex-oddr", "hex-evenr")) {
+      W <- geneSCOPE:::grid_weights_kernel_hexr_omp(
+        nrow = meta$ybins_eff,
+        ncol = meta$xbins_eff,
+        gx = meta$gx,
+        gy = meta$gy,
+        oddr = identical(topology_resolved, "hex-oddr"),
+        radius = kernel_radius,
+        kernel = kernel,
+        sigma = kernel_sigma
+      )
+    } else if (topology_resolved %in% c("hex-oddq", "hex-evenq")) {
+      W <- geneSCOPE:::grid_weights_kernel_hexq_omp(
+        nrow = meta$ybins_eff,
+        ncol = meta$xbins_eff,
+        gx = meta$gx,
+        gy = meta$gy,
+        oddq = identical(topology_resolved, "hex-oddq"),
+        radius = kernel_radius,
+        kernel = kernel,
+        sigma = kernel_sigma
+      )
+    } else {
+      stop("Unknown topology for kernel scheme: ", topology_resolved)
+    }
+
+    Matrix::diag(W) <- 0
+    dimnames(W) <- list(meta$grid_id, meta$grid_id)
+    scope_obj@grid[[grid_name]]$W <- W
+
+    if (store_listw) {
+      scope_obj@grid[[grid_name]]$listw <- spdep::mat2listw(W,
+        style = "W",
+        zero.policy = zero_policy
+      )
+    }
+
+    if (verbose) message("[geneSCOPE::computeWeights] Spatial weights computation completed")
+    return(invisible(scope_obj))
+  }
+
   # 3) Build the full neighbourhood structure and relabel to active cells
-  nb_bundle <- .spw_build_neighbourhood(meta, topo_info, zero_policy, ncores = ncores_use, verbose = verbose)
+  nb_bundle <- .spw_build_neighbourhood(meta, topo_info, ncores = ncores_use, verbose = verbose)
   relabel_nb <- nb_bundle$nb
-  zero_idx <- nb_bundle$zero_idx
+
+  # 3.1) Optionally expand to higher-order neighbourhoods for broader context
+  nb_expand <- .spw_expand_neighbourhood(
+    relabel_nb,
+    nb_order = nb_order,
+    min_neighbors = min_neighbors,
+    max_order = max_order,
+    verbose = verbose
+  )
+  relabel_nb <- nb_expand$nb
+  attr(relabel_nb, "avg_neighbors") <- nb_expand$avg_neighbors
+
+  # 3.2) Handle zero-neighbour regions after any expansion
+  zero_idx <- integer(0)
+  if (zero_policy) {
+    zero_idx <- which(vapply(relabel_nb, length, integer(1)) == 0L)
+    if (length(zero_idx) > 0L) {
+      for (j in zero_idx) {
+        relabel_nb[[j]] <- j
+      }
+    }
+  }
 
   # 4) Convert to requested outputs
   listw_obj <- NULL
@@ -372,7 +479,7 @@ computeWeights <- function(scope_obj,
   "hex-evenq"
 }
 
-.spw_build_neighbourhood <- function(meta, topo_info, zero_policy, ncores = 1L, verbose = FALSE) {
+.spw_build_neighbourhood <- function(meta, topo_info, ncores = 1L, verbose = FALSE) {
   topology <- topo_info$topology
   xbins_eff <- meta$xbins_eff
   ybins_eff <- meta$ybins_eff
@@ -407,7 +514,7 @@ computeWeights <- function(scope_obj,
     out[!is.na(out)]
   }
 
-  use_parallel <- (ncores > 1L) && length(sub_nb) > 5000L
+  use_parallel <- (ncores > 1L)
   relabel_nb <- if (use_parallel) {
     if (verbose) message("[geneSCOPE::computeWeights] Relabelling neighbours with ", ncores, " processes")
     parallel::mclapply(sub_nb, map_fn, mc.cores = ncores)
@@ -420,17 +527,87 @@ computeWeights <- function(scope_obj,
   attr(relabel_nb, "queen") <- identical(topology, "queen")
   attr(relabel_nb, "topology") <- topology
 
-  zero_idx <- integer(0)
-  if (zero_policy) {
-    zero_idx <- which(vapply(relabel_nb, length, integer(1)) == 0L)
-    if (length(zero_idx) > 0L) {
-      for (j in zero_idx) {
-        relabel_nb[[j]] <- j
-      }
+  list(nb = relabel_nb)
+}
+
+.spw_expand_neighbourhood <- function(nb_obj,
+                                      nb_order = 1L,
+                                      min_neighbors = NULL,
+                                      max_order = NULL,
+                                      verbose = FALSE) {
+  base_nb <- nb_obj
+  base_attrs <- attributes(nb_obj)
+
+  order_use <- as.integer(nb_order)
+  if (!is.finite(order_use) || order_use < 1L) {
+    order_use <- 1L
+  }
+
+  if (is.null(max_order)) {
+    max_order <- max(order_use, 4L)
+  } else {
+    max_order <- as.integer(max_order)
+    if (!is.finite(max_order) || max_order < order_use) {
+      max_order <- order_use
     }
   }
 
-  list(nb = relabel_nb, zero_idx = zero_idx)
+  target <- min_neighbors
+  if (!is.null(target)) {
+    target <- as.numeric(target)
+    if (!is.finite(target) || target <= 0) target <- NULL
+  }
+
+  expand_once <- function(ord) {
+    if (ord <= 1L) {
+      base_nb
+    } else {
+      spdep::nblag_cumul(base_nb, ord)
+    }
+  }
+
+  clean_nb <- function(nb_list) {
+    out <- lapply(nb_list, function(v) {
+      if (length(v)) {
+        unique(as.integer(v))
+      } else {
+        integer(0)
+      }
+    })
+    attr(out, "class") <- "nb"
+    out
+  }
+
+  nb_use <- clean_nb(expand_once(order_use))
+  avg_deg <- mean(vapply(nb_use, length, integer(1)))
+
+  if (!is.null(target)) {
+    while (avg_deg < target && order_use < max_order) {
+      order_use <- order_use + 1L
+      nb_use <- clean_nb(expand_once(order_use))
+      avg_deg <- mean(vapply(nb_use, length, integer(1)))
+    }
+  }
+
+  attr(nb_use, "class") <- "nb"
+  attr(nb_use, "region.id") <- base_attrs[["region.id"]]
+  attr(nb_use, "queen") <- base_attrs[["queen"]]
+  attr(nb_use, "topology") <- base_attrs[["topology"]]
+  attr(nb_use, "nb_order") <- order_use
+  attr(nb_use, "call") <- NULL
+
+  if (verbose && (order_use > 1L || (!is.null(target) && order_use != nb_order))) {
+    base_avg <- mean(vapply(base_nb, length, integer(1)))
+    msg <- paste0("[geneSCOPE::computeWeights] Using neighbourhood order ", order_use,
+      " (avg neighbours ", round(avg_deg, 1),
+      if (!is.null(target)) paste0("; target ", target, ", cap ", max_order) else "",
+      if (order_use > 1L && is.finite(base_avg)) paste0("; base avg ", round(base_avg, 1)) else "",
+      ")"
+    )
+    message(msg)
+  }
+
+  list(nb = nb_use, order_used = order_use, avg_neighbors = avg_deg)
 }
 
 # ---------------------------------------------------------------------------
