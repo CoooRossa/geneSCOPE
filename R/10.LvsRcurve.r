@@ -7,7 +7,7 @@
 #' @param span LOESS span
 #' @param B Bootstrap iterations
 #' @param deg 0/1
-#' @param ncore Threads
+#' @param ncores Threads
 #' @param length_out Number of grid points
 #' @param downsample Downsample (ratio or integer)
 #' @param n_strata Number of strata (too large will be truncated to unique r values-1)
@@ -28,7 +28,7 @@ computeLvsRCurve <- function(scope_obj,
                         span = 0.45,
                         B = 1000,
                         deg = 1,
-                        ncore = max(1, parallel::detectCores() - 1),
+                        ncores = max(1, parallel::detectCores() - 1),
                         length_out = 1000,
                         downsample = 1,
                         n_strata = 50,
@@ -43,6 +43,7 @@ computeLvsRCurve <- function(scope_obj,
   ci_method <- match.arg(ci_method)
   ci_adjust <- match.arg(ci_adjust)
   level <- match.arg(level)
+  ncores <- max(1L, min(as.integer(ncores), parallel::detectCores(logical = TRUE)))
   if (min_rel_width < 0) stop("min_rel_width cannot be negative")
   if (B < 20) {
     if (verbose) message("[geneSCOPE::computeLvsRCurve] Warning: B < 20 may be unstable")
@@ -69,6 +70,18 @@ computeLvsRCurve <- function(scope_obj,
   if (verbose) {
     message("[geneSCOPE::computeLvsRCurve]   Found ", length(common), " common genes between matrices")
     message("[geneSCOPE::computeLvsRCurve]   Matrix dimensions: ", nrow(Lmat), "×", ncol(Lmat))
+  }
+
+  # Memory guard: estimate per-thread footprint (two dense matrices) and stop if over system RAM
+  sys_mem_gb <- .getSystemMemoryGB()
+  per_thread_gb <- (length(common)^2 * 8 * 2) / (1024^3)
+  est_total_gb <- per_thread_gb * ncores
+  if (est_total_gb > sys_mem_gb) {
+    stop(
+      "[geneSCOPE::computeLvsRCurve] Estimated memory requirement (",
+      round(est_total_gb, 1), " GB) exceeds system capacity (",
+      round(sys_mem_gb, 1), " GB). Reduce ncores, downsample, or gene set size."
+    )
   }
 
   Lmat <- Lmat[common, common, drop = FALSE]
@@ -137,7 +150,7 @@ computeLvsRCurve <- function(scope_obj,
   if (verbose) {
     message("[geneSCOPE::computeLvsRCurve]   Analysis range: [", round(xr[1], 3), ", ", round(xr[2], 3), "]")
     message("[geneSCOPE::computeLvsRCurve]   Grid points: ", length_out)
-    message("[geneSCOPE::computeLvsRCurve]   Using ", ncore, " cores for bootstrap")
+    message("[geneSCOPE::computeLvsRCurve]   Using ", ncores, " cores for bootstrap")
   }
 
   # Directly call unified interface (no longer check old version)
@@ -150,7 +163,7 @@ computeLvsRCurve <- function(scope_obj,
     B = as.integer(B),
     span = span,
     deg = as.integer(deg),
-    n_threads = as.integer(max(1, ncore)),
+    n_threads = as.integer(max(1, ncores)),
     k_max = if (is.finite(k_max)) as.integer(k_max) else -1L,
     keep_boot = keep_boot,
     adjust_mode = adjust_mode,
@@ -596,17 +609,10 @@ getTopLvsR <- function(scope_obj,
     }
   }
 
-  os_type <- tryCatch(detectOS(), error = function(e) "linux")
-  phys <- parallel::detectCores(FALSE)
   logi <- parallel::detectCores(TRUE)
-  safe_cores <- switch(os_type,
-    windows = min(4, phys),
-    linux   = max(1, min(phys - 2, ceiling(logi * 0.6))),
-    macos   = max(1, min(phys - 1, ceiling(logi * 0.5))),
-    max(1, phys - 2)
-  )
+  safe_cores <- max(1L, min(ncores, logi))
   if (ncores > safe_cores) {
-    message("[geneSCOPE::getTopLvsR] Adjusting ncores: requested=", ncores, " safe=", safe_cores)
+    message("[geneSCOPE::getTopLvsR] Adjusting ncores: requested=", ncores, " capped at available=", safe_cores)
     ncores <- safe_cores
   }
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
