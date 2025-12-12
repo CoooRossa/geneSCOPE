@@ -111,6 +111,17 @@ computeL <- function(scope_obj,
     n_genes_use <- if (!is.null(genes)) length(genes) else all_genes
     matrix_size_gb <- (n_genes_use^2 * 8) / (1024^3)
 
+    # Memory guard: estimate per-thread usage as single-core size × threads
+    sys_mem_gb <- .getSystemMemoryGB()
+    est_total_gb <- matrix_size_gb * ncores
+    if (est_total_gb > sys_mem_gb) {
+        stop(
+            "[geneSCOPE::computeL] Estimated memory requirement (",
+            round(est_total_gb, 1), " GB) exceeds system capacity (",
+            round(sys_mem_gb, 1), " GB). Reduce ncores or gene set size."
+        )
+    }
+
     # Respect user bigmemory/chunk overrides while still hinting when streaming is advisable
     if (matrix_size_gb > mem_limit_GB) {
         if (use_bigmemory) {
@@ -166,7 +177,7 @@ computeL <- function(scope_obj,
                     norm_layer = norm_layer,
                     genes = genes,
                     within = within,
-                    ncore = current_cores, # Use current core count
+                    ncores = current_cores, # Use current core count
                     mem_limit_GB = mem_limit_GB,
                     chunk_size = chunk_size,
                     use_bigmemory = use_bigmemory,
@@ -571,7 +582,7 @@ computeL <- function(scope_obj,
                          norm_layer = "Xz",
                          genes = NULL,
                          within = TRUE,
-                         ncore = 1,
+                         ncores = 1,
                          mem_limit_GB = 16,
                          chunk_size = 256L,
                          use_bigmemory = TRUE,
@@ -633,9 +644,9 @@ computeL <- function(scope_obj,
     ## ======================================================
     if (!need_stream) {
         RhpcBLASctl::blas_set_num_threads(1)
-        Sys.setenv(OMP_NUM_THREADS = ncore)
+        Sys.setenv(OMP_NUM_THREADS = ncores)
         # Use correct export function name
-        L_full <- lee_L_cache(Xz_full, W, n_threads = ncore)
+        L_full <- lee_L_cache(Xz_full, W, n_threads = ncores)
 
         if (within) {
             Lmat <- L_full[idx_keep, idx_keep, drop = FALSE]
@@ -664,7 +675,7 @@ computeL <- function(scope_obj,
         )
 
         RhpcBLASctl::blas_set_num_threads(1)
-        Sys.setenv(OMP_NUM_THREADS = ncore)
+        Sys.setenv(OMP_NUM_THREADS = ncores)
 
         ## ---- Process column blocks and write ----
         for (start in seq(1L, n_g, by = chunk_size)) {
@@ -673,7 +684,7 @@ computeL <- function(scope_obj,
             L_block <- lee_L_cols(
                 Xz_full, W,
                 cols0 = as.integer(idx_chunk - 1L),
-                n_threads = ncore
+                n_threads = ncores
             )
 
             ## Write column block + symmetric columns
