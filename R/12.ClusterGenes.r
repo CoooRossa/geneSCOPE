@@ -1,12 +1,3 @@
-#' Modules:
-#'   * .extract_scope_layers_2()        – extract primary matrix / aux slots
-#'   * .threshold_similarity_graph_2()  – base thresholding + adjacency build
-#'   * .stage1_consensus_workflow_2()   – multi-run community detection + consensus
-#'   * .stage2_refine_workflow_2()      – CI95 / MH corrections + Stage-2
-#'   * clusterGenes()                 – user facing wrapper (scope_obj in/out)
-# ---------------------------------------------------------------------------
-# Utility: build default configuration list
-# ---------------------------------------------------------------------------
 #' Build default clustering configuration.
 #'
 #' @param min_cutoff Numeric Lee's L cutoff.
@@ -1308,13 +1299,7 @@
             dimnames = list(kept_genes, "hotspot"))
         stage1_backend <- "hotspot"
     } else {
-        n_threads <- tryCatch({
-            if (is.null(config$n_threads)) {
-                if (exists("safe_thread_count", mode = "function", inherits = TRUE)) safe_thread_count() else 1L
-            } else {
-                as.integer(config$n_threads)
-            }
-        }, error = function(e) 1L)
+        n_threads <- max(1L, min(as.integer(config$n_threads %||% 1L), parallel::detectCores(logical = TRUE)))
 
         edge_weights <- nk_inputs_stage1$edge_weights
         vertex_names <- nk_inputs_stage1$vertex_names
@@ -2435,6 +2420,15 @@ clusterGenes <- function(
     }
     mode <- match.arg(mode)
 
+    # Use requested cores directly (clamped to available logical cores)
+    avail_cores <- max(1L, parallel::detectCores(logical = TRUE))
+    ncores_use <- if (is.null(ncores) || is.na(ncores)) {
+        avail_cores
+    } else {
+        max(1L, min(as.integer(ncores), avail_cores))
+    }
+    ncores <- ncores_use
+
     if (!is.null(lee_stats_layer)) stats_layer <- lee_stats_layer
     if (!is.null(L_min)) min_cutoff <- L_min
     if (!is.null(use_FDR)) use_significance <- use_FDR
@@ -2499,7 +2493,7 @@ clusterGenes <- function(
         use_consensus = use_consensus,
         consensus_thr = consensus_thr,
         n_restart = n_restart,
-        n_threads = ncores,
+        n_threads = ncores_use,
         mode = mode,
         large_n_threshold = large_n_threshold,
         nk_leiden_iterations = nk_leiden_iterations,
@@ -2550,6 +2544,19 @@ clusterGenes <- function(
         significance_slot = cfg$significance_slot,
         use_significance = cfg$use_significance,
         verbose = verbose)
+
+    # Memory guard: estimate dense footprint of similarity/significance matrices per thread
+    sim_dim <- nrow(inputs$similarity)
+    base_gb <- (sim_dim^2 * 8 * 2) / (1024^3) # two matrices (similarity + significance)
+    sys_mem_gb <- if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) sys_mem_bytes / 1024^3 else .getSystemMemoryGB()
+    est_total_gb <- base_gb * ncores_use
+    if (est_total_gb > sys_mem_gb) {
+        stop(
+            "[clusterGenes] Estimated memory requirement (", round(est_total_gb, 1),
+            " GB) exceeds system capacity (", round(sys_mem_gb, 1),
+            " GB). Reduce ncores or gene count."
+        )
+    }
 
     fast_requested <- identical(cfg$mode, "fast")
     auto_requested <- identical(cfg$mode, "auto")
