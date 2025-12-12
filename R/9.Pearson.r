@@ -19,8 +19,8 @@
 #' @param gene_selection_method Character. Method for automatic gene selection: "variance", "mean", "dropout", "random".
 #' @param save_subset_info Logical. Whether to save information about gene selection.
 #' @param force_compute Logical. Force computation even for very large matrices (default FALSE).
-#' @param use_bigmemory Logical. Use file-backed matrices for large computations (default TRUE).
-#' @param backing_path Character. Directory for temporary files (default tempdir()).
+#' @param use_bigmemory Logical. Use file-backed matrices for large computations when dense size exceeds memory_limit_gb.
+#' @param backing_path Character. Directory for temporary bigmemory backing files (default tempdir()).
 #' @param correation_slot_name Character. Name of the slot to store correlation matrix (default based on level and layer).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @return The modified \code{scope_object} (invisibly).
@@ -35,6 +35,9 @@ computeCorrelation <- function(scope_obj,
                                ncores = 16,
                                chunk_size = 1000,
                                memory_limit_gb = 16,
+                               use_bigmemory = TRUE,
+                               backing_path = tempdir(),
+                               force_compute = FALSE,
                                store_layer = "pearson_cor",
                                compute_fdr = TRUE,
                                fdr_method = "BH",
@@ -134,60 +137,88 @@ computeCorrelation <- function(scope_obj,
 
   if (verbose) message("[geneSCOPE::computeCorrelation] Estimated correlation matrix size: ", round(cor_matrix_gb, 2), " GB")
 
+  bigmemory_mode <- FALSE
   if (cor_matrix_gb > memory_limit_gb) {
-    stop(
-      "Correlation matrix too large (", round(cor_matrix_gb, 1), " GB) exceeds limit (",
-      memory_limit_gb, " GB). Please reduce gene number or increase memory limit."
+    if (!use_bigmemory) {
+      stop(
+        "Correlation matrix too large (", round(cor_matrix_gb, 1), " GB) exceeds limit (",
+        memory_limit_gb, " GB). Please reduce gene number or increase memory limit or set use_bigmemory=TRUE."
+      )
+    }
+    if (verbose) {
+      message("[geneSCOPE::computeCorrelation] Dense correlation exceeds memory_limit_gb; switching to bigmemory-backed chunked computation.")
+    }
+    cor_matrix <- .computeCorrelationBigMatrix(
+      mat = expr_mat,
+      method = method,
+      chunk_size = chunk_size,
+      ncores = ncores_safe,
+      force_compute = force_compute,
+      memory_limit_gb = memory_limit_gb,
+      backing_path = backing_path,
+      verbose = verbose
     )
+    bigmemory_mode <- TRUE
   }
 
   ## ---- Data preprocessing --------------------------------------
-  if (verbose) message("[geneSCOPE::computeCorrelation] Preprocessing expression matrix...")
+  if (!bigmemory_mode && verbose) message("[geneSCOPE::computeCorrelation] Preprocessing expression matrix...")
 
   # Transpose matrix to cells × genes (pearson_cor expects this)
-  expr_dense <- as.matrix(Matrix::t(expr_mat))
+  expr_dense <- if (bigmemory_mode) NULL else as.matrix(Matrix::t(expr_mat))
 
   # Center data (pearson_cor expects centered data)
-  if (verbose) message("[geneSCOPE::computeCorrelation] Centering data...")
-  expr_centered <- scale(expr_dense, center = TRUE, scale = FALSE)
+  if (!bigmemory_mode) {
+    if (verbose) message("[geneSCOPE::computeCorrelation] Centering data...")
+    expr_centered <- scale(expr_dense, center = TRUE, scale = FALSE)
 
-  # Remove NaN/Inf
-  expr_centered[!is.finite(expr_centered)] <- 0
+    # Remove NaN/Inf
+    expr_centered[!is.finite(expr_centered)] <- 0
 
-  if (verbose) message("[geneSCOPE::computeCorrelation] Data preprocessing completed")
+    if (verbose) message("[geneSCOPE::computeCorrelation] Data preprocessing completed")
+  }
 
   ## ---- Call C++ correlation function --------------------------------
-  if (verbose) message("[geneSCOPE::computeCorrelation] Starting correlation matrix computation (using ", ncores_safe, " threads)...")
+  if (!bigmemory_mode) {
+    if (verbose) message("[geneSCOPE::computeCorrelation] Starting correlation matrix computation (using ", ncores_safe, " threads)...")
 
-  start_time <- Sys.time()
+    start_time <- Sys.time()
 
-  # Use safe thread count to call C++ function
-  cor_matrix <- tryCatch(
-    {
-      pearson_cor(
-        X = expr_centered,
-        bs = blocksize,
-        n_threads = ncores_safe
-      )
-    },
-    error = function(e) {
-      # If error, try single thread
-      message("[geneSCOPE::computeCorrelation] !!! Warning: Multithreaded computation failed, trying single thread: ", e$message, " !!!")
-      pearson_cor(
-        X = expr_centered,
-        bs = blocksize,
-        n_threads = 1
-      )
-    }
-  )
+    # Use safe thread count to call C++ function
+    cor_matrix <- tryCatch(
+      {
+        pearson_cor(
+          X = expr_centered,
+          bs = blocksize,
+          n_threads = ncores_safe
+        )
+      },
+      error = function(e) {
+        # If error, try single thread
+        message("[geneSCOPE::computeCorrelation] !!! Warning: Multithreaded computation failed, trying single thread: ", e$message, " !!!")
+        pearson_cor(
+          X = expr_centered,
+          bs = blocksize,
+          n_threads = 1
+        )
+      }
+    )
 
-  end_time <- Sys.time()
-  elapsed <- as.numeric(difftime(end_time, start_time, units = "mins"))
+    end_time <- Sys.time()
+    elapsed <- as.numeric(difftime(end_time, start_time, units = "mins"))
 
-  if (verbose) message("[geneSCOPE::computeCorrelation] Correlation matrix computation completed, time elapsed: ", round(elapsed, 2), " minutes")
+    if (verbose) message("[geneSCOPE::computeCorrelation] Correlation matrix computation completed, time elapsed: ", round(elapsed, 2), " minutes")
+  }
 
   ## ---- Compute FDR (if needed) ----------------------------------
   fdr_matrix <- NULL
+  if (compute_fdr && bigmemory_mode) {
+    compute_fdr <- FALSE
+    if (verbose) {
+      message("[geneSCOPE::computeCorrelation] Skipping FDR computation in bigmemory mode (file-backed matrix).")
+    }
+  }
+
   if (compute_fdr) {
     if (verbose) message("[geneSCOPE::computeCorrelation] Computing FDR...")
 
