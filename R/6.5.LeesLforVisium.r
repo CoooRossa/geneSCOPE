@@ -64,7 +64,7 @@ computeL_visium <- function(
         meta_col <- paste0(grid_name, "_iDelta")
         if (is.null(scope_obj@meta.data) || !(meta_col %in% colnames(scope_obj@meta.data))) {
             if (verbose) message("[computeL_visium] Computing Iδ…")
-            scope_obj <- computeIDelta(scope_obj, grid_name = grid_name, level = "grid", ncore = min(8L, ncores), verbose = verbose)
+            scope_obj <- computeIDelta(scope_obj, grid_name = grid_name, level = "grid", ncores = min(8L, ncores), verbose = verbose)
         }
     }
     genes_all <- colnames(X)
