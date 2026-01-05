@@ -17,21 +17,21 @@ memory–speed trade-off (default 2000).}
 }
 \value{
 A \eqn{p \times p} symmetric double matrix containing Pearson
-  correlations.
+correlations.
 }
 \description{
 Computes the Pearson correlation matrix for a column-centred numeric
-  matrix \code{X} using a tiled (block-wise) multiplication strategy and
-  OpenMP parallelism.  Only one block is kept in memory at a time, so the
-  peak RAM footprint is \eqn{O(bs^2)} where \code{bs} is the block size.
+matrix \code{X} using a tiled (block-wise) multiplication strategy and
+OpenMP parallelism.  Only one block is kept in memory at a time, so the
+peak RAM footprint is \eqn{O(bs^2)} where \code{bs} is the block size.
 }
 \details{
 Column standard deviations are pre-computed, then each block pair
-  multiplies \eqn{X_i^\top X_j / (n-1)} to obtain the covariance
-  sub-matrix, which is scaled by the corresponding standard deviations
-  to yield correlations.  Upper-triangular blocks are written first and
-  mirrored into the lower triangle under a critical section to avoid
-  write-race conditions.
+multiplies \eqn{X_i^\top X_j / (n-1)} to obtain the covariance
+sub-matrix, which is scaled by the corresponding standard deviations
+to yield correlations.  Upper-triangular blocks are written first and
+mirrored into the lower triangle under a critical section to avoid
+write-race conditions.
 }
 \examples{
 \dontrun{

@@ -3,9 +3,6 @@
 \name{morisita_horn_sparse}
 \alias{morisita_horn_sparse}
 \title{Optimised sparse Morisita–Horn similarity}
-\usage{
-morisita_horn_sparse(G, edges, use_chao = TRUE, nthreads = 1L)
-}
 \arguments{
 \item{G}{\code{dgCMatrix}.  Sparse matrix of counts (genes × grids).}
 
@@ -21,22 +18,22 @@ Numeric vector of length \code{E} with Morisita–Horn similarities.
 }
 \description{
 Computes pair‑wise Morisita–Horn similarity between rows of a sparse
-  gene × grid count matrix using an edge list that specifies which pairs
-  to evaluate.  The algorithm traverses the matrix in compressed‑row form
-  (after transposing to columns) and uses a two‑pointer intersection to
-  accumulate the shared counts.  Lambda terms are optionally corrected
-  with Chao et al.’s bias estimator.  OpenMP parallelism is employed for
-  both per‑row statistics and per‑edge similarities.
+gene × grid count matrix using an edge list that specifies which pairs
+to evaluate.  The algorithm traverses the matrix in compressed‑row form
+(after transposing to columns) and uses a two‑pointer intersection to
+accumulate the shared counts.  Lambda terms are optionally corrected
+with Chao et al.’s bias estimator.  OpenMP parallelism is employed for
+both per‑row statistics and per‑edge similarities.
 }
 \details{
 For each gene row \emph{g}, the total count \eqn{N_g}, the quadratic
-  term \eqn{Q_g=\sum x^2}, and—if requested—the singletons (\eqn{f_1})
-  and doubletons (\eqn{f_2}) are pre‑computed.  The standard estimator
-  \eqn{\lambda_g = Q_g / N_g^2} is replaced by the Chao‐corrected form
-  when \code{use_chao = TRUE}; negative or non‑finite values are truncated
-  to 0, and if both corrected lambdas vanish the uncorrected values are
-  used.  Final similarities are optionally rescaled by 10×, 100×, or 1000×
-  so that the maximum is close to 1.
+term \eqn{Q_g=\sum x^2}, and—if requested—the singletons (\eqn{f_1})
+and doubletons (\eqn{f_2}) are pre‑computed.  The standard estimator
+\eqn{\lambda_g = Q_g / N_g^2} is replaced by the Chao‐corrected form
+when \code{use_chao = TRUE}; negative or non‑finite values are truncated
+to 0, and if both corrected lambdas vanish the uncorrected values are
+used.  Final similarities are optionally rescaled by 10×, 100×, or 1000×
+so that the maximum is close to 1.
 }
 \examples{
 \dontrun{

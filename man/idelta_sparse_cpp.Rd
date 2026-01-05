@@ -14,22 +14,22 @@ rows are genes and columns are grids.}
 }
 \value{
 Numeric vector of length \code{g}.  Values are \code{NaN} for
-  genes with fewer than two total molecules.
+genes with fewer than two total molecules.
 }
 \description{
 Computes Morisita's index Iδ for every gene (row) in a sparse
-  count matrix, where columns are spatial grids.  Only the non-zero
-  entries of each row are visited, so the runtime is \eqn{O(nnz)} and
-  memory use is negligible.  The calculation is fully parallelised
-  with OpenMP.
+count matrix, where columns are spatial grids.  Only the non-zero
+entries of each row are visited, so the runtime is \eqn{O(nnz)} and
+memory use is negligible.  The calculation is fully parallelised
+with OpenMP.
 }
 \details{
 For each gene the statistic is
-  \deqn{I_\delta = q \frac{\sum_{i=1}^{q} x_i (x_i - 1)}
+\deqn{I_\delta = q \frac{\sum_{i=1}^{q} x_i (x_i - 1)}
                     {\operatorname{tot}(\operatorname{tot}-1)},}
-  where \eqn{x_i} is the count in grid \eqn{i} and
-  \eqn{\operatorname{tot} = \sum_i x_i}.  The factor \eqn{q} corrects
-  for the number of grids.
+where \eqn{x_i} is the count in grid \eqn{i} and
+\eqn{\operatorname{tot} = \sum_i x_i}.  The factor \eqn{q} corrects
+for the number of grids.
 }
 \examples{
 \dontrun{

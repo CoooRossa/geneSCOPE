@@ -37,6 +37,6 @@ Integer vector of exceedance counts for each gene pair.
 }
 \description{
 Performs block-wise permutations to evaluate the significance of
-  the difference between Lee's L and Pearson r correlation (Delta) for specific
-  gene pairs, preserving spatial autocorrelation structure.
+the difference between Lee's L and Pearson r correlation (Delta) for specific
+gene pairs, preserving spatial autocorrelation structure.
 }

@@ -1,114 +1,63 @@
 Package: geneSCOPE
-Type: Package
-Title: geneSCOPE: gene Spatial Co-Occurrence of Pairwise Expression
-Version: 1.0.0
-Depends: R (>= 4.4.1)
-Author: Shicheng Zhang <0322704@ed.tus.ac.jp>
-Maintainer: Shicheng Zhang <0322704@ed.tus.ac.jp>
+Title: geneSCOPE: Gene Spatial Correlation Of Pairwise Expression
+Version: 0.0.0.9000
 Authors@R: 
     c(
-        person(
-            "Shicheng", "Zhang",
-            email = "0322704@ed.tus.ac.jp",
-            role = c("aut", "cre"),
-            comment = c(ORCID = "0000-0003-1608-1039", note = "Scaffold maintainer")
-        )
+      person("Shicheng", "Zhang", role = c("aut", "cre"), email = "0322704@ed.tus.ac.jp"),
+      person("Koichi", "Saeki", role = "aut"),
+      person("Hiroshi", "Haeno", role = "aut")
     )
-Description: geneSCOPE is an R toolkit for spatial-omics analysis that quantifies
-    multi-scale spatial structure and gene co-occurrence across tissue grids.
-    It supports flexible binning, graph-based modeling, and module discovery to
-    interpret microenvironment organization from high-resolution platforms.
+Description: Tools to compute and visualize spatial correlation of pairwise gene expression,
+    including Lee's L statistics, permutation-based inference, spatial weights, and
+    network-based visualizations over grid-aggregated spatial transcriptomics data.
 License: MIT + file LICENSE
-URL: https://github.com/CoooRossa/geneSCOPE
-BugReports: https://github.com/CoooRossa/geneSCOPE/issues
-Encoding: UTF-8
-LazyData: true
-Imports:
-    Rcpp,
-    methods,
-    magrittr,
-    dplyr,
-    data.table,
+Depends: 
+    R (>= 4.1.0)
+Imports: 
     Matrix,
-    ggplot2,
-    ggraph,
-    ggforce,
-    ggnewscale,
-    ggrepel,
-    igraph,
-    tidyr,
+    RhpcBLASctl (>= 0.18-12),
+    arrow (>= 18.1.0),
+    data.table (>= 1.14.0),
+    dplyr (>= 1.0.0),
+    foreach (>= 1.5.0),
+    future.apply (>= 1.8.0),
+    ggforce (>= 0.3.0),
+    ggnewscale (>= 0.4.0),
+    ggplot2 (>= 3.3.0),
+    ggraph (>= 2.0.0),
+    ggrepel (>= 0.9.0),
+    grDevices,
+    graphics,
+    grid,
+    igraph (>= 1.2.0),
+    methods,
+    parallel,
+    scales (>= 1.1.0),
+    sf (>= 1.0.0),
+    spdep (>= 1.1.0),
+    stats,
     tibble,
-    stats
-LinkingTo:
-    Rcpp,
-    RcppEigen,
-    RcppArmadillo
-NeedsCompilation: yes
-SystemRequirements: C++17-compatible compiler
+    tidyr (>= 1.1.0),
+    tools,
+    utils,
+    Rcpp (>= 1.0.7),
+    RcppArmadillo (>= 0.12.6.6.0),
+    RcppEigen (>= 0.3.3.9.0)
 Suggests:
-    arrow,
+    rhdf5,
     bigmemory,
-    circlize,
-    ComplexHeatmap,
-    dendextend,
-    dendsort,
-    digest,
-    fastcluster,
-    future.apply,
-    gclus,
-    geneSCOPE,
-    ggfx,
-    glmGamPoi,
     hdf5r,
-    jpeg,
-    jsonlite,
-    png,
-    ps,
-    RColorBrewer,
-    RhpcBLASctl,
-    scales,
-    Seurat,
-    seriation,
-    sf,
-    spdep,
-    tidyselect,
-    reticulate,
-    rhdf5
-Collate:
-    'RcppExports.R'
-    'api_clustering.R'
-    'api_correlation.R'
-    'api_data_construction.R'
-    'api_leesL.R'
-    'api_metrics_tests.R'
-    'api_normalization.R'
-    'api_plotting.R'
-    'api_spatial_weights.R'
-    'globals.R'
-    'internal_runtime_utils.R'
-    'internal_matrix_utils.R'
-    'internal_clustering.R'
-    'internal_graph_core.R'
-    'internal_graph.R'
-    'internal_ingest.R'
-    'internal_leesL.R'
-    'internal_metrics_tests.R'
-    'internal_misc.R'
-    'internal_plotting.R'
-    'internal_modules_stage4.R'
-    'internal_modules_stage6.R'
-    'internal_pipeline.R'
-    'internal_spatial_weights.R'
-    'internal_stats_correlation.R'
-    'lifecycle_hooks.R'
-    'zzz.R'
-    'native_correlation_spmm.R'
-    'native_diagnostics.R'
-    'native_leesL.R'
-    'native_permutation.R'
-    'native_resampling.R'
-    'native_spatial_weights.R'
-    'self_call_shims.R'
-    'zzz_classes.R'
-Roxygen: list(load = "source")
+    testthat (>= 3.0.0),
+    devtools
+Additional_repositories: https://bioconductor.org/packages/release/bioc
+LinkingTo: 
+    RcppArmadillo (>= 0.12.6.6.0),
+    RcppEigen (>= 0.3.3.9.0),
+    Rcpp (>= 1.0.7)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+SystemRequirements: C++17, GNU make (Linux/macOS), Rtools (Windows), zlib
+OS_type: unix, windows
+ByteCompile: false
+LazyData: false

@@ -34,7 +34,7 @@ Integer vector of exceedance counts for each gene pair.
 }
 \description{
 Performs permutation test to evaluate the significance of the
-  difference between Lee's L and Pearson r correlation (Delta) for specific
-  gene pairs. It counts how many permutations yield a Delta magnitude greater
-  than or equal to the reference Delta.
+difference between Lee's L and Pearson r correlation (Delta) for specific
+gene pairs. It counts how many permutations yield a Delta magnitude greater
+than or equal to the reference Delta.
 }

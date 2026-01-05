@@ -8,285 +8,7 @@
 #include <RcppEigen.h>
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
-#include <limits>
 using namespace Rcpp;
-
-namespace {
-
-inline bool enable_parallel_grid_nb() {
-    const char* flag = std::getenv("GENESCOPE_ENABLE_OMP_GRID_NB");
-    if (flag == nullptr) return false;
-    if (flag[0] == '1') return true;
-    if (flag[0] == 'T' || flag[0] == 't') return true;
-    if (flag[0] == 'Y' || flag[0] == 'y') return true;
-    if (flag[0] == 'F' || flag[0] == 'f') return true;
-    if (flag[0] == 'U' || flag[0] == 'u') return true;
-    return false;
-}
-
-struct GridGuardContext {
-    const char* caller;
-    int nrow;
-    int ncol;
-    long long n_cells;
-};
-
-inline GridGuardContext make_grid_context(const int nrow,
-                                          const int ncol,
-                                          const char* caller) {
-    if (nrow == NA_INTEGER || ncol == NA_INTEGER) {
-        Rcpp::stop("[%s] Grid dimensions must be finite integers.", caller);
-    }
-    if (nrow <= 0 || ncol <= 0) {
-        Rcpp::stop("[%s] Grid dimensions must be positive (got %d x %d).",
-                   caller, nrow, ncol);
-    }
-    const long long row_ll = static_cast<long long>(nrow);
-    const long long col_ll = static_cast<long long>(ncol);
-    const long long total = row_ll * col_ll;
-    if (total > std::numeric_limits<int>::max()) {
-        Rcpp::stop("[%s] Grid has %lld cells which exceeds INT_MAX (%d). Dimensions: %d x %d.",
-                   caller, total, std::numeric_limits<int>::max(), nrow, ncol);
-    }
-    return GridGuardContext{caller, nrow, ncol, total};
-}
-
-inline long long safe_positive_mul(const GridGuardContext& ctx,
-                                   const long long a,
-                                   const long long b,
-                                   const char* label) {
-    if (a < 0 || b < 0) {
-        Rcpp::stop("[%s] %s expects non-negative operands (grid %d x %d).",
-                   ctx.caller, label, ctx.nrow, ctx.ncol);
-    }
-    if (a == 0 || b == 0) return 0;
-    if (a > std::numeric_limits<long long>::max() / b) {
-        Rcpp::stop("[%s] %s overflow for grid %d x %d (cells=%lld). Reduce grid resolution or adjust units.",
-                   ctx.caller, label, ctx.nrow, ctx.ncol, ctx.n_cells);
-    }
-    return a * b;
-}
-
-inline long long safe_positive_add(const GridGuardContext& ctx,
-                                   const long long a,
-                                   const long long b,
-                                   const char* label) {
-    if (a < 0 || b < 0) {
-        Rcpp::stop("[%s] %s expects non-negative operands (grid %d x %d).",
-                   ctx.caller, label, ctx.nrow, ctx.ncol);
-    }
-    if (b > std::numeric_limits<long long>::max() - a) {
-        Rcpp::stop("[%s] %s overflow for grid %d x %d (cells=%lld).",
-                   ctx.caller, label, ctx.nrow, ctx.ncol, ctx.n_cells);
-    }
-    return a + b;
-}
-
-inline void validate_rect_edge_bound(const GridGuardContext& ctx,
-                                     const bool queen) {
-    const long long nrow_ll = static_cast<long long>(ctx.nrow);
-    const long long ncol_ll = static_cast<long long>(ctx.ncol);
-    const long long horizontal = safe_positive_mul(
-        ctx, nrow_ll, std::max<long long>(ncol_ll - 1, 0), "horizontal edge count");
-    const long long vertical = safe_positive_mul(
-        ctx, ncol_ll, std::max<long long>(nrow_ll - 1, 0), "vertical edge count");
-    long long undirected = safe_positive_add(ctx, horizontal, vertical, "rook adjacency total");
-    if (queen) {
-        const long long diag_pairs = safe_positive_mul(
-            ctx, std::max<long long>(nrow_ll - 1, 0), std::max<long long>(ncol_ll - 1, 0), "diagonal adjacency count");
-        const long long diag_edges = safe_positive_mul(ctx, diag_pairs, 2, "diagonal edge multiplier");
-        undirected = safe_positive_add(ctx, undirected, diag_edges, "queen adjacency total");
-    }
-    safe_positive_mul(ctx, undirected, 2, "directed adjacency total");
-}
-
-inline void validate_hex_edge_bound(const GridGuardContext& ctx) {
-    safe_positive_mul(ctx, ctx.n_cells, 6, "hex adjacency capacity");
-}
-
-inline List build_rectangular_nb(const int nrow,
-                                 const int ncol,
-                                 const bool queen,
-                                 const bool allow_parallel) {
-    const GridGuardContext ctx = make_grid_context(nrow, ncol, "grid_nb_impl");
-    validate_rect_edge_bound(ctx, queen);
-    const int n = static_cast<int>(ctx.n_cells);
-    std::vector<std::vector<int>> nb(n);
-
-    const int drow[8] = {0, 0, -1, 1, -1, -1, 1, 1};
-    const int dcol[8] = {-1, 1, 0, 0, -1, 1, -1, 1};
-    const int nOff = queen ? 8 : 4;
-
-    const bool run_parallel =
-#ifdef _OPENMP
-        allow_parallel && enable_parallel_grid_nb();
-#else
-        false;
-#endif
-
-#ifdef _OPENMP
-    if (run_parallel) {
-#pragma omp parallel for schedule(static)
-        for (int idx = 0; idx < n; ++idx) {
-            int r = idx / ncol, c = idx % ncol;
-            std::vector<int> local_nb;
-            local_nb.reserve(nOff);
-            for (int k = 0; k < nOff; ++k) {
-                int rr = r + drow[k], cc = c + dcol[k];
-                if (rr >= 0 && rr < nrow && cc >= 0 && cc < ncol) {
-                    local_nb.push_back(rr * ncol + cc + 1);
-                }
-            }
-            nb[idx].swap(local_nb);
-        }
-    } else
-#endif
-    {
-        for (int idx = 0; idx < n; ++idx) {
-            int r = idx / ncol, c = idx % ncol;
-            std::vector<int> local_nb;
-            local_nb.reserve(nOff);
-            for (int k = 0; k < nOff; ++k) {
-                int rr = r + drow[k], cc = c + dcol[k];
-                if (rr >= 0 && rr < nrow && cc >= 0 && cc < ncol) {
-                    local_nb.push_back(rr * ncol + cc + 1);
-                }
-            }
-            nb[idx].swap(local_nb);
-        }
-    }
-
-    List out(n);
-    for (int i = 0; i < n; ++i)
-        out[i] = IntegerVector(nb[i].begin(), nb[i].end());
-    out.attr("class") = "nb";
-    out.attr("region.id") = Rcpp::seq(1, n);
-    out.attr("queen") = queen;
-    return out;
-}
-
-inline List build_hex_r_nb(const int nrow,
-                           const int ncol,
-                           const bool oddr,
-                           const bool allow_parallel) {
-    const GridGuardContext ctx = make_grid_context(nrow, ncol, "grid_nb_hex_impl");
-    validate_hex_edge_bound(ctx);
-    const int n = static_cast<int>(ctx.n_cells);
-    std::vector<std::vector<int>> nb(n);
-
-    const bool run_parallel =
-#ifdef _OPENMP
-        allow_parallel && enable_parallel_grid_nb();
-#else
-        false;
-#endif
-
-#ifdef _OPENMP
-    if (run_parallel) {
-#pragma omp parallel for schedule(static)
-        for (int idx = 0; idx < n; ++idx) {
-            int r = idx / ncol, c = idx % ncol;
-            std::vector<int> local_nb;
-            local_nb.reserve(6);
-            const bool is_odd = (r % 2) == 1;
-            int rr = r, cc = c - 1;
-            if (cc >= 0) local_nb.push_back(rr * ncol + cc + 1);
-            cc = c + 1;
-            if (cc < ncol) local_nb.push_back(rr * ncol + cc + 1);
-            if (oddr) {
-                if (r - 1 >= 0) {
-                    cc = c + (is_odd ? 1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? 0 : -1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                }
-                if (r + 1 < nrow) {
-                    cc = c + (is_odd ? 1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? 0 : -1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                }
-            } else {
-                if (r - 1 >= 0) {
-                    cc = c + (is_odd ? 0 : 1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? -1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                }
-                if (r + 1 < nrow) {
-                    cc = c + (is_odd ? 0 : 1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? -1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                }
-            }
-            nb[idx].swap(local_nb);
-        }
-    } else
-#endif
-    {
-        for (int idx = 0; idx < n; ++idx) {
-            int r = idx / ncol, c = idx % ncol;
-            std::vector<int> local_nb;
-            local_nb.reserve(6);
-            const bool is_odd = (r % 2) == 1;
-            int rr = r, cc = c - 1;
-            if (cc >= 0) local_nb.push_back(rr * ncol + cc + 1);
-            cc = c + 1;
-            if (cc < ncol) local_nb.push_back(rr * ncol + cc + 1);
-            if (oddr) {
-                if (r - 1 >= 0) {
-                    cc = c + (is_odd ? 1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? 0 : -1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                }
-                if (r + 1 < nrow) {
-                    cc = c + (is_odd ? 1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? 0 : -1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                }
-            } else {
-                if (r - 1 >= 0) {
-                    cc = c + (is_odd ? 0 : 1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? -1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
-                }
-                if (r + 1 < nrow) {
-                    cc = c + (is_odd ? 0 : 1);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                    cc = c + (is_odd ? -1 : 0);
-                    if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
-                }
-            }
-            nb[idx].swap(local_nb);
-        }
-    }
-
-    List out(n);
-    for (int i = 0; i < n; ++i)
-        out[i] = IntegerVector(nb[i].begin(), nb[i].end());
-    out.attr("class") = "nb";
-    out.attr("region.id") = Rcpp::seq(1, n);
-    out.attr("queen") = false;
-    out.attr("topology") = oddr ? "hex-oddr" : "hex-evenr";
-    return out;
-}
-
-inline List build_hex_q_nb(const int nrow,
-                           const int ncol,
-                           const bool oddq,
-                           const bool allow_parallel) {
-    List nb_t = build_hex_r_nb(ncol, nrow, oddq, allow_parallel);
-    nb_t.attr("queen") = false;
-    nb_t.attr("topology") = oddq ? "hex-oddq" : "hex-evenq";
-    return nb_t;
-}
-
-}
 
 /*------------------------------------------------------------------*/
 /* 1. Parallel generation of Queen/Rook adjacency list            */
@@ -321,15 +43,35 @@ List grid_nb_omp(const int nrow,
                  const int ncol,
                  const bool queen = true)
 {
-    return build_rectangular_nb(nrow, ncol, queen, true);
-}
+    const int n = nrow * ncol;
+    std::vector<std::vector<int>> nb(n);
 
-// [[Rcpp::export]]
-List grid_nb_serial(const int nrow,
-                    const int ncol,
-                    const bool queen = true)
-{
-    return build_rectangular_nb(nrow, ncol, queen, false);
+    const int drow[8] = {0, 0, -1, 1, -1, -1, 1, 1};
+    const int dcol[8] = {-1, 1, 0, 0, -1, 1, -1, 1};
+    const int nOff = queen ? 8 : 4;
+
+#pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < n; ++idx)
+    {
+        int r = idx / ncol, c = idx % ncol;
+        std::vector<int> local_nb;
+        local_nb.reserve(nOff);
+        for (int k = 0; k < nOff; ++k)
+        {
+            int rr = r + drow[k], cc = c + dcol[k];
+            if (rr >= 0 && rr < nrow && cc >= 0 && cc < ncol)
+                local_nb.push_back(rr * ncol + cc + 1); // 1-based
+        }
+        nb[idx].swap(local_nb);
+    }
+
+    List out(n);
+    for (int i = 0; i < n; ++i)
+        out[i] = IntegerVector(nb[i].begin(), nb[i].end());
+    out.attr("class") = "nb";
+    out.attr("region.id") = Rcpp::seq(1, n);
+    out.attr("queen") = queen;
+    return out;
 }
 
 /*------------------------------------------------------------------*/
@@ -361,15 +103,76 @@ List grid_nb_hex_omp(const int nrow,
                      const int ncol,
                      const bool oddr = true)
 {
-    return build_hex_r_nb(nrow, ncol, oddr, true);
-}
+    const int n = nrow * ncol;
+    std::vector<std::vector<int>> nb(n);
 
-// [[Rcpp::export]]
-List grid_nb_hex(const int nrow,
-                 const int ncol,
-                 const bool oddr = true)
-{
-    return build_hex_r_nb(nrow, ncol, oddr, false);
+#pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < n; ++idx)
+    {
+        int r = idx / ncol, c = idx % ncol; // 0-based
+        std::vector<int> local_nb;
+        local_nb.reserve(6);
+
+        // Offsets depend on row parity and layout
+        const bool is_odd = (r % 2) == 1;
+
+        // Horizontal neighbours (W, E)
+        int rr = r, cc = c - 1;
+        if (cc >= 0) local_nb.push_back(rr * ncol + cc + 1);
+        cc = c + 1;
+        if (cc < ncol) local_nb.push_back(rr * ncol + cc + 1);
+
+        // Diagonals depend on odd/even row and chosen layout
+        if (oddr) {
+            // odd-r: odd rows shifted to the right
+            // NE, NW (r-1,*), SE, SW (r+1,*)
+            if (r - 1 >= 0) {
+                // NE: (r-1, c+1) when odd, (r-1, c) when even
+                cc = c + (is_odd ? 1 : 0);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
+                // NW: (r-1, c) when odd, (r-1, c-1) when even
+                cc = c + (is_odd ? 0 : -1);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
+            }
+            if (r + 1 < nrow) {
+                // SE: (r+1, c+1) when odd, (r+1, c) when even
+                cc = c + (is_odd ? 1 : 0);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
+                // SW: (r+1, c) when odd, (r+1, c-1) when even
+                cc = c + (is_odd ? 0 : -1);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
+            }
+        } else {
+            // even-r: even rows shifted to the right (mirror of odd-r)
+            if (r - 1 >= 0) {
+                // NE: (r-1, c+1) when even, (r-1, c) when odd
+                cc = c + (is_odd ? 0 : 1);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
+                // NW: (r-1, c) when even, (r-1, c-1) when odd
+                cc = c + (is_odd ? -1 : 0);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r - 1) * ncol + cc + 1);
+            }
+            if (r + 1 < nrow) {
+                // SE: (r+1, c+1) when even, (r+1, c) when odd
+                cc = c + (is_odd ? 0 : 1);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
+                // SW: (r+1, c) when even, (r+1, c-1) when odd
+                cc = c + (is_odd ? -1 : 0);
+                if (cc >= 0 && cc < ncol) local_nb.push_back((r + 1) * ncol + cc + 1);
+            }
+        }
+
+        nb[idx].swap(local_nb);
+    }
+
+    List out(n);
+    for (int i = 0; i < n; ++i)
+        out[i] = IntegerVector(nb[i].begin(), nb[i].end());
+    out.attr("class") = "nb";
+    out.attr("region.id") = Rcpp::seq(1, n);
+    out.attr("queen") = false;
+    out.attr("topology") = oddr ? "hex-oddr" : "hex-evenr";
+    return out;
 }
 
 /*------------------------------------------------------------------*/
@@ -394,15 +197,14 @@ List grid_nb_hexq_omp(const int nrow,
                       const int ncol,
                       const bool oddq = true)
 {
-    return build_hex_q_nb(nrow, ncol, oddq, true);
-}
+    // Build on transposed lattice using row-offset builder
+    List nb_t = grid_nb_hex_omp(ncol, nrow, oddq);
 
-// [[Rcpp::export]]
-List grid_nb_hexq(const int nrow,
-                  const int ncol,
-                  const bool oddq = true)
-{
-    return build_hex_q_nb(nrow, ncol, oddq, false);
+    // nb_t already has class and neighbours; region.id remains 1..(ncol*nrow)
+    // which matches column-major order for the original (nrow x ncol) lattice.
+    nb_t.attr("queen") = false;
+    nb_t.attr("topology") = oddq ? "hex-oddq" : "hex-evenq";
+    return nb_t;
 }
 
 /*------------------------------------------------------------------*/
@@ -948,7 +750,7 @@ SEXP grid_nb(const int nrow,
              const int ncol,
              const bool queen = true)
 {
-    return grid_nb_serial(nrow, ncol, queen);
+    return grid_nb_omp(nrow, ncol, queen);
 }
 
 // [[Rcpp::export]]
