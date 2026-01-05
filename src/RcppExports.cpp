@@ -3,7 +3,6 @@
 
 #include <RcppArmadillo.h>
 #include <RcppEigen.h>
-#include <Rcpp.h>
 
 using namespace Rcpp;
 
@@ -25,6 +24,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// grid_nb_serial
+List grid_nb_serial(const int nrow, const int ncol, const bool queen);
+RcppExport SEXP _geneSCOPE_grid_nb_serial(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type queen(queenSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_serial(nrow, ncol, queen));
+    return rcpp_result_gen;
+END_RCPP
+}
 // grid_nb_hex_omp
 List grid_nb_hex_omp(const int nrow, const int ncol, const bool oddr);
 RcppExport SEXP _geneSCOPE_grid_nb_hex_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
@@ -38,6 +50,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// grid_nb_hex
+List grid_nb_hex(const int nrow, const int ncol, const bool oddr);
+RcppExport SEXP _geneSCOPE_grid_nb_hex(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddr(oddrSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_hex(nrow, ncol, oddr));
+    return rcpp_result_gen;
+END_RCPP
+}
 // grid_nb_hexq_omp
 List grid_nb_hexq_omp(const int nrow, const int ncol, const bool oddq);
 RcppExport SEXP _geneSCOPE_grid_nb_hexq_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddqSEXP) {
@@ -48,6 +73,19 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
     Rcpp::traits::input_parameter< const bool >::type oddq(oddqSEXP);
     rcpp_result_gen = Rcpp::wrap(grid_nb_hexq_omp(nrow, ncol, oddq));
+    return rcpp_result_gen;
+END_RCPP
+}
+// grid_nb_hexq
+List grid_nb_hexq(const int nrow, const int ncol, const bool oddq);
+RcppExport SEXP _geneSCOPE_grid_nb_hexq(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddqSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
+    Rcpp::traits::input_parameter< const int >::type ncol(ncolSEXP);
+    Rcpp::traits::input_parameter< const bool >::type oddq(oddqSEXP);
+    rcpp_result_gen = Rcpp::wrap(grid_nb_hexq(nrow, ncol, oddq));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -137,6 +175,63 @@ BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type nb(nbSEXP);
     rcpp_result_gen = Rcpp::wrap(nb2mat(nb));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spmm_dgc_dense_f64
+arma::mat spmm_dgc_dense_f64(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f64(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f64(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// spmm_dgc_dense_f32
+arma::mat spmm_dgc_dense_f32(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
+RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f32(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f32(X, W, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rp_sign_bits
+CharacterMatrix rp_sign_bits(const arma::mat& X, const int bits, const int n_tables, const int seed, const int n_threads);
+RcppExport SEXP _geneSCOPE_rp_sign_bits(SEXP XSEXP, SEXP bitsSEXP, SEXP n_tablesSEXP, SEXP seedSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const int >::type bits(bitsSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_tables(n_tablesSEXP);
+    Rcpp::traits::input_parameter< const int >::type seed(seedSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rp_sign_bits(X, bits, n_tables, seed, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// leeL_topk_candidates
+Rcpp::List leeL_topk_candidates(const arma::mat& X, const arma::mat& WX, const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& indices, const int K_keep, const int n_threads);
+RcppExport SEXP _geneSCOPE_leeL_topk_candidates(SEXP XSEXP, SEXP WXSEXP, SEXP row_ptrSEXP, SEXP indicesSEXP, SEXP K_keepSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type WX(WXSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type indices(indicesSEXP);
+    Rcpp::traits::input_parameter< const int >::type K_keep(K_keepSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(leeL_topk_candidates(X, WX, row_ptr, indices, K_keep, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -281,63 +376,6 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type ci_type(ci_typeSEXP);
     Rcpp::traits::input_parameter< double >::type level(levelSEXP);
     rcpp_result_gen = Rcpp::wrap(loess_residual_bootstrap(x, y, strat, grid, B, span, deg, n_threads, k_max, keep_boot, adjust_mode, ci_type, level));
-    return rcpp_result_gen;
-END_RCPP
-}
-// spmm_dgc_dense_f64
-arma::mat spmm_dgc_dense_f64(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
-RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f64(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f64(X, W, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// spmm_dgc_dense_f32
-arma::mat spmm_dgc_dense_f32(const arma::mat& X, const arma::sp_mat& W, const int n_threads);
-RcppExport SEXP _geneSCOPE_spmm_dgc_dense_f32(SEXP XSEXP, SEXP WSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(spmm_dgc_dense_f32(X, W, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rp_sign_bits
-CharacterMatrix rp_sign_bits(const arma::mat& X, const int bits, const int n_tables, const int seed, const int n_threads);
-RcppExport SEXP _geneSCOPE_rp_sign_bits(SEXP XSEXP, SEXP bitsSEXP, SEXP n_tablesSEXP, SEXP seedSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const int >::type bits(bitsSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_tables(n_tablesSEXP);
-    Rcpp::traits::input_parameter< const int >::type seed(seedSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(rp_sign_bits(X, bits, n_tables, seed, n_threads));
-    return rcpp_result_gen;
-END_RCPP
-}
-// leeL_topk_candidates
-Rcpp::List leeL_topk_candidates(const arma::mat& X, const arma::mat& WX, const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& indices, const int K_keep, const int n_threads);
-RcppExport SEXP _geneSCOPE_leeL_topk_candidates(SEXP XSEXP, SEXP WXSEXP, SEXP row_ptrSEXP, SEXP indicesSEXP, SEXP K_keepSEXP, SEXP n_threadsSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type WX(WXSEXP);
-    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
-    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type indices(indicesSEXP);
-    Rcpp::traits::input_parameter< const int >::type K_keep(K_keepSEXP);
-    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(leeL_topk_candidates(X, WX, row_ptr, indices, K_keep, n_threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -486,16 +524,26 @@ BEGIN_RCPP
 END_RCPP
 }
 
+RcppExport SEXP _geneSCOPERebuild_native_openmp_info(void);
+RcppExport SEXP _geneSCOPERebuild_native_openmp_set_threads(SEXP);
+
 static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_grid_nb_omp", (DL_FUNC) &_geneSCOPE_grid_nb_omp, 3},
+    {"_geneSCOPE_grid_nb_serial", (DL_FUNC) &_geneSCOPE_grid_nb_serial, 3},
     {"_geneSCOPE_grid_nb_hex_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hex_omp, 3},
+    {"_geneSCOPE_grid_nb_hex", (DL_FUNC) &_geneSCOPE_grid_nb_hex, 3},
     {"_geneSCOPE_grid_nb_hexq_omp", (DL_FUNC) &_geneSCOPE_grid_nb_hexq_omp, 3},
+    {"_geneSCOPE_grid_nb_hexq", (DL_FUNC) &_geneSCOPE_grid_nb_hexq, 3},
     {"_geneSCOPE_listw_B_omp", (DL_FUNC) &_geneSCOPE_listw_B_omp, 1},
     {"_geneSCOPE_grid_weights_kernel_rect_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_rect_omp, 8},
     {"_geneSCOPE_grid_weights_kernel_hexr_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_hexr_omp, 8},
     {"_geneSCOPE_grid_weights_kernel_hexq_omp", (DL_FUNC) &_geneSCOPE_grid_weights_kernel_hexq_omp, 8},
     {"_geneSCOPE_grid_nb", (DL_FUNC) &_geneSCOPE_grid_nb, 3},
     {"_geneSCOPE_nb2mat", (DL_FUNC) &_geneSCOPE_nb2mat, 1},
+    {"_geneSCOPE_spmm_dgc_dense_f64", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f64, 3},
+    {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
+    {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
+    {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
     {"_geneSCOPE_lee_L", (DL_FUNC) &_geneSCOPE_lee_L, 3},
     {"_geneSCOPE_lee_L_cache", (DL_FUNC) &_geneSCOPE_lee_L_cache, 3},
     {"_geneSCOPE_lee_perm", (DL_FUNC) &_geneSCOPE_lee_perm, 5},
@@ -506,10 +554,6 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_pearson_block_cpp", (DL_FUNC) &_geneSCOPE_pearson_block_cpp, 3},
     {"_geneSCOPE_pearson_cor", (DL_FUNC) &_geneSCOPE_pearson_cor, 3},
     {"_geneSCOPE_loess_residual_bootstrap", (DL_FUNC) &_geneSCOPE_loess_residual_bootstrap, 13},
-    {"_geneSCOPE_spmm_dgc_dense_f64", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f64, 3},
-    {"_geneSCOPE_spmm_dgc_dense_f32", (DL_FUNC) &_geneSCOPE_spmm_dgc_dense_f32, 3},
-    {"_geneSCOPE_rp_sign_bits", (DL_FUNC) &_geneSCOPE_rp_sign_bits, 5},
-    {"_geneSCOPE_leeL_topk_candidates", (DL_FUNC) &_geneSCOPE_leeL_topk_candidates, 6},
     {"_geneSCOPE_morisita_horn_sparse", (DL_FUNC) &_geneSCOPE_morisita_horn_sparse, 4},
     {"_geneSCOPE_delta_lr_perm_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_tiny, 6},
     {"_geneSCOPE_delta_lr_perm_block_tiny", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block_tiny, 7},
@@ -519,6 +563,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_delta_lr_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr_block, 10},
     {"_geneSCOPE_consensus_coo_cpp", (DL_FUNC) &_geneSCOPE_consensus_coo_cpp, 3},
     {"_geneSCOPE_test_64bit_support", (DL_FUNC) &_geneSCOPE_test_64bit_support, 0},
+    {"_geneSCOPERebuild_native_openmp_info",        (DL_FUNC) &_geneSCOPERebuild_native_openmp_info,        0},
+    {"_geneSCOPERebuild_native_openmp_set_threads", (DL_FUNC) &_geneSCOPERebuild_native_openmp_set_threads, 1},
     {NULL, NULL, 0}
 };
 

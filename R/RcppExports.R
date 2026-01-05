@@ -30,6 +30,10 @@ grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
     .Call(`_geneSCOPE_grid_nb_omp`, nrow, ncol, queen)
 }
 
+grid_nb_serial <- function(nrow, ncol, queen = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_serial`, nrow, ncol, queen)
+}
+
 #' @title Build Hexagonal (6-neighbour) Neighbourhood List in Parallel
 #'
 #' @description
@@ -55,6 +59,10 @@ grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
     .Call(`_geneSCOPE_grid_nb_hex_omp`, nrow, ncol, oddr)
 }
 
+grid_nb_hex <- function(nrow, ncol, oddr = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hex`, nrow, ncol, oddr)
+}
+
 #' @title Build Hexagonal (6-neighbour) Neighbour List with column-offset (odd-q/even-q)
 #'
 #' @description
@@ -71,6 +79,10 @@ grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
 #'   and \code{topology} set to \code{"hex-oddq"} or \code{"hex-evenq"}.
 grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
     .Call(`_geneSCOPE_grid_nb_hexq_omp`, nrow, ncol, oddq)
+}
+
+grid_nb_hexq <- function(nrow, ncol, oddq = TRUE) {
+    .Call(`_geneSCOPE_grid_nb_hexq`, nrow, ncol, oddq)
 }
 
 #' @title Convert Neighbour List to Binary Sparse Matrix (dgCMatrix)
@@ -105,14 +117,6 @@ listw_B_omp <- function(nb) {
     .Call(`_geneSCOPE_listw_B_omp`, nb)
 }
 
-grid_nb <- function(nrow, ncol, queen = TRUE) {
-    .Call(`_geneSCOPE_grid_nb`, nrow, ncol, queen)
-}
-
-nb2mat <- function(nb) {
-    .Call(`_geneSCOPE_nb2mat`, nb)
-}
-
 grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
     .Call(`_geneSCOPE_grid_weights_kernel_rect_omp`, nrow, ncol, gx, gy, queen, radius, kernel, sigma)
 }
@@ -123,6 +127,30 @@ grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr = TRUE, radius
 
 grid_weights_kernel_hexq_omp <- function(nrow, ncol, gx, gy, oddq = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
     .Call(`_geneSCOPE_grid_weights_kernel_hexq_omp`, nrow, ncol, gx, gy, oddq, radius, kernel, sigma)
+}
+
+grid_nb <- function(nrow, ncol, queen = TRUE) {
+    .Call(`_geneSCOPE_grid_nb`, nrow, ncol, queen)
+}
+
+nb2mat <- function(nb) {
+    .Call(`_geneSCOPE_nb2mat`, nb)
+}
+
+spmm_dgc_dense_f64 <- function(X, W, n_threads = 1L) {
+    .Call(`_geneSCOPE_spmm_dgc_dense_f64`, X, W, n_threads)
+}
+
+spmm_dgc_dense_f32 <- function(X, W, n_threads = 1L) {
+    .Call(`_geneSCOPE_spmm_dgc_dense_f32`, X, W, n_threads)
+}
+
+rp_sign_bits <- function(X, bits = 12L, n_tables = 6L, seed = 1L, n_threads = 1L) {
+    .Call(`_geneSCOPE_rp_sign_bits`, X, bits, n_tables, seed, n_threads)
+}
+
+leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threads = 1L) {
+    .Call(`_geneSCOPE_leeL_topk_candidates`, X, WX, row_ptr, indices, K_keep, n_threads)
 }
 
 #' @title Lee's L (single pass)
@@ -271,22 +299,6 @@ loess_residual_bootstrap <- function(x, y, strat, grid, B = 1000L, span = 0.45, 
     .Call(`_geneSCOPE_loess_residual_bootstrap`, x, y, strat, grid, B, span, deg, n_threads, k_max, keep_boot, adjust_mode, ci_type, level)
 }
 
-spmm_dgc_dense_f64 <- function(X, W, n_threads = 1L) {
-    .Call(`_geneSCOPE_spmm_dgc_dense_f64`, X, W, n_threads)
-}
-
-spmm_dgc_dense_f32 <- function(X, W, n_threads = 1L) {
-    .Call(`_geneSCOPE_spmm_dgc_dense_f32`, X, W, n_threads)
-}
-
-rp_sign_bits <- function(X, bits = 12L, n_tables = 6L, seed = 1L, n_threads = 1L) {
-    .Call(`_geneSCOPE_rp_sign_bits`, X, bits, n_tables, seed, n_threads)
-}
-
-leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threads = 1L) {
-    .Call(`_geneSCOPE_leeL_topk_candidates`, X, WX, row_ptr, indices, K_keep, n_threads)
-}
-
 #' @title Optimised sparse Morisita–Horn similarity
 #'
 #' @description
@@ -321,8 +333,6 @@ leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threa
 #'   sim <- morisita_horn_sparse_cpp(G, edges, use_chao = TRUE, nthreads = 4)
 #'   summary(sim)
 #' }
-NULL
-
 morisita_horn_sparse <- function(G, edges, use_chao = TRUE, nthreads = 1L) {
     .Call(`_geneSCOPE_morisita_horn_sparse`, G, edges, use_chao, nthreads)
 }

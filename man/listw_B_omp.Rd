@@ -12,21 +12,21 @@ listw_B_omp(nb)
 }
 \value{
 A \code{dgCMatrix} of dimension \eqn{n \times n} where \eqn{n} is
-the number of regions. Entries are \code{1} where two regions are
-adjacent and \code{0} elsewhere.
+  the number of regions. Entries are \code{1} where two regions are
+  adjacent and \code{0} elsewhere.
 }
 \description{
 Transforms an \code{nb} neighbourhood list into a column-compressed
-binary sparse matrix of class \code{dgCMatrix}. The routine streams the
-triplet representation in parallel with OpenMP and finally constructs the
-sparse matrix with Eigen.
+  binary sparse matrix of class \code{dgCMatrix}. The routine streams the
+  triplet representation in parallel with OpenMP and finally constructs the
+  sparse matrix with Eigen.
 }
 \details{
 The neighbour indices are 1-based; they are converted to 0-based before
-creation of the triplets for Eigen. Each thread accumulates its own
-vector of triplets to avoid synchronisation. After the parallel region
-all triplets are concatenated and the resulting sparse matrix is
-compressed in column-major order.
+  creation of the triplets for Eigen. Each thread accumulates its own
+  vector of triplets to avoid synchronisation. After the parallel region
+  all triplets are concatenated and the resulting sparse matrix is
+  compressed in column-major order.
 }
 \examples{
 \dontrun{
