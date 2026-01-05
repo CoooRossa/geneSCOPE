@@ -119,6 +119,14 @@
         " use_bigmemory=", use_bigmemory,
         " chunk_size=", chunk_size
     ))
+    bigmemory_available <- requireNamespace("bigmemory", quietly = TRUE)
+    bigmemory_forced_off <- use_bigmemory && !bigmemory_available
+    if (bigmemory_forced_off) {
+        if (verbose) {
+            .log_info(parent, "S02", "bigmemory not available; forcing use_bigmemory=FALSE", verbose)
+        }
+        use_bigmemory <- FALSE
+    }
 
     # Cross-platform memory calculation
     all_genes <- if (!is.null(g_layer[[norm_layer]])) {
@@ -158,16 +166,16 @@
                     if (!user_set_chunk) " You may tune chunk_size to trade IO vs RAM." else ""
                 ), verbose)
             }
-        } else if (user_set_bigmemory) {
+        } else if (user_set_bigmemory && !bigmemory_forced_off) {
             mem_reason <- "user_forced_inmemory"
             if (verbose) .log_info(parent, "S02", paste0(
                 "Warning: requested use_bigmemory=FALSE with large matrix (",
                 round(matrix_size_gb, 1), " GB); proceeding in-memory as requested."
             ), verbose)
-        } else if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
+        } else if (!bigmemory_available) {
             mem_reason <- "bigmemory_unavailable"
             if (verbose) .log_info(parent, "S02",
-                "!!! Warning: bigmemory not available on Windows; using regular matrices !!!",
+                "!!! Warning: bigmemory not available; using regular matrices !!!",
                 verbose
             )
             use_bigmemory <- FALSE
