@@ -15,7 +15,6 @@
 ^.*\.sh$
 ^.*_build_.*\.R$
 ^.*_workflow\.R$
-^.*_test.*\.R$
 ^.*REPORT.*\.md$
 ^.*GUIDE.*\.md$
 ^.*COMPLETION.*\.md$
