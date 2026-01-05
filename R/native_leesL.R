@@ -30,7 +30,7 @@
                          cache_inputs = FALSE,
                          input_cache = NULL) {
     if (use_bigmemory && !requireNamespace("bigmemory", quietly = TRUE)) {
-        stop("Package 'bigmemory' is required.")
+        use_bigmemory <- FALSE
     }
 
     ## ---- 0. Get grid layer (new helper) ---------------------------------
