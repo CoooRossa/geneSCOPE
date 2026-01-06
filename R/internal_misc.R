@@ -1752,12 +1752,16 @@
 #' @param region Parameter value.
 #' @param chunk_size Parameter value.
 #' @param workers Parameter value.
+#' @param parallel_backend Parameter value.
+#' @param psock_batch_chunks Parameter value.
 #' @return Return value used internally.
 #' @keywords internal
 .clip_points_to_region <- function(points,
                                   region,
                                   chunk_size = 5e5,
-                                  workers = 1L) {
+                                  workers = 1L,
+                                  parallel_backend = NULL,
+                                  psock_batch_chunks = NULL) {
     if (is.null(region) || nrow(points) == 0L) {
         return(points)
     }
@@ -1786,9 +1790,65 @@
     chunk_ids <- split(seq_len(nrow(dt_pts)),
         ceiling(seq_len(nrow(dt_pts)) / chunk_size)
     )
+    psock_batch_chunks <- psock_batch_chunks %||% getOption("geneSCOPE.psock_batch_chunks", 16L)
+    psock_batch_chunks <- suppressWarnings(as.integer(psock_batch_chunks))
+    if (!is.finite(psock_batch_chunks) || psock_batch_chunks < 1L) {
+        psock_batch_chunks <- 16L
+    }
+    large_table_rows <- getOption("geneSCOPE.large_table_rows", 5e6)
+    large_table_rows <- suppressWarnings(as.numeric(large_table_rows)[1])
+    if (!is.finite(large_table_rows) || large_table_rows < 1) {
+        large_table_rows <- 5e6
+    }
+    is_large_table <- nrow(dt_pts) >= large_table_rows
 
-    clip_worker <- function(idx) {
-        subset_dt <- dt_pts[idx]
+    debug_parallel <- isTRUE(getOption("geneSCOPE.debug_parallel", FALSE))
+    log_dir <- if (debug_parallel) getOption("geneSCOPE.debug_parallel_dir", tempdir()) else NULL
+    if (debug_parallel && !dir.exists(log_dir)) {
+        dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    workers <- suppressWarnings(as.integer(workers))
+    if (!is.finite(workers) || workers < 1L) workers <- 1L
+
+    backend <- if (is.null(parallel_backend)) {
+        getOption("geneSCOPE.parallel_backend", "auto")
+    } else {
+        parallel_backend
+    }
+    backend <- tolower(as.character(backend)[1])
+    if (is.na(backend) || !nzchar(backend)) backend <- "auto"
+    backend <- match.arg(backend, c("auto", "fork", "psock", "serial"))
+    if (identical(backend, "auto")) {
+        if (.Platform$OS.type == "windows") {
+            backend <- "psock"
+        } else if (.detect_os() == "linux" && .detect_container()) {
+            backend <- if (is_large_table) "serial" else "psock"
+        } else {
+            backend <- "fork"
+        }
+    }
+    if (workers <= 1L) backend <- "serial"
+
+    if (debug_parallel) {
+        chunk_lengths <- vapply(chunk_ids, length, integer(1L))
+        message(
+            "[clip_points_to_region] points=", nrow(dt_pts),
+            " chunks=", length(chunk_ids),
+            " chunk_size=", chunk_size,
+            " workers=", workers,
+            " backend=", backend,
+            " psock_batch_chunks=", psock_batch_chunks,
+            " large_table=", is_large_table,
+            " large_table_rows=", large_table_rows,
+            " chunk_min=", min(chunk_lengths),
+            " chunk_max=", max(chunk_lengths),
+            " dt_mb=", round(as.numeric(object.size(dt_pts)) / 1024^2, 1)
+        )
+    }
+
+    clip_worker <- function(subset_dt, region, debug_parallel = FALSE, log_dir = NULL, chunk_range = NULL) {
+        tryCatch({
             inside_flag <- lengths(sf::st_within(
                 sf::st_as_sf(subset_dt,
                     coords = c("x", "y"),
@@ -1796,24 +1856,113 @@
                 ),
                 region
             )) > 0
-        subset_dt[inside_flag]
+            list(data = subset_dt[inside_flag, , drop = FALSE], error = NULL)
+        }, error = function(e) {
+            if (debug_parallel) {
+                log_path <- file.path(log_dir, paste0("genescope_clip_worker_", Sys.getpid(), ".log"))
+                if (is.null(chunk_range)) chunk_range <- "unknown"
+                writeLines(
+                    c(
+                        paste0("pid=", Sys.getpid()),
+                        paste0("chunk_range=", chunk_range),
+                        paste0("chunk_size=", nrow(subset_dt)),
+                        paste0("error=", conditionMessage(e))
+                    ),
+                    log_path
+                )
+            }
+            list(data = NULL, error = conditionMessage(e))
+        })
     }
 
-    if (workers > 1L && .Platform$OS.type != "windows") {
-        res_list <- mclapply(chunk_ids, clip_worker, mc.cores = workers)
-    } else if (workers > 1L) {
+    clip_worker_idx <- function(idx) {
+        subset_dt <- dt_pts[idx]
+        chunk_range <- if (length(idx)) paste0(min(idx), "-", max(idx)) else "empty"
+        clip_worker(subset_dt,
+            region = region,
+            debug_parallel = debug_parallel,
+            log_dir = log_dir,
+            chunk_range = chunk_range
+        )
+    }
+
+    run_psock_chunked <- function() {
         cluster <- makeCluster(workers)
         on.exit(stopCluster(cluster), add = TRUE)
         clusterEvalQ(cluster, library(sf))
-        clusterExport(cluster,
-            c("dt_pts", "region", "clip_worker"),
+        clusterExport(
+            cluster,
+            c("region", "clip_worker", "debug_parallel", "log_dir"),
             envir = environment()
         )
-        res_list <- parLapply(cluster, chunk_ids, clip_worker)
-    } else {
-        res_list <- lapply(chunk_ids, clip_worker)
+        res_all <- vector("list", length(chunk_ids))
+        if (!length(chunk_ids)) return(res_all)
+        for (b in seq(1, length(chunk_ids), by = psock_batch_chunks)) {
+            idx_range <- b:min(b + psock_batch_chunks - 1L, length(chunk_ids))
+            batch_dt <- lapply(chunk_ids[idx_range], function(idx) dt_pts[idx])
+            batch_res <- tryCatch({
+                parLapply(cluster, batch_dt, fun = clip_worker,
+                    region = region,
+                    debug_parallel = debug_parallel,
+                    log_dir = log_dir
+                )
+            }, error = function(e) e)
+            if (inherits(batch_res, "error")) {
+                return(batch_res)
+            }
+            res_all[idx_range] <- batch_res
+            rm(batch_dt, batch_res)
+            gc(FALSE)
+        }
+        res_all
     }
-    rbindlist(res_list)
+
+    run_backend <- function(backend) {
+        if (identical(backend, "fork") && .Platform$OS.type != "windows") {
+            mclapply(chunk_ids, clip_worker_idx, mc.cores = workers)
+        } else if (identical(backend, "psock")) {
+            run_psock_chunked()
+        } else {
+            lapply(chunk_ids, clip_worker_idx)
+        }
+    }
+
+    res_list <- tryCatch(run_backend(backend), error = function(e) e)
+    if (inherits(res_list, "error")) {
+        if (!identical(backend, "serial")) {
+            warning(
+                "ROI clip parallel backend '", backend, "' failed: ",
+                conditionMessage(res_list),
+                ". Retrying serial. Set parallel_backend='serial' to disable parallel ROI clipping.",
+                call. = FALSE
+            )
+            backend <- "serial"
+            res_list <- run_backend(backend)
+        } else {
+            stop("Error clipping points to ROI: ", conditionMessage(res_list))
+        }
+    }
+
+    bad <- vapply(res_list, function(x) !is.null(x$error), logical(1L))
+    if (any(bad)) {
+        if (!identical(backend, "serial")) {
+            warn_msgs <- unique(vapply(res_list[bad], function(x) x$error, character(1L)))
+            warning(
+                "ROI clip workers failed under backend='", backend, "': ",
+                paste(warn_msgs, collapse = "; "),
+                ". Retrying serial.",
+                call. = FALSE
+            )
+            res_list <- run_backend("serial")
+            bad <- vapply(res_list, function(x) !is.null(x$error), logical(1L))
+        }
+        if (any(bad)) {
+            err_msgs <- unique(vapply(res_list[bad], function(x) x$error, character(1L)))
+            stop("ROI clip worker error(s): ", paste(err_msgs, collapse = "; "))
+        }
+    }
+
+    rbindlist(lapply(res_list, `[[`, "data"))
 }
 
 #' Cmh Igraph To Matrix

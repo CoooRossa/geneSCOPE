@@ -309,6 +309,22 @@
   }
 }
 
+#' Detect Container
+#' @description
+#' Internal helper for `.detect_container`.
+#' @keywords internal
+#' @return Return value used internally.
+.detect_container <- function() {
+  if (.Platform$OS.type == "windows") return(FALSE)
+  if (!identical(Sys.info()[["sysname"]], "Linux")) return(FALSE)
+  if (file.exists("/.dockerenv")) return(TRUE)
+  if (nzchar(Sys.getenv("container", ""))) return(TRUE)
+
+  cgroup <- tryCatch(readLines("/proc/1/cgroup", warn = FALSE), error = function(e) character())
+  if (length(cgroup) == 0L) return(FALSE)
+  any(grepl("docker|kubepods|containerd|podman|lxc", cgroup))
+}
+
 #' Get Optimal Thread Config
 #' @description
 #' Internal helper for `.get_optimal_thread_config`.

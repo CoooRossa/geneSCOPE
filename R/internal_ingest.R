@@ -851,7 +851,13 @@
     if (!is.null(roi) && nrow(centroids_dt)) {
         step10$enter(paste0("cells=", nrow(centroids_dt)))
         centroids_dt <- tryCatch(
-            .clip_points_to_region(centroids_dt, roi, chunk_size = p$chunk_pts, workers = state$thread_context$ncores_safe),
+            .clip_points_to_region(
+                centroids_dt,
+                roi,
+                chunk_size = p$chunk_pts,
+                workers = state$thread_context$ncores_safe,
+                parallel_backend = p$parallel_backend
+            ),
             error = function(e) stop("Error clipping centroids: ", e$message)
         )
         step10$done(paste0("retained=", nrow(centroids_dt)))
@@ -1262,6 +1268,7 @@
     coord_file,
     ncores,
     chunk_pts,
+    parallel_backend = NULL,
     min_gene_types,
     max_gene_types,
     min_seg_points,
@@ -1276,6 +1283,9 @@
     stopifnot(is.numeric(grid_length), length(grid_length) >= 1, all(grid_length > 0))
     stopifnot(is.logical(flip_y), length(flip_y) == 1)
     stopifnot(is.logical(keep_partial_grid), length(keep_partial_grid) == 1)
+    if (is.null(parallel_backend)) parallel_backend <- "auto"
+    parallel_backend <- as.character(parallel_backend)[1]
+    if (is.na(parallel_backend) || !nzchar(parallel_backend)) parallel_backend <- "auto"
 
     list(
         params = list(
@@ -1290,6 +1300,7 @@
             coord_file = coord_file,
             ncores = ncores,
             chunk_pts = chunk_pts,
+            parallel_backend = parallel_backend,
             min_gene_types = min_gene_types,
             max_gene_types = max_gene_types,
             min_seg_points = min_seg_points,
@@ -1517,7 +1528,13 @@
 	        })
         if (p$flip_y && nrow(mol_small) > 0) mol_small[, y := y_max - y]
         if (nrow(mol_small) > 0) {
-            mol_small <- .clip_points_to_region(mol_small, roi, chunk_size = p$chunk_pts, workers = state$thread_context$ncores_safe)
+            mol_small <- .clip_points_to_region(
+                mol_small,
+                roi,
+                chunk_size = p$chunk_pts,
+                workers = state$thread_context$ncores_safe,
+                parallel_backend = p$parallel_backend
+            )
         }
         step12$done(paste0("retained=", nrow(mol_small)))
     } else {
@@ -3955,6 +3972,7 @@ build_scope_from_visium <- function(input_dir,
 #' @param roi_path Optional ROI to subset the dataset.
 #' @param num_workers Number of workers for preprocessing.
 #' @param chunk_size Chunk size for streaming molecule data.
+#' @param parallel_backend Parallel backend for ROI clipping (`auto`, `fork`, `psock`, `serial`).
 #' @param min_gene_types Minimum gene types per cell to retain.
 #' @param max_gene_types Maximum gene types per cell to retain.
 #' @param min_segmentation_points Minimum segmentation vertices per cell.
@@ -3976,6 +3994,7 @@ build_scope_from_xenium <- function(input_dir,
                                     roi_path = NULL,
                                     num_workers = 1L,
                                     chunk_size = 5e5,
+                                    parallel_backend = c("auto", "fork", "psock", "serial"),
                                     min_gene_types = 1,
                                     max_gene_types = Inf,
                                     min_segmentation_points = 1,
@@ -3983,6 +4002,7 @@ build_scope_from_xenium <- function(input_dir,
                                     verbose = TRUE,
                                     flip_y = TRUE,
                                     data_type = "xenium") {
+    parallel_backend <- match.arg(parallel_backend)
     parent <- "createSCOPE"
     step15 <- .log_step(parent, "S15", "done summary", verbose)
     tx_total <- NA_integer_
@@ -3999,6 +4019,7 @@ build_scope_from_xenium <- function(input_dir,
         coord_file = roi_path,
         ncores = num_workers,
         chunk_pts = chunk_size,
+        parallel_backend = parallel_backend,
         min_gene_types = min_gene_types,
         max_gene_types = max_gene_types,
         min_seg_points = min_segmentation_points,
@@ -4145,6 +4166,7 @@ createSCOPE_visium <- function(visium_dir,
 #' @param grid_length Grid side length(s) to build.
 #' @param seg_type Segmentation strategy (`cell`, `nucleus`, `both`).
 #' @param data_type Data type label for the resulting scope object.
+#' @param parallel_backend Parallel backend for ROI clipping (`auto`, `fork`, `psock`, `serial`).
 #' @param ... Additional arguments (currently unused).
 #' @return A constructed `scope_object`.
 #' @keywords internal
@@ -4152,8 +4174,10 @@ createSCOPE_xenium <- function(xenium_dir,
                                grid_length,
                                seg_type = c("cell", "nucleus", "both"),
                                data_type = "xenium",
+                               parallel_backend = c("auto", "fork", "psock", "serial"),
                                ...) {
     seg_type <- match.arg(seg_type)
+    parallel_backend <- match.arg(parallel_backend)
     dots <- list(...)
     rename_map <- list(
         coord_file = "roi_path",
@@ -4177,7 +4201,8 @@ createSCOPE_xenium <- function(xenium_dir,
             input_dir = xenium_dir,
             grid_sizes = grid_length,
             segmentation_strategy = seg_type,
-            data_type = data_type
+            data_type = data_type,
+            parallel_backend = parallel_backend
         ),
         dots
     )
