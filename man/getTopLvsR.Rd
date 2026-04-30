@@ -24,6 +24,8 @@ getTopLvsR(
   mem_limit_GB = 2,
   pval_mode = c("beta", "mid", "uniform"),
   curve_layer = NULL,
+  support_pct_scale = c("auto", "0-1", "0-100"),
+  backend = "cpp",
   CI_rule = c("remove_within", "remove_outside", "none"),
   verbose = TRUE
 )
@@ -67,16 +69,33 @@ getTopLvsR(
 
 \item{curve_layer}{Optional curve layer from `computeLvsRCurve()`.}
 
+\item{support_pct_scale}{Output support-scale contract for the returned gene
+coverage diagnostics. Canonical support columns are recorded on `[0,1]`
+while legacy percent columns remain available on `0-100` for backward
+compatibility.}
+
+\item{backend}{Backend policy for the ranking layer. This layer is currently
+implemented in R only. `auto` records the package-wide C++ → R policy and
+selects R; forcing `python` errors explicitly because no Python core compute
+tier is shipped.}
+
 \item{CI_rule}{Confidence-interval filtering rule (`remove_within`, `remove_outside`, `none`).}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
-A data.frame with ranked gene pairs and associated statistics.
+A data.frame with ranked gene pairs and associated statistics,
+including exploratory `delta`, `delta_method`, and `delta_caveat` columns
+for heuristic prioritization rather than confirmatory inference.
 }
 \description{
 Ranks gene pairs by the deviation between Lee's L and Pearson correlation and
-returns a table of top pairs.
+returns a table of top pairs. The returned Delta-related columns are
+explicitly marked as exploratory because they compare spatial and
+non-spatial correlation scales and should be used for heuristic
+prioritization rather than confirmatory inference.
 }
 \examples{
 \dontrun{

@@ -23,13 +23,14 @@ computeLvsRCurve(
   min_rel_width = 0,
   widen_span = 0.1,
   curve_name = "LR_curve2",
+  backend = "cpp",
   verbose = TRUE
 )
 }
 \arguments{
-\item{scope_obj}{A `scope_object` containing Lee's L and correlation matrices.}
+\item{scope_obj}{A \code{scope_object} containing Lee's L and correlation matrices.}
 
-\item{grid_name}{Grid layer name to operate on.}
+\item{grid_name}{Character; name of the grid layer to operate on.}
 
 \item{level}{Correlation level used for Pearson r (`grid` or `cell`).}
 
@@ -63,7 +64,14 @@ computeLvsRCurve(
 
 \item{curve_name}{Name under which the curve is stored.}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{backend}{Backend policy for the Lee's L vs Pearson curve layer. This
+layer is currently implemented in R only. `auto` records the package-wide
+C++ → R policy and selects R; forcing `python` errors explicitly because no
+Python core compute tier is shipped.}
+
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
 The modified `scope_object` with stored curve data.

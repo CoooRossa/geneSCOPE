@@ -622,8 +622,19 @@
     FDR_beta <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
     FDR_mid <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
     FDR_uniform <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
+    
+    # PASS 1: Collect all p-values (global BH requires all p-values simultaneously)
+    all_p_disc <- numeric(0)
+    all_p_beta <- numeric(0)
+    all_p_mid <- numeric(0)
+    all_p_uniform <- numeric(0)
+    chunk_info <- list()
+    
     for (start in idx_chunks) {
       end <- min(start + chunk_size - 1L, n_genes)
+      chunk_n <- (end - start + 1L) * nrow(Z_mat)
+      chunk_info[[length(chunk_info) + 1L]] <- list(start = start, end = end, n = chunk_n)
+      
       if (!is.null(P)) {
         p_disc <- P[, start:end, drop = FALSE]
         k_est <- round(p_disc * (perms + 1) - 1)
@@ -637,18 +648,37 @@
         p_disc <- 2 * pnorm(-abs(Z_chunk))
         p_beta <- p_mid <- p_uniform <- p_disc
       }
-      flat <- function(x) matrix(p.adjust(c(x), "BH"), nrow = nrow(x))
-      if (is_big) {
-        FDR_disc[, start:end] <- flat(p_disc)
-        FDR_beta[, start:end] <- flat(p_beta)
-        FDR_mid[, start:end] <- flat(p_mid)
-        FDR_uniform[, start:end] <- flat(p_uniform)
-      } else {
-        FDR_disc[, start:end] <- flat(p_disc)
-        FDR_beta[, start:end] <- flat(p_beta)
-        FDR_mid[, start:end] <- flat(p_mid)
-        FDR_uniform[, start:end] <- flat(p_uniform)
-      }
+      
+      all_p_disc <- c(all_p_disc, as.numeric(p_disc))
+      all_p_beta <- c(all_p_beta, as.numeric(p_beta))
+      all_p_mid <- c(all_p_mid, as.numeric(p_mid))
+      all_p_uniform <- c(all_p_uniform, as.numeric(p_uniform))
+    }
+    
+    # PASS 2: Apply global BH correction to all p-values at once (correct implementation)
+    all_q_disc <- p.adjust(all_p_disc, method = "BH")
+    all_q_beta <- p.adjust(all_p_beta, method = "BH")
+    all_q_mid <- p.adjust(all_p_mid, method = "BH")
+    all_q_uniform <- p.adjust(all_p_uniform, method = "BH")
+    
+    # PASS 3: Redistribute q-values to chunks
+    idx_offset <- 1L
+    for (ci in chunk_info) {
+      start <- ci$start
+      end <- ci$end
+      n_chunk <- ci$n
+      
+      q_disc_chunk <- all_q_disc[idx_offset:(idx_offset + n_chunk - 1L)]
+      q_beta_chunk <- all_q_beta[idx_offset:(idx_offset + n_chunk - 1L)]
+      q_mid_chunk <- all_q_mid[idx_offset:(idx_offset + n_chunk - 1L)]
+      q_uniform_chunk <- all_q_uniform[idx_offset:(idx_offset + n_chunk - 1L)]
+      
+      FDR_disc[, start:end] <- matrix(q_disc_chunk, nrow = nrow(Z_mat))
+      FDR_beta[, start:end] <- matrix(q_beta_chunk, nrow = nrow(Z_mat))
+      FDR_mid[, start:end] <- matrix(q_mid_chunk, nrow = nrow(Z_mat))
+      FDR_uniform[, start:end] <- matrix(q_uniform_chunk, nrow = nrow(Z_mat))
+      
+      idx_offset <- idx_offset + n_chunk
     }
     FDR_storey <- NULL
     pi0_hat <- NA_real_

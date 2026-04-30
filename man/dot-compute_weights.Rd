@@ -18,7 +18,8 @@
   max_order = NULL,
   kernel_radius = NULL,
   kernel_sigma = NULL,
-  ncores = detectCores(logical = TRUE)
+  ncores = detectCores(logical = TRUE),
+  backend = "cpp"
 )
 }
 \arguments{
@@ -49,6 +50,8 @@
 \item{kernel_sigma}{Kernel sigma for `style="kernel_*"` (overrides `min_neighbors`).}
 
 \item{ncores}{Number of threads to use.}
+
+\item{backend}{Backend policy (`auto`, `cpp`, `python`, `r`).}
 }
 \value{
 The modified `scope_object`.

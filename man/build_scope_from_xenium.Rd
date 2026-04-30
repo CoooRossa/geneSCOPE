@@ -17,13 +17,20 @@ build_scope_from_xenium(
   roi_path = NULL,
   num_workers = 1L,
   chunk_size = 5e+05,
+  parallel_backend = c("auto", "fork", "psock", "serial"),
   min_gene_types = 1,
   max_gene_types = Inf,
-  min_segmentation_points = 1,
+  min_segmentation_points = 0,
+  grid_keep_mode = c("segmentation_hybrid", "molecule_driven", "vertex_only",
+    "centroid_only"),
+  grid_center_min_molecules = "q80",
   keep_partial_tiles = FALSE,
   verbose = TRUE,
   flip_y = TRUE,
-  data_type = "xenium"
+  data_type = "xenium",
+  exclude_qc_unsuitable = FALSE,
+  qc_out_dir = NULL,
+  qc_flag = NULL
 )
 }
 \arguments{
@@ -48,6 +55,8 @@ build_scope_from_xenium(
 \item{num_workers}{Number of workers for preprocessing.}
 
 \item{chunk_size}{Chunk size for streaming molecule data.}
+
+\item{parallel_backend}{Parallel backend for ROI clipping (`auto`, `fork`, `psock`, `serial`).}
 
 \item{min_gene_types}{Minimum gene types per cell to retain.}
 

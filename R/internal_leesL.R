@@ -1,34 +1,139 @@
-#' Add Lee's L statistics to a scope_object
+#' Resolve weight_style attribute for Lee's L weights matrix
 #' @description
-#'   High-level wrapper that computes Lee's L, analytical Z-scores, empirical
-#'   p-values via block permutations, FDR, spatial gradients, quality-control
-#'   metrics, and stores everything under a new layer in \code{@grid}.
-#' @param scope_obj A \code{scope_object} with at least one populated \code{@grid} slot.
-#' @param grid_name Character. Name of the grid sub-layer to process. If
-#'   \code{NULL} and only one sub-layer exists, it is selected automatically.
-#' @param genes Optional character vector of genes to include; if \code{NULL}
-#'   all genes are used.
-#' @param within Logical. If \code{TRUE} restrict analysis to the selected
-#'   gene set on both axes (default). Otherwise compute gene × all.
-#' @param ncores Integer. Number of cores for parallel processing (default 1).
-#' @param block_side Integer. Number of grid cells per side for block partitioning (default 8).
-#' @param perms Integer. Number of permutations for Monte-Carlo p-values (default 1000).
-#' @param block_size Integer. Number of permutations processed per batch (default 64).
-#' @param L_min Numeric threshold used when building the QC similarity graph.
-#' @param norm_layer Character. Name of the normalised expression layer (default "Xz").
-#' @param lee_stats_layer_name Character. Name for the output statistics layer.
-#' @param legacy_formula Logical. Use legacy denominator for compatibility.
-#' @param mem_limit_GB Numeric. RAM threshold that triggers streaming mode (default 8).
-#' @param chunk_size Integer. Number of columns processed per chunk (default 128).
-#' @param use_bigmemory Logical. Use file-backed matrices for large computations (default TRUE).
-#' @param backing_path Character. Directory for temporary files (default tempdir()).
-#' @param cache_inputs Logical. Cache preprocessed X/Z/W and block IDs for reuse across calls (default TRUE).
-#' @param verbose Logical. Whether to print progress messages (default TRUE).
-#' @param ncore Deprecated. Use \code{ncores} instead.
-#' @return The modified \code{scope_object}.
+#'   Internal helper that resolves the weight_style attribute from a spatial
+#'   weights matrix W. If the attribute is missing or unsupported, infers the
+#'   style from the matrix values (binary vs row-standardised).
+#' @param W A spatial weights matrix (sparse or dense).
+#' @param caller Character. Name of the calling function for warning messages.
+#' @param verbose Logical. Whether to emit progress messages.
+#' @return A list with components: weight_style ("B" or "W"), source ("attribute" or "inferred"),
+#'   and inferred (logical indicating if style was inferred).
 #' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom stats sd pnorm p.adjust coef lm
 #' @importFrom igraph graph_from_adjacency_matrix simplify degree cluster_louvain cluster_leiden components modularity
+#' @keywords internal
+.resolve_leesl_weight_style <- function(W,
+                                        caller = "computeL",
+                                        verbose = TRUE) {
+    raw_style <- attr(W, "weight_style")
+    style <- .transcripts_attestation_scalar(raw_style)
+    style_upper <- toupper(style)
+
+    if (identical(style_upper, "B") || identical(style_upper, "W")) {
+        return(list(
+            weight_style = style_upper,
+            source = "attribute",
+            inferred = FALSE
+        ))
+    }
+
+    w_nonzero <- if (inherits(W, "Matrix")) W@x else W[W != 0]
+    inferred <- if (length(w_nonzero) && all(w_nonzero %in% c(0, 1, 0L, 1L))) "B" else "W"
+    if (is.na(style)) {
+        warning(
+            caller, ": weight_style attribute missing; inferred style='", inferred,
+            "' from the W matrix values.",
+            call. = FALSE
+        )
+    } else {
+        warning(
+            caller, ": unsupported weight_style='", style,
+            "'; inferred style='", inferred, "' from the W matrix values.",
+            call. = FALSE
+        )
+    }
+    .log_info(caller, "S04", paste0(
+        "weight_style resolved by inference: ", inferred
+    ), verbose)
+    list(
+        weight_style = inferred,
+        source = "inferred",
+        inferred = TRUE
+    )
+}
+
+#' Approximate q-values from low-resolution permutation p-values.
+#'
+#' Uses beta posterior-smoothed permutation p-values before Storey-style
+#' monotone q-value estimation. When `perms` is supplied, p-values are treated
+#' as Monte-Carlo values on the `(k + 1) / (B + 1)` grid and converted to
+#' `(k + 1) / (B + 2)`, the posterior mean under a uniform beta-binomial model.
+#' This avoids zero/one boundary artifacts and reduces staircase behavior for
+#' low permutation budgets.
+#'
+#' @keywords internal
+approximate_q_values <- function(p_values,
+                                 perms = NULL,
+                                 method = c("beta"),
+                                 lambdas = seq(0.5, 0.95, by = 0.05)) {
+    method <- match.arg(method)
+    dims <- dim(p_values)
+    dimn <- dimnames(p_values)
+    p <- as.numeric(p_values)
+    out <- rep(NA_real_, length(p))
+    finite <- is.finite(p)
+    if (!any(finite)) {
+        return(list(
+            q_values = if (is.null(dims)) out else matrix(out, nrow = dims[1], dimnames = dimn),
+            adjusted_p_values = if (is.null(dims)) out else matrix(out, nrow = dims[1], dimnames = dimn),
+            pi0_hat = NA_real_,
+            method = method,
+            warning = "no finite p-values"
+        ))
+    }
+
+    warn <- character()
+    if (any(p[finite] < 0 | p[finite] > 1)) {
+        warn <- c(warn, "p-values outside [0,1] were clamped")
+    }
+    p[finite] <- pmin(pmax(p[finite], 0), 1)
+
+    p_adj <- p
+    if (!is.null(perms) && is.finite(perms) && perms > 0) {
+        B <- as.integer(perms)
+        k_est <- round(p[finite] * (B + 1) - 1)
+        k_est <- pmin(pmax(k_est, 0L), B)
+        p_adj[finite] <- (k_est + 1) / (B + 2)
+    } else {
+        tiny <- .Machine$double.xmin
+        p_adj[finite] <- pmin(pmax(p_adj[finite], tiny), 1 - tiny)
+        warn <- c(warn, "perms missing; beta grid smoothing skipped")
+    }
+
+    p_work <- p_adj[finite]
+    lambdas <- lambdas[is.finite(lambdas) & lambdas > 0 & lambdas < 1]
+    if (!length(lambdas)) lambdas <- seq(0.5, 0.95, by = 0.05)
+    pi0_vals <- vapply(lambdas, function(lam) {
+        mean(p_work > lam) / (1 - lam)
+    }, numeric(1))
+    pi0_hat <- suppressWarnings(min(1, min(pi0_vals, na.rm = TRUE)))
+    if (!is.finite(pi0_hat) || pi0_hat <= 0) {
+        pi0_hat <- 1
+        warn <- c(warn, "pi0 estimate was unstable; using pi0=1")
+    }
+
+    m <- length(p_work)
+    ord <- order(p_work, na.last = NA)
+    ranked <- seq_along(ord)
+    q_ord <- pi0_hat * m * p_work[ord] / pmax(ranked, 1)
+    if (length(q_ord) > 1L) {
+        for (i in seq(from = length(q_ord) - 1L, to = 1L, by = -1L)) {
+            if (q_ord[i] > q_ord[i + 1L]) q_ord[i] <- q_ord[i + 1L]
+        }
+    }
+    q_work <- numeric(m)
+    q_work[ord] <- pmin(pmax(q_ord, 0), 1)
+    out[finite] <- q_work
+
+    list(
+        q_values = if (is.null(dims)) out else matrix(out, nrow = dims[1], dimnames = dimn),
+        adjusted_p_values = if (is.null(dims)) p_adj else matrix(p_adj, nrow = dims[1], dimnames = dimn),
+        pi0_hat = pi0_hat,
+        method = method,
+        warning = paste(unique(warn), collapse = "; ")
+    )
+}
+
 #' @keywords internal
 .compute_l <- function(scope_obj,
                      grid_name = NULL,
@@ -37,6 +142,9 @@
                      ncores = 1,
                      block_side = 8,
                      perms = 1000,
+                     approximate_q = FALSE,
+                     approximate_q_method = c("beta"),
+                     approximate_q_threshold = 1000L,
                      block_size = 64,
                      L_min = 0,
                      norm_layer = "Xz",
@@ -44,12 +152,17 @@
                      legacy_formula = FALSE,
                      mem_limit_GB = 2,
                      chunk_size = 32L,
-                     use_bigmemory = TRUE,
+                     use_bigmemory = FALSE,
                      backing_path = tempdir(),
                      cache_inputs = TRUE,
                      verbose = TRUE,
                      ncore = NULL) {
     parent <- "computeL"
+    approximate_q_method <- match.arg(approximate_q_method)
+    approximate_q_threshold <- as.integer(approximate_q_threshold)[1]
+    if (!is.finite(approximate_q_threshold) || approximate_q_threshold < 1L) {
+        stop("approximate_q_threshold must be a positive integer.", call. = FALSE)
+    }
 
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
 
@@ -94,9 +207,20 @@
     } else {
         grid_name
     }
+    grid_info_n <- tryCatch(nrow(g_layer$grid_info), error = function(e) NA_integer_)
+    if (!is.finite(grid_info_n) || grid_info_n < 2L) {
+        stop("n_cells must be >= 2", call. = FALSE)
+    }
 
     # Check if spatial weight matrix exists
     if (is.null(g_layer$W) || sum(g_layer$W) == 0) {
+        warning(
+            "No spatial weight matrix found; computing weights with style='B' (binary). ",
+            "Binary weights affect Z-score variance computation. ",
+            "Consider calling computeWeights() explicitly with your preferred style ",
+            "before computeL() to ensure correct statistical properties.",
+            call. = FALSE, immediate. = TRUE
+        )
         .log_info(parent, "S01", "W missing; running computeWeights(style=B)", verbose)
         .log_backend(parent, "S01", "weights", "computeWeights(style=B)", verbose = verbose)
         scope_obj <- .compute_weights(scope_obj,
@@ -104,7 +228,8 @@
             style = "B",
             store_mat = TRUE,
             store_listw = FALSE,
-            verbose = verbose
+            verbose = verbose,
+            backend = "cpp"
         )
         # Re-extract layer after computing weights
         g_layer <- .select_grid_layer(scope_obj, grid_name)
@@ -138,7 +263,7 @@
     n_genes_use <- if (!is.null(genes)) length(genes) else all_genes
     matrix_size_gb <- (n_genes_use^2 * 8) / (1024^3)
 
-    # Memory guard: estimate per-thread usage as single-core size × threads
+    # Memory guard: estimate per-thread usage as single-core size x threads
     sys_mem_gb <- .get_system_memory_gb()
     est_total_gb <- matrix_size_gb * ncores
     .log_info(parent, "S02", paste0(
@@ -222,6 +347,7 @@
     min_cores <- 1
     success <- FALSE
     attempt <- 1
+    last_error <- NULL
 
     while (!success && current_cores >= min_cores) {
         if (verbose && attempt > 1) {
@@ -280,6 +406,13 @@
         if (success) {
             res <- result$object
         } else {
+            last_error <- conditionMessage(result$error)
+            if (current_cores <= min_cores) {
+                if (verbose) {
+                    .log_info(parent, "S03", paste0("final attempt failed at ", current_cores, " core(s): ", last_error), verbose)
+                }
+                break
+            }
             attempt <- attempt + 1
             # Reduce thread count
             current_cores <- max(floor(current_cores / 2), min_cores)
@@ -299,7 +432,10 @@
     }
 
     if (!success) {
-        stop("Unable to compute Lee's L statistics even with minimal thread count")
+        if (!is.null(last_error) && nzchar(last_error)) {
+            stop(last_error, call. = FALSE)
+        }
+        stop("Unable to compute Lee's L statistics even with minimal thread count", call. = FALSE)
     }
 
     step03$done(paste0("threads_final=", current_cores))
@@ -318,7 +454,34 @@
     if (within || is.null(genes)) {
         S0 <- sum(W)
         EZ <- -1 / (n - 1)
-        Var <- (n^2 * (n - 2)) / ((n - 1)^2 * (n - 3) * S0)
+
+        weight_style_info <- .resolve_leesl_weight_style(W, caller = parent, verbose = verbose)
+        w_style <- weight_style_info$weight_style
+        if (w_style == "B") {
+            W_sym <- W + t(W)
+            S1 <- 0.5 * sum(W_sym^2)
+            row_sums_W <- rowSums(W)
+            col_sums_W <- colSums(W)
+            S2 <- sum((row_sums_W + col_sums_W)^2)
+            Var <- (n^2 * S1 - n * S2 + 3 * S0^2) / (S0^2 * (n^2 - 1)) - EZ^2
+            if (Var <= 0) {
+                warning(
+                    "Computed variance for style='B' is non-positive (Var=",
+                    round(Var, 6), "); falling back to style='W' formula. ",
+                    "This may indicate an unusual weight structure.",
+                    call. = FALSE
+                )
+                Var <- (n^2 * (n - 2)) / ((n - 1)^2 * (n - 3) * S0)
+            }
+            .log_info(parent, "S04", paste0(
+                "Using style='B' variance formula: Var=", round(Var, 6)
+            ), verbose)
+        } else {
+            Var <- (n^2 * (n - 2)) / ((n - 1)^2 * (n - 3) * S0)
+            .log_info(parent, "S04", paste0(
+                "Using style='W' variance formula: Var=", round(Var, 6)
+            ), verbose)
+        }
 
         # Handle large matrices more carefully
         if (inherits(L, "big.matrix")) {
@@ -375,6 +538,7 @@
         perm_success <- FALSE
         perm_cores <- current_cores
         perm_attempt <- 1
+        perm_last_error <- NULL
         .log_backend(parent, "S05", "permutation",
             paste0("C++ lee_l_perm_block threads=", perm_cores),
             verbose = verbose
@@ -427,6 +591,18 @@
                 perm_success <- TRUE
                 P <- perm_result$object
             } else {
+                perm_last_error <- conditionMessage(perm_result$error)
+                if (perm_cores <= 1L) {
+                    if (verbose) {
+                        .log_info(
+                            parent,
+                            "S05",
+                            paste0("final permutation attempt failed at ", perm_cores, " core(s): ", perm_last_error),
+                            verbose
+                        )
+                    }
+                    break
+                }
                 perm_attempt <- perm_attempt + 1
                 perm_cores <- max(floor(perm_cores / 2), 1)
                 if (verbose) {
@@ -443,10 +619,11 @@
         }
 
         if (!perm_success) {
-            if (verbose) .log_info(parent, "S05",
-                "!!! Warning: Permutation test failed; setting P = NULL !!!",
-                verbose
-            )
+            msg <- "!!! Warning: Permutation test failed; setting P = NULL !!!"
+            if (!is.null(perm_last_error) && nzchar(perm_last_error)) {
+                msg <- paste0(msg, " last_error=", perm_last_error)
+            }
+            if (verbose) .log_info(parent, "S05", msg, verbose)
             .log_backend(parent, "S05", "permutation", "skipped", reason = "failed", verbose = verbose)
             NULL
         } else {
@@ -458,9 +635,15 @@
     }
     step05$done()
 
+    use_approximate_q <- isTRUE(approximate_q) && !is.null(P) &&
+        is.finite(perms) && perms > 0L && perms < approximate_q_threshold
+    if (isTRUE(approximate_q) && is.null(P)) {
+        warning("approximate_q=TRUE requested but permutation P matrix is unavailable; using the standard analytic/BH q-value path.", call. = FALSE)
+    }
+
     ## --- 6. FDR: Three Monte Carlo smoothing strategies as in .get_top_l_vs_r ---
     step06 <- .log_step(parent, "S06", "FDR and q-values", verbose)
-    step06$enter(paste0("mem_mode=", mem_mode, " perms=", perms))
+    step06$enter(paste0("mem_mode=", mem_mode, " perms=", perms, " approximate_q=", use_approximate_q))
     # Explanation:
     #   If P exists: P = (k+1)/(perms+1); infer k = round(P*(perms+1)-1)
     #   p_beta    = (k+1)/(perms+2)        (Jeffreys, default more robust/slightly conservative)
@@ -470,27 +653,39 @@
     if (inherits(Z_mat, "big.matrix")) {
         if (verbose) .log_info(parent, "S06", "computing FDR corrections", verbose)
         n_genes <- ncol(Z_mat)
+        n_rows <- nrow(Z_mat)
         idx_chunks <- seq(1, n_genes, by = chunk_size)
 
+        # Allocate big.matrices for final FDR output
         FDR_disc <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
+            nrow = n_rows, ncol = n_genes,
             type = "double", init = NA_real_
         )
         FDR_beta <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
+            nrow = n_rows, ncol = n_genes,
             type = "double", init = NA_real_
         )
         FDR_mid <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
+            nrow = n_rows, ncol = n_genes,
             type = "double", init = NA_real_
         )
         FDR_uniform <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
+            nrow = n_rows, ncol = n_genes,
             type = "double", init = NA_real_
         )
 
+        # PASS 1: Collect all p-values (global BH requires all p-values simultaneously)
+        all_p_disc <- numeric(0)
+        all_p_beta <- numeric(0)
+        all_p_mid <- numeric(0)
+        all_p_uniform <- numeric(0)
+        chunk_info <- list()
+
         for (start in idx_chunks) {
             end <- min(start + chunk_size - 1L, n_genes)
+            chunk_n <- (end - start + 1L) * n_rows
+            chunk_info[[length(chunk_info) + 1L]] <- list(start = start, end = end, n = chunk_n)
+
             if (!is.null(P)) {
                 p_disc <- P[, start:end]
                 k_est <- round(p_disc * (perms + 1) - 1)
@@ -500,16 +695,43 @@
                 p_mid <- (k_est + 0.5) / (perms + 1)
                 p_uniform <- (k_est + matrix(runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
             } else {
-                # No permutation → analytical p
                 Z_chunk <- Z_mat[, start:end]
                 p_disc <- 2 * pnorm(-abs(Z_chunk))
                 p_beta <- p_mid <- p_uniform <- p_disc
             }
-            FDR_disc[, start:end] <- matrix(p.adjust(c(p_disc), "BH"), nrow = nrow(p_disc))
-            FDR_beta[, start:end] <- matrix(p.adjust(c(p_beta), "BH"), nrow = nrow(p_beta))
-            FDR_mid[, start:end] <- matrix(p.adjust(c(p_mid), "BH"), nrow = nrow(p_mid))
-            FDR_uniform[, start:end] <- matrix(p.adjust(c(p_uniform), "BH"), nrow = nrow(p_uniform))
+
+            all_p_disc <- c(all_p_disc, as.numeric(p_disc))
+            all_p_beta <- c(all_p_beta, as.numeric(p_beta))
+            all_p_mid <- c(all_p_mid, as.numeric(p_mid))
+            all_p_uniform <- c(all_p_uniform, as.numeric(p_uniform))
         }
+
+        # Apply global BH correction to all p-values at once (correct implementation)
+        all_q_disc <- p.adjust(all_p_disc, method = "BH")
+        all_q_beta <- p.adjust(all_p_beta, method = "BH")
+        all_q_mid <- p.adjust(all_p_mid, method = "BH")
+        all_q_uniform <- p.adjust(all_p_uniform, method = "BH")
+
+        # PASS 2: Redistribute q-values to big.matrix chunks
+        idx_offset <- 1L
+        for (ci in chunk_info) {
+            start <- ci$start
+            end <- ci$end
+            n_chunk <- ci$n
+
+            q_disc_chunk <- all_q_disc[idx_offset:(idx_offset + n_chunk - 1L)]
+            q_beta_chunk <- all_q_beta[idx_offset:(idx_offset + n_chunk - 1L)]
+            q_mid_chunk <- all_q_mid[idx_offset:(idx_offset + n_chunk - 1L)]
+            q_uniform_chunk <- all_q_uniform[idx_offset:(idx_offset + n_chunk - 1L)]
+
+            FDR_disc[, start:end] <- matrix(q_disc_chunk, nrow = n_rows)
+            FDR_beta[, start:end] <- matrix(q_beta_chunk, nrow = n_rows)
+            FDR_mid[, start:end] <- matrix(q_mid_chunk, nrow = n_rows)
+            FDR_uniform[, start:end] <- matrix(q_uniform_chunk, nrow = n_rows)
+
+            idx_offset <- idx_offset + n_chunk
+        }
+
         FDR_out_disc <- FDR_disc
         FDR_out_beta <- FDR_beta
         FDR_out_mid <- FDR_mid
@@ -537,6 +759,8 @@
 
     ## --- 5.x Extra: Storey q-value main FDR (in-memory mode only, big.matrix fallback) ---
     FDR_storey <- NULL
+    FDR_approx <- NULL
+    approximate_q_report <- NULL
     pi0_hat <- NA_real_
     FDR_main_method <- if (inherits(Z_mat, "big.matrix")) "BH(beta p) (chunked, no q-value)" else "Storey q-value (beta p)"
     if (!inherits(Z_mat, "big.matrix")) {
@@ -572,8 +796,42 @@
             FDR_storey <- matrix(q_final, nrow = nrow(FDR_out_beta), dimnames = dimnames(FDR_out_beta))
         }
     }
+    if (use_approximate_q) {
+        approximate_q_report <- approximate_q_values(
+            p_values = P,
+            perms = perms,
+            method = approximate_q_method
+        )
+        FDR_approx <- approximate_q_report$q_values
+        if (!identical(dim(FDR_approx), dim(P))) {
+            FDR_approx <- matrix(FDR_approx, nrow = nrow(P), dimnames = dimnames(P))
+        }
+        FDR_main_method <- paste0("approximate Storey q-value (", approximate_q_method, " posterior-smoothed permutation p)")
+        pi0_hat <- approximate_q_report$pi0_hat
+        warning(
+            sprintf(
+                "computeL: approximate_q=TRUE and perms=%d < %d; using %s q-value approximation as a screening aid only, not confirmatory inference. Increase permutations for final inference.",
+                as.integer(perms), as.integer(approximate_q_threshold), approximate_q_method
+            ),
+            call. = FALSE
+        )
+        if (!is.null(approximate_q_report$warning) && nzchar(approximate_q_report$warning)) {
+            warning(
+                "computeL: approximate_q diagnostic: ", approximate_q_report$warning,
+                ". Treat this as a boundary condition and increase permutations where feasible.",
+                call. = FALSE
+            )
+        }
+        .log_key(
+            parent,
+            sprintf(
+                "WARN: \033[31mapproximate_q active: perms=%d < threshold=%d, method=%s. Screening only; not confirmatory.\033[39m",
+                as.integer(perms), as.integer(approximate_q_threshold), approximate_q_method
+            )
+        )
+    }
     # Main FDR choice: use FDR_storey if available, otherwise fallback to FDR_out_beta
-    FDR_main <- if (!is.null(FDR_storey)) FDR_storey else FDR_out_beta
+    FDR_main <- if (!is.null(FDR_approx)) FDR_approx else if (!is.null(FDR_storey)) FDR_storey else FDR_out_beta
     n_sig_005 <- sum(FDR_main < 0.05, na.rm = TRUE)
     min_p_possible <- if (!is.null(P)) 1 / (perms + 1) else NA_real_
 
@@ -673,11 +931,16 @@
         qc = qc,
         FDR = FDR_main, # Main recommendation (q-value or beta-BH fallback)
         FDR_storey = FDR_storey, # Available in in-memory mode only
+        FDR_approx = FDR_approx,
         FDR_disc = FDR_out_disc, # Original discrete BH
         FDR_beta = FDR_out_beta,
         FDR_mid = FDR_out_mid,
         FDR_uniform = FDR_out_uniform,
+        weight_style = w_style,
         meta = list(
+            weight_style = w_style,
+            weight_style_source = weight_style_info$source,
+            weight_style_inferred = weight_style_info$inferred,
             perms = perms,
             block_size = block_size,
             ncores = ncores,
@@ -689,6 +952,16 @@
             n_sig_FDR_lt_0.05 = n_sig_005,
             min_p_possible = min_p_possible,
             FDR_main_method = FDR_main_method,
+            approximate_q = isTRUE(use_approximate_q),
+            approximate_q_status = if (isTRUE(use_approximate_q)) "active_screening_only" else if (isTRUE(approximate_q)) "requested_but_not_active" else "disabled",
+            approximate_q_method = if (isTRUE(use_approximate_q)) approximate_q_method else NA_character_,
+            approximate_q_threshold = approximate_q_threshold,
+            approximate_q_pi0_hat = if (!is.null(approximate_q_report)) approximate_q_report$pi0_hat else NA_real_,
+            approximate_q_warning = if (!is.null(approximate_q_report)) approximate_q_report$warning else NA_character_,
+            approximate_q_fallback = if (isTRUE(approximate_q) && !isTRUE(use_approximate_q)) {
+                if (is.null(P)) "permutation_p_matrix_unavailable" else "perms_not_below_threshold"
+            } else NA_character_,
+            approximate_q_note = if (isTRUE(use_approximate_q)) "Low-permutation q-values were estimated from beta posterior-smoothed permutation p-values; use for screening, not final confirmatory inference." else NA_character_,
             pval_modes = c("disc=(k+1)/(B+1)", "beta=(k+1)/(B+2)", "mid=(k+0.5)/(B+1)", "uniform=(k+U)/(B+1)"),
             note = "FDR: main=Storey q (beta p) if possible; fallback=BH(beta). All matrices retained for diagnostics."
         )
@@ -748,10 +1021,32 @@
                         min_rel_width = 0,
                         widen_span = 0.1,
                         curve_name = "LR_curve2",
+                        backend = "cpp",
                         verbose = TRUE) {
   ci_method <- match.arg(ci_method)
   ci_adjust <- match.arg(ci_adjust)
   level <- match.arg(level)
+  backend <- if (missing(backend)) {
+    "cpp"
+  } else {
+    .normalize_core_backend(backend, arg = "backend", allow_auto = TRUE)
+  }
+  backend_policy <- .core_backend_policy(
+    backend,
+    cpp_supported = FALSE,
+    python_supported = FALSE,
+    r_supported = TRUE
+  )
+  if (identical(backend, "python")) {
+    stop(
+      "[geneSCOPE::computeLvsRCurve] backend='", backend,
+      "' is not implemented for this R-only curve-fitting layer. ",
+      "Use the default C++->R fallback policy or backend='r'.",
+      call. = FALSE
+    )
+  } else if (backend %in% c("auto", "cpp") && verbose) {
+    .log_info("computeLvsRCurve", "S01", "Curve fitting is R-only; using R fallback under C++->R policy.", verbose)
+  }
   ncores <- max(1L, min(as.integer(ncores), detectCores(logical = TRUE)))
   if (min_rel_width < 0) stop("min_rel_width cannot be negative")
   parent <- "computeLvsRCurve"
@@ -842,7 +1137,7 @@
 
   step02$done(paste0("points=", length(Lv)))
 
-  # 3. Stratify (by r quantiles) — fallback if failed
+  # 3. Stratify (by r quantiles) -- fallback if failed
   step03 <- .log_step(parent, "S03", "stratify and build grid", verbose)
   step03$enter(paste0("n_strata=", n_strata, " length_out=", length_out))
   if (verbose) .log_info(parent, "S03", "setting up stratified sampling", verbose)
@@ -1113,6 +1408,9 @@
     B = res$B,
     span = span,
     deg = deg,
+    backend_requested = backend,
+    backend_selected = "r",
+    backend_policy = backend_policy,
     ci_method = ci_method,
     ci_adjust = ci_adjust,
     min_rel_width = min_rel_width,
@@ -1192,6 +1490,8 @@
                        mem_limit_GB = 2,
                        pval_mode = c("beta", "mid", "uniform"),
                        curve_layer = NULL,
+                       support_pct_scale = c("auto", "0-1", "0-100"),
+                       backend = "cpp",
                        CI_rule = c("remove_within", "remove_outside", "none"),
                        verbose = TRUE) {
   pear_level <- match.arg(pear_level)
@@ -1199,6 +1499,28 @@
   p_adj_mode <- match.arg(p_adj_mode)
   clamp_mode <- match.arg(clamp_mode)
   pval_mode <- match.arg(pval_mode)
+  support_pct_scale <- match.arg(support_pct_scale)
+  backend <- if (missing(backend)) {
+    "cpp"
+  } else {
+    .normalize_core_backend(backend, arg = "backend", allow_auto = TRUE)
+  }
+  backend_policy <- .core_backend_policy(
+    backend,
+    cpp_supported = FALSE,
+    python_supported = FALSE,
+    r_supported = TRUE
+  )
+  if (identical(backend, "python")) {
+    stop(
+      "[geneSCOPE::getTopLvsR] backend='", backend,
+      "' is not implemented for this R-only ranking layer. ",
+      "Use the default C++->R fallback policy or backend='r'.",
+      call. = FALSE
+    )
+  } else if (backend %in% c("auto", "cpp") && verbose) {
+    .log_info("getTopLvsR", "S01", "Top-pair ranking is R-only; using R fallback under C++->R policy.", verbose)
+  }
   CI_rule <- match.arg(CI_rule)
 
   parent <- "getTopLvsR"
@@ -1250,17 +1572,28 @@
   }
   Pear_for_delta <- if (internal_clamp_mode == "ref_only") pmax(Pear_vec, 0) else Pear_vec
 
+  warning(
+    "Delta (Lee's L - Pearson r) is an exploratory metric. ",
+    "Cross-scale comparison of spatial vs. non-spatial correlation ",
+    "lacks formal statistical theory for inference. ",
+    "Use Delta for heuristic prioritization / hypothesis generation only, ",
+    "not for confirmatory inference.",
+    call. = FALSE, immediate. = TRUE
+  )
+
   df <- data.frame(
     gene1 = rep(common, each = length(common))[ut],
     gene2 = rep(common, length(common))[ut],
     LeesL = LeesL_vec,
     Pear  = Pear_vec,
-    Delta = LeesL_vec - Pear_for_delta
+    Delta = LeesL_vec - Pear_for_delta,
+    delta_method = "L_minus_r",
+    delta_caveat = "exploratory: heuristic prioritization across spatial and non-spatial scales; permutation-assisted ranking, not confirmatory inference"
   )
 
   # Expression coverage percentages
   {
-    expr_pct_map <- setNames(rep(0, length(common)), common)
+    expr_support_map <- setNames(rep(0, length(common)), common)
     g_layer_try <- tryCatch(.select_grid_layer(scope_obj, grid_name), error = function(e) NULL)
     coverage_done <- FALSE
 
@@ -1288,7 +1621,7 @@
           }
         }
         if (nrow(gene_cells)) {
-          expr_pct_map[gene_cells$gene] <- (gene_cells$cells / total_cells) * 100
+          expr_support_map[gene_cells$gene] <- gene_cells$cells / total_cells
         }
         coverage_done <- TRUE
       }
@@ -1333,14 +1666,26 @@
             } else {
               colSums(expr_mat[, inter_col, drop = FALSE] > 0)
             }
-            expr_pct_map[inter_col] <- (nz_counts / nrow(expr_mat)) * 100
+            expr_support_map[inter_col] <- nz_counts / nrow(expr_mat)
           }
         }
       }
     }
 
-    df$gene1_expr_pct <- round(expr_pct_map[df$gene1], 3)
-    df$gene2_expr_pct <- round(expr_pct_map[df$gene2], 3)
+    n_pair <- nrow(df)
+    gene1_support <- expr_support_map[df$gene1]
+    gene2_support <- expr_support_map[df$gene2]
+    gene1_pct <- gene1_support * 100
+    gene2_pct <- gene2_support * 100
+    df$gene1_expr_support <- round(gene1_support, 6)
+    df$gene2_expr_support <- round(gene2_support, 6)
+    df$gene1_expr_pct <- round(gene1_pct, 3)
+    df$gene2_expr_pct <- round(gene2_pct, 3)
+    attr(df, "support_pct_requested_scale") <- support_pct_scale
+    attr(df, "support_pct_input_scale") <- "0-1"
+    attr(df, "support_pct_scale_used") <- "0-1"
+    attr(df, "support_pct_internal_scale") <- "0-1"
+    attr(df, "support_pct_legacy_scale") <- "0-100"
   }
 
   step01$done(paste0("pairs_total=", nrow(df)))
@@ -1440,9 +1785,22 @@
       gene2,
       L = LeesL,
       r = Pear,
+      delta = Delta,
+      delta_method = delta_method,
+      delta_caveat = delta_caveat,
+      support1 = gene1_expr_support,
+      support2 = gene2_expr_support,
       pct1 = gene1_expr_pct,
       pct2 = gene2_expr_pct,
       fdr = FDR
+    )
+    attr(out, "backend") <- list(requested = backend, selected = "r", policy = backend_policy)
+    attr(out, "support_pct_scale") <- list(
+      requested = attr(df, "support_pct_requested_scale"),
+      input = attr(df, "support_pct_input_scale"),
+      used = attr(df, "support_pct_scale_used"),
+      internal = attr(df, "support_pct_internal_scale"),
+      legacy = attr(df, "support_pct_legacy_scale")
     )
     step05$done(paste0("pairs_returned=", nrow(out)))
     return(out)
@@ -1649,32 +2007,51 @@
     gene2,
     L = LeesL,
     r = Pear,
+    delta = Delta,
+    delta_method = delta_method,
+    delta_caveat = delta_caveat,
+    support1 = gene1_expr_support,
+    support2 = gene2_expr_support,
     pct1 = gene1_expr_pct,
     pct2 = gene2_expr_pct,
     fdr = FDR
+  )
+  attr(out, "backend") <- list(requested = backend, selected = "r", policy = backend_policy)
+  attr(out, "support_pct_scale") <- list(
+    requested = attr(df, "support_pct_requested_scale"),
+    input = attr(df, "support_pct_input_scale"),
+    used = attr(df, "support_pct_scale_used"),
+    internal = attr(df, "support_pct_internal_scale"),
+    legacy = attr(df, "support_pct_legacy_scale")
   )
   step05$done(paste0("pairs_returned=", nrow(out)))
   out
 }
 
-#' Compute Lee's L for Visium (convenience wrapper)
+#' Compute Lee's L for Visium (internal implementation)
 #' @description
-#' Performs Visium-specific prescreening and setup (spatial weights, optional Iδ
+#' Performs Visium-specific prescreening and setup (spatial weights, optional Idelta
 #' prescreening, and gene filtering) before dispatching to `computeL()`.
+#' This is the internal implementation used by the computeL_visium wrapper.
 #' @param scope_obj A `scope_object` containing Visium data.
 #' @param grid_name Grid layer name to operate on.
 #' @param norm_layer Normalised expression layer name.
-#' @param use_idelta Use Iδ prescreening when TRUE.
+#' @param use_idelta Use Idelta prescreening when TRUE.
 #' @param S_target Target number of genes after prescreening.
 #' @param min_detect Minimum detection rate when filtering genes.
 #' @param winsor_high Winsorization quantile for expression scaling.
 #' @param ncores Number of threads to use (defaults to safe thread count).
 #' @param verbose Emit progress messages when TRUE.
-#' @param ... Additional arguments (currently unused).
+#' @param backend Lee's L backend policy. Uses the same C++ -> R executable
+#'   contract as `computeL()`; `python` errors explicitly because no equivalent
+#'   Python Lee's L backend is shipped.
+#' @param ... Additional arguments forwarded to `.compute_l()`, such as
+#'   `mem_limit_GB`, `use_bigmemory`, `chunk_size`, `perms`, or
+#'   `lee_stats_layer_name`.
 #' @return The modified `scope_object`.
 #' @seealso `computeL()`, `computeWeights()`, `computeIDelta()`
 #' @keywords internal
-computeL_visium <- function(
+.computeL_visium_internal <- function(
     scope_obj,
     grid_name = NULL,
     norm_layer = "Xz",
@@ -1683,10 +2060,19 @@ computeL_visium <- function(
     min_detect = 0.10,
     winsor_high = 0.95,
     ncores = NULL,
+    backend = "cpp",
     verbose = getOption("geneSCOPE.verbose", TRUE),
     ...) {
 
     parent <- "computeL_visium"
+    backend <- if (missing(backend)) {
+        "cpp"
+    } else {
+        .normalize_core_backend(backend, arg = "backend", allow_auto = TRUE)
+    }
+    if (identical(backend, "python")) {
+        stop(.lee_l_python_backend_unavailable(), call. = FALSE)
+    }
 
     ## ---- 0. Thread count and grid layer selection ----
     if (is.null(ncores)) {
@@ -1704,7 +2090,7 @@ computeL_visium <- function(
     if (is.null(g_layer[[norm_layer]])) {
         stop("computeL_visium: normalized layer '", norm_layer, "' not found.")
     }
-    X <- g_layer[[norm_layer]]  # n × g
+    X <- g_layer[[norm_layer]]  # n x g
     if (!is.matrix(X)) X <- as.matrix(X)
     n <- nrow(X); G <- ncol(X)
     if (n < 2L || G < 2L) stop("Insufficient data size to compute Lee's L.")
@@ -1729,7 +2115,7 @@ computeL_visium <- function(
     step02$done(paste0("W=", if (is.null(g_layer$W)) "missing" else "ready"))
     W <- g_layer$W  # dgCMatrix (ensures W exists for .compute_l later)
 
-    ## ---- 2. Iδ and gene prescreening ----
+    ## ---- 2. Idelta and gene prescreening ----
     step03 <- .log_step(parent, "S03", "optional I-delta prescreen", verbose)
     step03$enter(paste0("use_idelta=", use_idelta))
     if (use_idelta) {
@@ -1808,13 +2194,18 @@ computeL_visium <- function(
         }
     }
 
-    scope_obj <- .compute_l(
-        scope_obj,
-        grid_name = grid_name,
-        genes = genes_keep,
-        within = TRUE,
-        ncores = ncores,
-        verbose = verbose
+    scope_obj <- .with_lee_l_backend(
+        backend,
+        .compute_l(
+            scope_obj,
+            grid_name = grid_name,
+            norm_layer = norm_layer,
+            genes = genes_keep,
+            within = TRUE,
+            ncores = ncores,
+            verbose = verbose,
+            ...
+        )
     )
     scope_obj
 }

@@ -12,6 +12,9 @@ computeL(
   ncores = 1,
   block_side = 8,
   perms = 1000,
+  approximate_q = FALSE,
+  approximate_q_method = c("beta"),
+  approximate_q_threshold = 1000L,
   block_size = 64,
   L_min = 0,
   norm_layer = "Xz",
@@ -19,17 +22,20 @@ computeL(
   legacy_formula = FALSE,
   mem_limit_GB = 2,
   chunk_size = 32L,
-  use_bigmemory = TRUE,
+  use_bigmemory = FALSE,
   backing_path = tempdir(),
   cache_inputs = TRUE,
   verbose = TRUE,
+  backend = "cpp",
   ncore = NULL
 )
 }
 \arguments{
-\item{scope_obj}{A `scope_object` with at least one populated `@grid` slot.}
+\item{scope_obj}{A \code{scope_object} with at least one populated \code{@grid} slot.}
 
-\item{grid_name}{Name of the grid layer to process (auto-selected if only one exists).}
+\item{grid_name}{Character; name of the grid layer to operate on. If \code{NULL}
+and only one grid layer exists, it is auto-selected. If multiple layers exist,
+the name must be specified.}
 
 \item{genes}{Optional subset of genes to include.}
 
@@ -40,6 +46,20 @@ computeL(
 \item{block_side}{Number of grid cells per side for block partitioning.}
 
 \item{perms}{Number of permutations for Monte-Carlo p-values.}
+
+\item{approximate_q}{Use beta posterior-smoothed permutation p-values plus
+Storey q-value estimation when `perms` is below `approximate_q_threshold`.
+This is intended for large gene panels with low permutation budgets and is
+not enabled by default. It is a screening aid only and must not be treated
+as a replacement for adequately powered permutation-based confirmatory
+inference.}
+
+\item{approximate_q_method}{Approximation method. Currently `"beta"` uses
+`(k + 1) / (B + 2)` posterior-smoothed permutation p-values before Storey
+q-value estimation.}
+
+\item{approximate_q_threshold}{Only activate `approximate_q` when
+`0 < perms < approximate_q_threshold`.}
 
 \item{block_size}{Number of permutations processed per batch.}
 
@@ -55,13 +75,26 @@ computeL(
 
 \item{chunk_size}{Number of columns processed per chunk in streaming mode.}
 
-\item{use_bigmemory}{Whether to use file-backed matrices for large computations.}
+\item{use_bigmemory}{Whether to use file-backed matrices for large computations.
+Defaults to `FALSE`; if a matrix exceeds `mem_limit_GB` and the user did
+not explicitly set this argument, geneSCOPE may still enable chunked
+bigmemory mode as a safety fallback.}
 
 \item{backing_path}{Directory for temporary files (default `tempdir()`).}
 
 \item{cache_inputs}{Whether to .cache preprocessed inputs for reuse across calls.}
 
-\item{verbose}{Whether to emit progress messages.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
+
+\item{backend}{Deprecated compatibility argument. The runtime now uses the
+package policy `C++ first, R fallback`; `python` still errors explicitly
+because no Python Lee's L backend is shipped. Legacy alias `native` maps to
+`cpp`.
+Inputs must provide at least two observations (`n_cells >= 2`); non-finite
+values error explicitly, and extremely large finite values (`> 1e300`)
+trigger a precision warning.}
 
 \item{ncore}{Deprecated alias of `ncores`.}
 }

@@ -9,7 +9,8 @@
   level = c("cell", "grid"),
   grid_name = NULL,
   layer = "logCPM",
-  method = c("pearson", "spearman", "kendall"),
+  method = "pearson",
+  backend = "cpp",
   blocksize = 2000,
   ncores = 16,
   chunk_size = 1000,
@@ -17,7 +18,7 @@
   use_bigmemory = TRUE,
   backing_path = tempdir(),
   force_compute = FALSE,
-  store_layer = ".pearson_cor",
+  store_layer = "pearson_cor",
   compute_fdr = TRUE,
   fdr_method = "BH",
   verbose = TRUE
@@ -32,7 +33,11 @@
 
 \item{layer}{Expression layer name to correlate (e.g., `logCPM`).}
 
-\item{method}{Correlation method (`pearson`, `spearman`, `kendall`).}
+\item{method}{Requested correlation method. The only supported method value
+is `pearson`; other values fail fast instead of silently reusing the
+Pearson path.}
+
+\item{backend}{Core backend policy (`auto`, `cpp`, `python`, `r`).}
 
 \item{blocksize}{Parameter value.}
 

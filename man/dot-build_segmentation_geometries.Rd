@@ -10,7 +10,9 @@
   flip = FALSE,
   y_max = NULL,
   keep_ids = NULL,
-  workers = 1L
+  workers = 1L,
+  cell_key_mode = c("auto", "cell_id", "cell_id_fov"),
+  fov_column = NULL
 )
 }
 \arguments{
@@ -25,6 +27,10 @@
 \item{keep_ids}{Logical flag.}
 
 \item{workers}{Parameter value.}
+
+\item{cell_key_mode}{Parameter value.}
+
+\item{fov_column}{Parameter value.}
 }
 \value{
 A list with configuration/metadata used internally.

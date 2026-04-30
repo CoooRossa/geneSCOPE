@@ -7,7 +7,7 @@
 .consensus_on_edges(memb_mat, edge_i, edge_j, n_threads = NULL)
 }
 \arguments{
-\item{memb_mat}{Integer matrix (genes × runs), each column is a community assignment.}
+\item{memb_mat}{Integer matrix (genes x runs), each column is a community assignment.}
 
 \item{edge_i}{Integer vector (1-based) indices of edge endpoints (length m).}
 
@@ -20,6 +20,6 @@ Numeric vector of length m: fraction of runs in which the two endpoints co-clust
 }
 \description{
 Internal helper for `.consensus_on_edges`.
-Computes consensus weights on the provided edge list without allocating a dense N×N matrix.
+Computes consensus weights on the provided edge list without allocating a dense NxN matrix.
 }
 \keyword{internal}

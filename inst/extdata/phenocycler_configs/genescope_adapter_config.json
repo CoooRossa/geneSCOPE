@@ -1,0 +1,11 @@
+{
+  "grid_lengths": [20, 40],
+  "promote": "field",
+  "field_layer_prefix": "pc_field",
+  "punctate_layer_prefix": "pc_punctate",
+  "boundary_layer_prefix": "pc_boundary",
+  "dual_layer_prefix": "pc_dual",
+  "namespace_dual_features": true,
+  "attach_density_tables": true,
+  "version": "phenocycler_adapter_config_v1"
+}

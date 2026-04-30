@@ -61,7 +61,7 @@
   return_report = FALSE,
   verbose = TRUE,
   ncores = NULL,
-  mode = c("auto", "safe", "aggressive", "fast"),
+  mode = c("auto", "safe", "safe_sequential", "aggressive", "fast"),
   large_n_threshold = 1000L,
   nk_condaenv = NULL,
   nk_conda_bin = NULL,
@@ -71,7 +71,10 @@
   aggr_future_workers = 2L,
   aggr_batch_size = NULL,
   future_globals_min_bytes = 2 * 1024^3,
-  profile_timing = FALSE
+  profile_timing = FALSE,
+  backend = c("auto", "igraph", "networkit"),
+  q_guard_method = c("auto", "k_perms", "none"),
+  q_span_threshold = 0.1
 )
 }
 \arguments{
@@ -208,6 +211,12 @@
 \item{future_globals_min_bytes}{Parameter value.}
 
 \item{profile_timing}{Parameter value.}
+
+\item{backend}{Graph backend contract.}
+
+\item{q_guard_method}{Q-distribution guardrail policy.}
+
+\item{q_span_threshold}{Minimum q95-q05 span allowed before fallback.}
 }
 \value{
 Return value used internally.

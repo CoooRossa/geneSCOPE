@@ -6,9 +6,11 @@
 \usage{
 addSingleCells(
   scope_obj,
+  data_dir = NULL,
   xenium_dir = NULL,
   cosmx_root = NULL,
   platform = c("auto", "Xenium", "CosMx"),
+  prefer = c("auto", "xenium", "cosmx"),
   verbose = TRUE,
   ...
 )
@@ -16,17 +18,23 @@ addSingleCells(
 \arguments{
 \item{scope_obj}{A `scope_object` to extend.}
 
+\item{data_dir}{Optional data directory (legacy alias for `xenium_dir` / `cosmx_root`).}
+
 \item{xenium_dir}{Optional Xenium run directory.}
 
 \item{cosmx_root}{Optional CosMx project root.}
 
-\item{platform}{Platform hint (`auto`, `Xenium`, or `CosMx`).}
+\item{platform}{Deprecated platform hint (`auto`, `Xenium`, or `CosMx`).
+Use `prefer=` instead. Explicit use emits a deprecation warning and maps
+to `prefer=` when unambiguous.}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{prefer}{Preferred single-cell loader (`auto`, `xenium`, or `cosmx`).}
 
-\item{...}{Additional arguments passed to the platform-specific loader.
-For backward compatibility, `data_dir` can be supplied here as an alias for
-`xenium_dir` / `cosmx_root` (auto-detected when possible).}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
+
+\item{...}{Additional arguments passed to the platform-specific loader.}
 }
 \value{
 Updated `scope_object` with single-cell layers.

@@ -27,7 +27,9 @@ getDendroWalkPaths(
 
 \item{max_paths}{Maximum number of paths to return (guards combinatorial explosion).}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
 A list containing `paths` (character vectors) and `paths_df` (summary data.frame).

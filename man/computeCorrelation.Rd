@@ -9,7 +9,8 @@ computeCorrelation(
   level = c("cell", "grid"),
   grid_name = NULL,
   layer = "logCPM",
-  method = c("pearson", "spearman", "kendall"),
+  method = "pearson",
+  backend = "cpp",
   blocksize = 2000,
   ncores = 16,
   chunk_size = 1000,
@@ -17,44 +18,58 @@ computeCorrelation(
   use_bigmemory = TRUE,
   backing_path = tempdir(),
   force_compute = FALSE,
-  store_layer = ".pearson_cor",
+  store_layer = "pearson_cor",
   compute_fdr = TRUE,
   fdr_method = "BH",
   verbose = TRUE
 )
 }
 \arguments{
-\item{scope_obj}{A `scope_object` containing expression layers.}
+\item{scope_obj}{A \code{scope_object} containing expression layers.}
 
 \item{level}{Correlation level (`cell` or `grid`).}
 
-\item{grid_name}{Optional grid name when operating on grid-level data.}
+\item{grid_name}{Character; name of the grid layer to operate on. If \code{NULL}
+and only one grid layer exists, it is auto-selected. If multiple layers exist,
+the name must be specified.}
 
-\item{layer}{Expression layer name to correlate (e.g., `logCPM`).}
+\item{layer}{Character; name of the expression layer to use (e.g., \code{"logCPM"}, \code{"Xz"}).}
 
-\item{method}{Correlation method (`pearson`, `spearman`, `kendall`).}
+\item{method}{Requested correlation method. The only supported public value
+is `pearson`. Any other value errors explicitly instead of silently
+reusing the Pearson backend.}
+
+\item{backend}{Deprecated compatibility argument. The runtime now uses the
+package policy `C++ first, R fallback`; `python` still errors explicitly
+because no Python correlation backend is shipped. Inputs must provide at
+least two observations
+(`n_cells >= 2`); non-finite values error explicitly, and extremely large
+finite values (`> 1e300`) trigger a precision warning.}
 
 \item{blocksize}{Block size passed to the C++ backend (tuning knob).}
 
-\item{ncores}{Number of threads to use.}
+\item{ncores}{Integer; number of threads to use for parallel computation. Default varies by function. Set to 1 for serial execution.}
 
 \item{chunk_size}{Chunk size used when using file-backed computation.}
 
-\item{memory_limit_gb}{In-memory size threshold (GB) above which file-backed mode is used.}
+\item{memory_limit_gb}{Numeric; memory threshold in gigabytes. When matrix size exceeds this threshold, chunked or file-backed computation is triggered. Default is 16 GB.}
 
-\item{use_bigmemory}{Whether to allow file-backed computation for large matrices.}
+\item{use_bigmemory}{Logical; whether to use file-backed matrices for large computations. Default is \code{FALSE}. When \code{TRUE}, temporary files are created in \code{backing_path}.}
 
-\item{backing_path}{Directory for file-backed artifacts (default `tempdir()`).}
+\item{backing_path}{Character; directory for file-backed matrix artifacts. Default is \code{tempdir()}.}
 
 \item{force_compute}{Whether to force recomputation even if cached outputs exist.}
 
-\item{store_layer}{Slot name for storing the correlation matrix.}
+\item{store_layer}{Slot name for storing the correlation matrix. When
+`level = "cell"` and `store_layer` is not supplied, `"_cell"` is appended.}
 
 \item{compute_fdr}{Whether to compute and store an FDR-adjusted p-value matrix.}
 
 \item{fdr_method}{Multiple-testing adjustment method passed to `p.adjust()`.}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
 The updated `scope_object` (invisibly).
@@ -62,7 +77,10 @@ The updated `scope_object` (invisibly).
 \description{
 Computes a gene × gene correlation matrix from either single-cell expression
 (`level = "cell"`) or grid-level expression (`level = "grid"`), stores results
-into the `scope_object`, and returns the updated object invisibly.
+into the `scope_object`, and returns the updated object invisibly. The
+currently supported correlation family is Pearson only; callers who need a
+different correlation family should compute it externally rather than assume
+a built-in fallback.
 }
 \examples{
 \dontrun{

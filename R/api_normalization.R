@@ -3,15 +3,19 @@
 #' Builds a grid-by-gene count matrix from a grid layer, optionally performs
 #' row normalization, converts to dense, and applies column-wise Z scoring
 #' (sample SD) to produce an `Xz` expression layer.
-#' @param scope_obj A `scope_object` that already contains a grid layer.
-#' @param grid_name Target grid sub-layer; if `NULL`, the sole sub-layer is used.
+#' @param scope_obj A \code{scope_object} that already contains a grid layer.
+#' @param grid_name Character; name of the grid layer to operate on. If \code{NULL}
+#'   and only one grid layer exists, it is auto-selected. If multiple layers exist,
+#'   the name must be specified.
 #' @param keep_zero_grids Whether to keep grids whose counts are all zero.
 #' @param row_norm Whether to perform row normalization before Z scoring.
 #' @param zero_var_to_zero Whether to zero columns with standard deviation <= `var_eps`.
 #' @param var_eps Standard deviation threshold below which columns are set to zero.
 #' @param mem_dense_limit Threshold for `nrow * ncol`; values above this still
 #'   coerce to dense with a warning (default `2e11`, roughly 16 GB for doubles).
-#' @param verbose Emit progress messages when TRUE.
+#' @param verbose Logical; whether to emit compact public progress messages.
+#'   Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+#'   \code{options(geneSCOPE.verbose = FALSE)} for global control.
 #' @return The modified `scope_object` (invisibly) containing a new `Xz` layer.
 #' @examples
 #' \dontrun{
@@ -29,8 +33,10 @@ normalizeMoleculesInGrid <- function(scope_obj,
                                      var_eps = 0,
                                      mem_dense_limit = 2e11,
                                      verbose = TRUE) {
-  ## ---- 0. Layer check -------------------------------------------------
   parent <- "normalizeMoleculesInGrid"
+  .log_start(parent, verbose = verbose)
+  
+  ## ---- 0. Layer check -------------------------------------------------
   step_s01 <- .log_step(parent, "S01", "select grid layer", verbose)
   step_s01$enter(extra = paste0(
     "grid_name=", if (is.null(grid_name)) "auto" else grid_name,
@@ -131,13 +137,36 @@ normalizeMoleculesInGrid <- function(scope_obj,
     .log_info(parent, "S05", "zero_var_to_zero=FALSE; skipping.", verbose)
   }
 
-  ## ---- 5. Save & return ----------------------------------------------
+  ## ---- 5. Align to full grid_info (P0-03 fix) ------------------------
+  # Ensure Xz rows match grid_info$grid_id exactly, filling missing grids with zero rows
+  all_grids <- sort(unique(g$grid_info$grid_id))
+  current_grids <- rownames(Xd)
+  
+  if (!identical(current_grids, all_grids)) {
+    .log_info(parent, "S05", 
+      paste0("Aligning Xz to full grid_info: ", length(all_grids), " grids (was ", length(current_grids), ")"), 
+      verbose
+    )
+    
+    # Create aligned matrix with all grids
+    Xd_aligned <- matrix(0, nrow = length(all_grids), ncol = ncol(Xd),
+                         dimnames = list(all_grids, colnames(Xd)))
+    
+    # Copy existing rows to their positions
+    common_grids <- intersect(current_grids, all_grids)
+    Xd_aligned[common_grids, ] <- Xd[common_grids, , drop = FALSE]
+    
+    Xd <- Xd_aligned
+  }
+
+  ## ---- 6. Save & return ----------------------------------------------
   g$Xz <- Xd
   scope_obj@grid[[grid_layer_name]] <- g
 
   .log_info(parent, "S05", "Normalization completed, Xz layer stored", verbose)
   step_s05$done()
 
+  .log_done(parent, verbose = verbose)
   invisible(scope_obj)
 }
 
@@ -152,7 +181,9 @@ normalizeMoleculesInGrid <- function(scope_obj,
 #' @param output_layer Name of the layer to write to (default `logCPM`,
 #'   overwrites if it exists).
 #' @param scale_factor Library size each cell is scaled to before `log1p`.
-#' @param verbose Emit progress messages when TRUE.
+#' @param verbose Logical; whether to emit compact public progress messages.
+#'   Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+#'   \code{options(geneSCOPE.verbose = FALSE)} for global control.
 #' @return The modified `scope_object` (invisibly).
 #' @examples
 #' \dontrun{
@@ -168,6 +199,8 @@ normalizeSingleCells <- function(scope_obj,
                                  scale_factor = 1e4,
                                  verbose = TRUE) {
   parent <- "normalizeSingleCells"
+  .log_start(parent, verbose = verbose)
+  
   step_s01 <- .log_step(parent, "S01", "validate cell layer", verbose)
   step_s01$enter(extra = paste0("input_layer=", input_layer, " output_layer=", output_layer))
 
@@ -221,5 +254,6 @@ normalizeSingleCells <- function(scope_obj,
   )
   step_s04$done()
 
+  .log_done(parent, verbose = verbose)
   invisible(scope_obj)
 }

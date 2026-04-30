@@ -23,7 +23,9 @@ lee_perm_block(Xz, W, idx_mat, block_ids, L_ref, n_threads = 1L)
 g × g integer matrix of exceedance counts.
 }
 \description{
-Performs Monte-Carlo permutations constrained within blocks
-  (e.g. slides or images) and returns exceedance counts versus the reference
+Performs Monte-Carlo permutations with an index matrix that
+  should preserve block positions and shuffle rows within each block. The
+  C++ layer validates block IDs but consumes the R-generated permutation
+  indices directly, returning exceedance counts versus the reference
   statistic.
 }

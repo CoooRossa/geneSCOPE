@@ -1,0 +1,215 @@
+{
+  "captured_at": "2026-03-19 05:33:58 UTC",
+  "package_root": "/Users/haenolabcho/Documents/共同研究/脳科学/geneSCOPE-test",
+  "contract": {
+    "exports": ["makePhenoCyclerMarkerPolicy", "makePhenoCyclerDiffuseConfig", "makePhenoCyclerAdapterConfig", "ingestPhenoCyclerBundle", "createSCOPE_phenocycler", "addPhenoCycler", "promotePhenoCyclerToGridLayer"],
+    "export_formals": {
+      "makePhenoCyclerMarkerPolicy": {
+        "punctate_sources": "c(\"punctate_event\", \"connected_component_event\")",
+        "diffuse_sources": "c(\"support_grid_point\", \"support_superpixel\")",
+        "boundary_sources": "c(\"support_contour_anchor\")",
+        "feature_family_overrides": "NULL",
+        "source_family_overrides": "NULL",
+        "version": "\"phenocycler_marker_policy_v1\""
+      },
+      "makePhenoCyclerDiffuseConfig": {
+        "grid_lengths": "c(20, 40)",
+        "field_weight_col": "\"support_score\"",
+        "anchor_weight_col": "\"support_score\"",
+        "area_col": "\"support_area_um2\"",
+        "region_mode": "c(\"bbox_proxy\", \"none\")",
+        "include_boundary_in_dual": "TRUE",
+        "min_weight": "0",
+        "version": "\"phenocycler_diffuse_config_v1\""
+      },
+      "makePhenoCyclerAdapterConfig": {
+        "grid_lengths": "c(20, 40)",
+        "promote": "c(\"none\", \"field\", \"punctate\", \"boundary\", \"dual\")",
+        "field_layer_prefix": "\"pc_field\"",
+        "punctate_layer_prefix": "\"pc_punctate\"",
+        "boundary_layer_prefix": "\"pc_boundary\"",
+        "dual_layer_prefix": "\"pc_dual\"",
+        "namespace_dual_features": "TRUE",
+        "attach_density_tables": "TRUE",
+        "version": "\"phenocycler_adapter_config_v1\""
+      },
+      "ingestPhenoCyclerBundle": {
+        "bundle_dir": "",
+        "marker_policy": "makePhenoCyclerMarkerPolicy()",
+        "diffuse_config": "makePhenoCyclerDiffuseConfig()",
+        "adapter_config": "makePhenoCyclerAdapterConfig()",
+        "verbose": "TRUE"
+      },
+      "createSCOPE_phenocycler": {
+        "bundle_dir": "",
+        "marker_policy": "makePhenoCyclerMarkerPolicy()",
+        "diffuse_config": "makePhenoCyclerDiffuseConfig()",
+        "adapter_config": "makePhenoCyclerAdapterConfig()",
+        "promote": "adapter_config$promote",
+        "verbose": "TRUE"
+      },
+      "addPhenoCycler": {
+        "scope_obj": "",
+        "bundle_dir": "NULL",
+        "bundle": "NULL",
+        "marker_policy": "makePhenoCyclerMarkerPolicy()",
+        "diffuse_config": "makePhenoCyclerDiffuseConfig()",
+        "adapter_config": "makePhenoCyclerAdapterConfig()",
+        "promote": "adapter_config$promote",
+        "overwrite_existing_modality": "FALSE",
+        "verbose": "TRUE"
+      },
+      "promotePhenoCyclerToGridLayer": {
+        "scope_obj": "",
+        "source": "c(\"field\", \"punctate\", \"boundary\", \"dual\")",
+        "grid_lengths": "NULL",
+        "overwrite": "FALSE",
+        "verbose": "TRUE"
+      }
+    },
+    "config_defaults": {
+      "marker_policy": "3d60d5a84ff25ee5b1dc1fb50ba13273dd68567b3e87edc1aa0d7197ecca8328",
+      "diffuse_config": "85014d11aa623f7c9095d63dcaad435fe69585b4ce325535404a730022062caa",
+      "adapter_config": "e8743c70816965f5ad7ef1b25f55853a0471d7b2ccf1d03b845ce1d506284974"
+    },
+    "minimal_fixture": {
+      "manifest": {
+        "event_rows": 8,
+        "support_rows": 8,
+        "feature_count": 7,
+        "grid_lengths": [20, 40],
+        "bounds": {
+          "xmin": 5,
+          "xmax": 155,
+          "ymin": 10,
+          "ymax": 130
+        }
+      },
+      "digests": {
+        "protein_events": "5fccf2bb8b4e96cafab7d31ac2d09a5dd491d5fdc0060a4d0e1bb676e624ddee",
+        "signal_supports": "f445d5cb69c5993bcfeb33ad85bdc8963e581a7e90f40844fabcc84758ef0c68",
+        "feature_metadata": "5a8c0b114feb3791847d7aa6291ce375e54f96b7a921bef58e198410fea32549",
+        "weighted_anchors": "eb8d8abdaf652ceec5c67b2a225a4ad973ef1b12fcb8e76eeb7d17892ca334f7",
+        "support_regions": "61d1dde3e7853fa9153f683174c216a7e86cbde28effeba35468d64f42f72f6e",
+        "grid20_punctate": "801a959dc4dc1e10ca0091a45d0afe50a122eae2d26205d9b62abce26b28642b",
+        "grid20_field": "20cc0f9d1450ebefc6919489b77409c40330bf23eccedf095c9e92b82ee0d071",
+        "grid20_boundary": "645e95c932f5b78e8d89ef1db94c6882f46ed73af7bb3b56c2c58643839f716d",
+        "grid20_dual": "b1fdc03afba7db83a73d3375d259b8927af3805ca04f40e7f72bd6766510ece6",
+        "grid40_punctate": "7f6e953ef724eafd328e9334b837fb35a2786c86df8948f227846fa8d8d93e4a",
+        "grid40_field": "01dc51b76a4ac1f7cd5376df2753392e087c93169612d7a81aaaced5ce640a2c",
+        "grid40_boundary": "4a8e26708bb64c4d431bcda16db07f8f88eb9d8a52fafb4eb8e3c18ee3f95f76",
+        "grid40_dual": "e97af0c5525b66d9a08ea4126c580385016abdb3b94878334ea405e80c1a149a"
+      },
+      "scope_default": {
+        "coord_names": ["phenocycler_cell_centroids", "phenocycler_events", "phenocycler_segmentation_cell", "phenocycler_segmentation_nucleus", "phenocycler_supports", "phenocycler_weighted_anchors"],
+        "grid_names": {},
+        "density_names": ["phenocycler_boundary_grid20", "phenocycler_boundary_grid40", "phenocycler_dual_grid20", "phenocycler_dual_grid40", "phenocycler_field_grid20", "phenocycler_field_grid40", "phenocycler_punctate_grid20", "phenocycler_punctate_grid40"],
+        "meta_data": "5a8c0b114feb3791847d7aa6291ce375e54f96b7a921bef58e198410fea32549",
+        "coord_digests": {
+          "phenocycler_events": "d3acd76aa078bae74fdfe99cc388e687b08e77d5c16402534245bd4885e334f7",
+          "phenocycler_supports": "f445d5cb69c5993bcfeb33ad85bdc8963e581a7e90f40844fabcc84758ef0c68",
+          "phenocycler_weighted_anchors": "eb8d8abdaf652ceec5c67b2a225a4ad973ef1b12fcb8e76eeb7d17892ca334f7",
+          "phenocycler_cell_centroids": "b940f9c35da9a1cd65b30289ccc685b43f87e50a33a8105c9c796ebb90b95eb2",
+          "phenocycler_segmentation_cell": "d8e9f1e846b6ffe22c911ebe2a66362e88c897f467ff6f483bffce912046d0c1",
+          "phenocycler_segmentation_nucleus": "8d85362f4d5f2584d7ffc16da202919b96877dc66ddd51cbd9489b198dff7764"
+        },
+        "grid_digests": [],
+        "density_digests": {
+          "phenocycler_punctate_grid20": "d1935abe4108e31d6086d7d560adb1782470ae9f1a30f4b57540e3d54c015e78",
+          "phenocycler_field_grid20": "ae6265fc9c6b8faed0ed0387c56ddda366a4b729b971f539766e3140c04ab403",
+          "phenocycler_boundary_grid20": "27990bd0dbe206e232540879ab3b73db121048e4d3b6a41132d52ee835297cf7",
+          "phenocycler_dual_grid20": "ff547344003fa46b22fc7d6df793df54f1e74646cfaf4ca8b9e3b8182d5706c4",
+          "phenocycler_punctate_grid40": "a6b590ed115c3967039df6d8c9e9440c3393e505bd7ce25a09b60f4b0c9b4cae",
+          "phenocycler_field_grid40": "1fbb76b22287f8bf2a6a6a13acf1caa7824ea35e854b79d291ae851c1f30195c",
+          "phenocycler_boundary_grid40": "eac63fa6e8145d3f122cd7f58b02da20cee137e918e69d548ef36487362a8894",
+          "phenocycler_dual_grid40": "b8bdf712980f298573808d2f580ac6613d6ea4ddeb111563a9d1cce65b32b9d9"
+        }
+      },
+      "scope_field": {
+        "coord_names": ["phenocycler_cell_centroids", "phenocycler_events", "phenocycler_segmentation_cell", "phenocycler_segmentation_nucleus", "phenocycler_supports", "phenocycler_weighted_anchors"],
+        "grid_names": ["pc_field20", "pc_field40"],
+        "density_names": ["pc_field20_density", "pc_field40_density", "phenocycler_boundary_grid20", "phenocycler_boundary_grid40", "phenocycler_dual_grid20", "phenocycler_dual_grid40", "phenocycler_field_grid20", "phenocycler_field_grid40", "phenocycler_punctate_grid20", "phenocycler_punctate_grid40"],
+        "meta_data": "f070ed5743e4c1ce807a563b4f146e0afb09f7775aa658671f590cb8e6a30f20",
+        "coord_digests": {
+          "phenocycler_events": "d3acd76aa078bae74fdfe99cc388e687b08e77d5c16402534245bd4885e334f7",
+          "phenocycler_supports": "f445d5cb69c5993bcfeb33ad85bdc8963e581a7e90f40844fabcc84758ef0c68",
+          "phenocycler_weighted_anchors": "eb8d8abdaf652ceec5c67b2a225a4ad973ef1b12fcb8e76eeb7d17892ca334f7",
+          "phenocycler_cell_centroids": "b940f9c35da9a1cd65b30289ccc685b43f87e50a33a8105c9c796ebb90b95eb2",
+          "phenocycler_segmentation_cell": "d8e9f1e846b6ffe22c911ebe2a66362e88c897f467ff6f483bffce912046d0c1",
+          "phenocycler_segmentation_nucleus": "8d85362f4d5f2584d7ffc16da202919b96877dc66ddd51cbd9489b198dff7764"
+        },
+        "grid_digests": {
+          "pc_field20": "20cc0f9d1450ebefc6919489b77409c40330bf23eccedf095c9e92b82ee0d071",
+          "pc_field40": "01dc51b76a4ac1f7cd5376df2753392e087c93169612d7a81aaaced5ce640a2c"
+        },
+        "density_digests": {
+          "phenocycler_punctate_grid20": "d1935abe4108e31d6086d7d560adb1782470ae9f1a30f4b57540e3d54c015e78",
+          "phenocycler_field_grid20": "ae6265fc9c6b8faed0ed0387c56ddda366a4b729b971f539766e3140c04ab403",
+          "phenocycler_boundary_grid20": "27990bd0dbe206e232540879ab3b73db121048e4d3b6a41132d52ee835297cf7",
+          "phenocycler_dual_grid20": "ff547344003fa46b22fc7d6df793df54f1e74646cfaf4ca8b9e3b8182d5706c4",
+          "phenocycler_punctate_grid40": "a6b590ed115c3967039df6d8c9e9440c3393e505bd7ce25a09b60f4b0c9b4cae",
+          "phenocycler_field_grid40": "1fbb76b22287f8bf2a6a6a13acf1caa7824ea35e854b79d291ae851c1f30195c",
+          "phenocycler_boundary_grid40": "eac63fa6e8145d3f122cd7f58b02da20cee137e918e69d548ef36487362a8894",
+          "phenocycler_dual_grid40": "b8bdf712980f298573808d2f580ac6613d6ea4ddeb111563a9d1cce65b32b9d9",
+          "pc_field20_density": "ae6265fc9c6b8faed0ed0387c56ddda366a4b729b971f539766e3140c04ab403",
+          "pc_field40_density": "1fbb76b22287f8bf2a6a6a13acf1caa7824ea35e854b79d291ae851c1f30195c"
+        }
+      },
+      "scope_promoted": {
+        "coord_names": ["phenocycler_cell_centroids", "phenocycler_events", "phenocycler_segmentation_cell", "phenocycler_segmentation_nucleus", "phenocycler_supports", "phenocycler_weighted_anchors"],
+        "grid_names": ["pc_field20", "pc_field40"],
+        "density_names": ["pc_field20_density", "pc_field40_density", "phenocycler_boundary_grid20", "phenocycler_boundary_grid40", "phenocycler_dual_grid20", "phenocycler_dual_grid40", "phenocycler_field_grid20", "phenocycler_field_grid40", "phenocycler_punctate_grid20", "phenocycler_punctate_grid40"],
+        "meta_data": "f070ed5743e4c1ce807a563b4f146e0afb09f7775aa658671f590cb8e6a30f20",
+        "coord_digests": {
+          "phenocycler_events": "d3acd76aa078bae74fdfe99cc388e687b08e77d5c16402534245bd4885e334f7",
+          "phenocycler_supports": "f445d5cb69c5993bcfeb33ad85bdc8963e581a7e90f40844fabcc84758ef0c68",
+          "phenocycler_weighted_anchors": "eb8d8abdaf652ceec5c67b2a225a4ad973ef1b12fcb8e76eeb7d17892ca334f7",
+          "phenocycler_cell_centroids": "b940f9c35da9a1cd65b30289ccc685b43f87e50a33a8105c9c796ebb90b95eb2",
+          "phenocycler_segmentation_cell": "d8e9f1e846b6ffe22c911ebe2a66362e88c897f467ff6f483bffce912046d0c1",
+          "phenocycler_segmentation_nucleus": "8d85362f4d5f2584d7ffc16da202919b96877dc66ddd51cbd9489b198dff7764"
+        },
+        "grid_digests": {
+          "pc_field20": "20cc0f9d1450ebefc6919489b77409c40330bf23eccedf095c9e92b82ee0d071",
+          "pc_field40": "01dc51b76a4ac1f7cd5376df2753392e087c93169612d7a81aaaced5ce640a2c"
+        },
+        "density_digests": {
+          "phenocycler_punctate_grid20": "d1935abe4108e31d6086d7d560adb1782470ae9f1a30f4b57540e3d54c015e78",
+          "phenocycler_field_grid20": "ae6265fc9c6b8faed0ed0387c56ddda366a4b729b971f539766e3140c04ab403",
+          "phenocycler_boundary_grid20": "27990bd0dbe206e232540879ab3b73db121048e4d3b6a41132d52ee835297cf7",
+          "phenocycler_dual_grid20": "ff547344003fa46b22fc7d6df793df54f1e74646cfaf4ca8b9e3b8182d5706c4",
+          "phenocycler_punctate_grid40": "a6b590ed115c3967039df6d8c9e9440c3393e505bd7ce25a09b60f4b0c9b4cae",
+          "phenocycler_field_grid40": "1fbb76b22287f8bf2a6a6a13acf1caa7824ea35e854b79d291ae851c1f30195c",
+          "phenocycler_boundary_grid40": "eac63fa6e8145d3f122cd7f58b02da20cee137e918e69d548ef36487362a8894",
+          "phenocycler_dual_grid40": "b8bdf712980f298573808d2f580ac6613d6ea4ddeb111563a9d1cce65b32b9d9",
+          "pc_field20_density": "ae6265fc9c6b8faed0ed0387c56ddda366a4b729b971f539766e3140c04ab403",
+          "pc_field40_density": "1fbb76b22287f8bf2a6a6a13acf1caa7824ea35e854b79d291ae851c1f30195c"
+        }
+      }
+    },
+    "real_bundle_summary": {
+      "found": true,
+      "bundle_dir": "/Users/haenolabcho/Documents/共同研究/脳科学/251021_Yoneyama-kun_Pcdh15/genescope_coordinate_first",
+      "source_hashes": {
+        "protein_events": "18fc837a1d0afce7b4f16a7f7c2c2814",
+        "signal_supports": "93e818bd1678764f2fedf4a0e94e051f"
+      },
+      "event_rows": 1003617,
+      "support_rows": 616924,
+      "feature_rows": 70,
+      "marker_family_counts": [
+        {
+          "marker_family": "boundary_associated",
+          "N": 547017
+        },
+        {
+          "marker_family": "diffuse_region_like",
+          "N": 69907
+        }
+      ],
+      "weighted_anchor_rows": 616924,
+      "support_region_rows": 616924,
+      "grid_lengths": [20, 40],
+      "feature_metadata_digest": "6ba497c7621f70a2b0f27233e46bd37f898415b8da4f6c7f6d0587a0a4ed6b2f"
+    }
+  }
+}

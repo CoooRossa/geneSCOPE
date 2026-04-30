@@ -23,6 +23,7 @@
   min_rel_width = 0,
   widen_span = 0.1,
   curve_name = "LR_curve2",
+  backend = "cpp",
   verbose = TRUE
 )
 }

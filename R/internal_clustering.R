@@ -1,3 +1,152 @@
+#' ANSI Red Helper
+#' @description
+#' Wraps a message in ANSI red for terminal emphasis.
+#' @param text Message string.
+#' @return Scalar character string.
+#' @keywords internal
+.ansi_red <- function(text) {
+    paste0("\033[31m", text, "\033[39m")
+}
+
+#' Extract Similarity Values For Cluster Diagnostics
+#' @description
+#' Collects finite upper-triangle similarity values without densifying sparse
+#' matrices.
+#' @param similarity_matrix Similarity matrix.
+#' @return Numeric vector.
+#' @keywords internal
+.cluster_similarity_values <- function(similarity_matrix) {
+    if (is.null(similarity_matrix)) return(numeric())
+    if (inherits(similarity_matrix, "sparseMatrix")) {
+        triplet <- summary(similarity_matrix)
+        if (!all(c("i", "j", "x") %in% colnames(triplet))) {
+            colnames(triplet) <- c("i", "j", "x")[seq_len(ncol(triplet))]
+        }
+        vals <- triplet$x[triplet$i < triplet$j]
+    } else {
+        vals <- similarity_matrix[upper.tri(similarity_matrix, diag = FALSE)]
+    }
+    vals <- as.numeric(vals)
+    vals[is.finite(vals)]
+}
+
+#' Summarize Cluster Q Distribution
+#' @description
+#' Computes quantile-span diagnostics used to guard unstable clustering inputs.
+#' @param similarity_matrix Similarity matrix.
+#' @param q_span_threshold Minimum allowed q95-q05 spread.
+#' @return Diagnostic list.
+#' @keywords internal
+.cluster_q_distribution_summary <- function(similarity_matrix,
+                                           q_span_threshold = 0.1) {
+    values <- .cluster_similarity_values(similarity_matrix)
+    nonzero_values <- values[values != 0]
+    if (!length(nonzero_values)) nonzero_values <- values
+    if (!length(nonzero_values)) {
+        return(list(
+            ok = FALSE,
+            reason = "no_finite_similarity_values",
+            n_values = 0L,
+            q05 = NA_real_,
+            q10 = NA_real_,
+            q90 = NA_real_,
+            q95 = NA_real_,
+            span90_10 = NA_real_,
+            span95_05 = NA_real_,
+            threshold = as.numeric(q_span_threshold)
+        ))
+    }
+    qs <- stats::quantile(
+        nonzero_values,
+        probs = c(0.05, 0.10, 0.90, 0.95),
+        na.rm = TRUE,
+        names = FALSE,
+        type = 8
+    )
+    span90_10 <- unname(qs[[3]] - qs[[2]])
+    span95_05 <- unname(qs[[4]] - qs[[1]])
+    list(
+        ok = is.finite(span95_05) && span95_05 >= as.numeric(q_span_threshold),
+        reason = if (is.finite(span95_05) && span95_05 >= as.numeric(q_span_threshold)) "ok" else "narrow_q_distribution",
+        n_values = length(nonzero_values),
+        q05 = unname(qs[[1]]),
+        q10 = unname(qs[[2]]),
+        q90 = unname(qs[[3]]),
+        q95 = unname(qs[[4]]),
+        span90_10 = span90_10,
+        span95_05 = span95_05,
+        threshold = as.numeric(q_span_threshold)
+    )
+}
+
+#' Resolve Cluster Q Guard
+#' @description
+#' Decides whether a narrow similarity distribution should trigger the
+#' compatibility fallback contract labelled as `k_perms`.
+#' @param similarity_matrix Similarity matrix.
+#' @param algo Requested stage-1 algorithm.
+#' @param stage2_algo Optional requested stage-2 algorithm.
+#' @param K Optional hotspot neighbourhood size.
+#' @param use_consensus Whether consensus graphing is enabled.
+#' @param n_restart Number of consensus restarts.
+#' @param q_guard_method Guardrail policy (`auto`, `k_perms`, `none`).
+#' @param q_span_threshold Minimum allowed q95-q05 spread.
+#' @return List containing effective runtime knobs and diagnostics.
+#' @keywords internal
+.resolve_cluster_q_guard <- function(similarity_matrix,
+                                     algo,
+                                     stage2_algo = NULL,
+                                     K = NULL,
+                                     use_consensus = TRUE,
+                                     n_restart = 100L,
+                                     q_guard_method = c("auto", "k_perms", "none"),
+                                     q_span_threshold = 0.1) {
+    q_guard_method <- match.arg(q_guard_method)
+    diag <- .cluster_q_distribution_summary(
+        similarity_matrix,
+        q_span_threshold = q_span_threshold
+    )
+    triggered <- !identical(q_guard_method, "none") && !isTRUE(diag$ok)
+    effective_algo <- algo
+    effective_stage2_algo <- if (is.null(stage2_algo)) NULL else stage2_algo
+    effective_K <- K
+    effective_use_consensus <- use_consensus
+    effective_n_restart <- n_restart
+    fallback_method <- "none"
+
+    if (isTRUE(triggered)) {
+        fallback_method <- "k_perms"
+        effective_algo <- "hotspot-like"
+        effective_stage2_algo <- "hotspot-like"
+        if (is.null(effective_K) || !is.finite(effective_K) || effective_K < 2) {
+            graph_size <- tryCatch(nrow(similarity_matrix), error = function(e) 10L)
+            effective_K <- max(2L, min(30L, as.integer(floor(sqrt(max(4L, graph_size))))))
+        } else {
+            effective_K <- as.integer(effective_K)
+        }
+        effective_use_consensus <- FALSE
+        effective_n_restart <- 1L
+    }
+
+    diag$requested_method <- q_guard_method
+    diag$triggered <- triggered
+    diag$fallback_method <- fallback_method
+    diag$effective_algo <- effective_algo
+    diag$effective_stage2_algo <- if (is.null(effective_stage2_algo)) NA_character_ else effective_stage2_algo
+    diag$effective_K <- if (is.null(effective_K)) NA_integer_ else as.integer(effective_K)
+    diag$effective_use_consensus <- isTRUE(effective_use_consensus)
+    diag$effective_n_restart <- as.integer(effective_n_restart)
+
+    list(
+        diag = diag,
+        algo = effective_algo,
+        stage2_algo = effective_stage2_algo,
+        K = effective_K,
+        use_consensus = effective_use_consensus,
+        n_restart = effective_n_restart
+    )
+}
+
 #' Cluster genes on a consensus graph
 #' @description
 #' Internal helper for `.cluster_genes`.
@@ -69,6 +218,9 @@
 #' @param aggr_batch_size Parameter value.
 #' @param future_globals_min_bytes Parameter value.
 #' @param profile_timing Parameter value.
+#' @param backend Graph backend contract.
+#' @param q_guard_method Q-distribution guardrail policy.
+#' @param q_span_threshold Minimum q95-q05 span allowed before fallback.
 #' @return Return value used internally.
 #' @keywords internal
 .cluster_genes <- function(
@@ -128,7 +280,7 @@
     return_report = FALSE,
     verbose = TRUE,
     ncores = NULL,
-    mode = c("auto", "safe", "aggressive", "fast"),
+    mode = c("auto", "safe", "safe_sequential", "aggressive", "fast"),
     large_n_threshold = 1000L,
     nk_condaenv = NULL,
     nk_conda_bin = NULL,
@@ -138,7 +290,10 @@
     aggr_future_workers = 2L,
     aggr_batch_size = NULL,
     future_globals_min_bytes = 2 * 1024^3,
-    profile_timing = FALSE) {
+    profile_timing = FALSE,
+    backend = c("auto", "igraph", "networkit"),
+    q_guard_method = c("auto", "k_perms", "none"),
+    q_span_threshold = 0.1) {
     step01 <- .log_step("clusterGenes", "S01", "normalize inputs and build config", verbose)
     step01$enter()
 
@@ -153,12 +308,45 @@
         ci_rule_value <- match.arg(CI_rule, valid_ci_rules)
     }
     mode <- match.arg(mode)
+    backend <- match.arg(backend)
+    q_guard_method <- match.arg(q_guard_method)
+
+    requested_mode <- mode
+    if (identical(mode, "safe_sequential")) {
+        mode <- "safe"
+        ncores <- 1L
+        aggr_future_workers <- 1L
+        if (requireNamespace("future", quietly = TRUE)) {
+            old_future_plan <- tryCatch(future::plan(), error = function(e) NULL)
+            future::plan(future::sequential)
+            on.exit({
+                if (!is.null(old_future_plan)) {
+                    try(future::plan(old_future_plan), silent = TRUE)
+                }
+            }, add = TRUE)
+        }
+        .log_key(
+            "clusterGenes",
+            .ansi_red("safe_sequential mode selected; using single-worker safe clustering to avoid future export pressure on large graphs."),
+            level = "WARN"
+        )
+    }
+    if (identical(backend, "igraph")) {
+        mode <- if (identical(requested_mode, "fast")) "fast" else "safe"
+    } else if (identical(backend, "networkit")) {
+        if (!.networkit_available()) {
+            stop("clusterGenes backend='networkit' requested but NetworKit is unavailable.")
+        }
+        mode <- "aggressive"
+    }
 
     # Use requested cores directly (clamped to available logical cores)
     ncores_requested <- ncores
     avail_cores <- max(1L, detectCores(logical = TRUE))
     ncores_use <- if (is.null(ncores) || is.na(ncores)) {
         avail_cores
+    } else if (identical(requested_mode, "safe_sequential")) {
+        1L
     } else {
         max(1L, min(as.integer(ncores), avail_cores))
     }
@@ -259,9 +447,20 @@
         hotspot_k = if (is.null(K)) NULL else K,
         hotspot_min_module_size = min_module_size,
         future_globals_min_bytes = as.numeric(future_globals_min_bytes),
-        system_memory_bytes = sys_mem_bytes
+        system_memory_bytes = sys_mem_bytes,
+        execution_mode = requested_mode
     )
     cfg$system_memory_bytes <- if (is.finite(sys_mem_bytes) && sys_mem_bytes > 0) sys_mem_bytes else cfg$system_memory_bytes
+    if (.log_enabled(verbose)) {
+        .log_backend(
+            "clusterGenes",
+            "S01",
+            "graph_backend",
+            backend,
+            reason = paste0("requested_mode=", requested_mode, " effective_mode=", cfg$mode),
+            verbose = verbose
+        )
+    }
     step01$done(sprintf("algo=%s objective=%s mode=%s", algo, objective, cfg$mode))
 
     step02 <- .log_step("clusterGenes", "S02", "configure threads and resources", verbose)
@@ -300,6 +499,51 @@
         sig_state <- if (is.null(inputs$significance)) "none" else "present"
         .log_info("clusterGenes", "S03", sprintf("similarity_dim=%d significance=%s", sim_dim, sig_state), verbose)
     }
+    q_guard <- .resolve_cluster_q_guard(
+        similarity_matrix = inputs$similarity,
+        algo = cfg$algo,
+        stage2_algo = cfg$stage2_algo,
+        K = cfg$hotspot_k,
+        use_consensus = cfg$use_consensus,
+        n_restart = cfg$n_restart,
+        q_guard_method = q_guard_method,
+        q_span_threshold = q_span_threshold
+    )
+    if (.log_enabled(verbose)) {
+        .log_info(
+            "clusterGenes",
+            "S03",
+            sprintf(
+                "q05=%.4f q95=%.4f span95_05=%.4f threshold=%.4f",
+                q_guard$diag$q05,
+                q_guard$diag$q95,
+                q_guard$diag$span95_05,
+                q_guard$diag$threshold
+            ),
+            verbose
+        )
+    }
+    if (isTRUE(q_guard$diag$triggered)) {
+        cfg$algo <- q_guard$algo
+        cfg$stage2_algo <- q_guard$stage2_algo
+        cfg$hotspot_k <- q_guard$K
+        cfg$use_consensus <- q_guard$use_consensus
+        cfg$n_restart <- q_guard$n_restart
+        .log_key(
+            "clusterGenes",
+            .ansi_red(
+                paste0(
+                    "q distribution span95_05=",
+                    sprintf("%.4f", q_guard$diag$span95_05),
+                    " < ",
+                    sprintf("%.4f", q_guard$diag$threshold),
+                    "; using k_perms fallback contract (mapped to hotspot-like runtime path). ",
+                    "Interpret cluster/modules cautiously."
+                )
+            ),
+            level = "WARN"
+        )
+    }
     step03$done()
 
     # Memory guard: estimate dense footprint of similarity/significance matrices per thread
@@ -307,11 +551,11 @@
     step04$enter()
     base_gb <- (sim_dim^2 * 8 * 2) / (1024^3) # two matrices (similarity + significance)
     est_total_gb <- base_gb * ncores_use
-    if (est_total_gb > sys_mem_gb) {
+    if (est_total_gb > sys_mem_gb && !identical(requested_mode, "safe_sequential")) {
         stop(
             "[.cluster_genes] Estimated memory requirement (", round(est_total_gb, 1),
             " GB) exceeds system capacity (", round(sys_mem_gb, 1),
-            " GB). Reduce ncores or gene count."
+            " GB). Reduce ncores, gene count, or run clusterGenes(mode='safe_sequential')."
         )
     }
 
@@ -443,8 +687,16 @@
 
     # Update stats layer with final consensus graph
     gname <- inputs$grid_name
+    if (is.null(scope_obj@stats[[gname]]) || !is.list(scope_obj@stats[[gname]])) {
+        scope_obj@stats[[gname]] <- list()
+    }
     if (is.null(scope_obj@stats[[gname]][[stats_layer]])) {
         scope_obj@stats[[gname]][[stats_layer]] <- list()
+    } else if (is.matrix(scope_obj@stats[[gname]][[stats_layer]]) ||
+        inherits(scope_obj@stats[[gname]][[stats_layer]], "Matrix")) {
+        stats_mat <- scope_obj@stats[[gname]][[stats_layer]]
+        scope_obj@stats[[gname]][[stats_layer]] <- list()
+        scope_obj@stats[[gname]][[stats_layer]][[cfg$similarity_slot]] <- stats_mat
     }
     scope_obj@stats[[gname]][[stats_layer]][[graph_slot_name]] <- stage2$consensus_graph
     step08$done()
@@ -457,8 +709,15 @@
         report$timing <- timing
         report$stage1 <- list(
             mode = stage1$mode_selected,
-            kept_genes = length(stage1$kept_genes)
+            kept_genes = length(stage1$kept_genes),
+            algo = cfg$algo,
+            stage2_algo = if (is.null(cfg$stage2_algo)) cfg$algo else cfg$stage2_algo,
+            backend_requested = backend,
+            execution_mode_requested = requested_mode,
+            execution_mode_effective = cfg$mode,
+            ncores_effective = ncores_use
         )
+        report$q_distribution <- q_guard$diag
         report$metrics_before <- stage2$metrics_before
         report$metrics_after <- stage2$metrics_after
         report$genes_before <- stage2$genes_before

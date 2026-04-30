@@ -9,6 +9,8 @@
   grid_name,
   density1_name,
   density2_name = NULL,
+  value_layer = "density",
+  value_scale_factor = 10000,
   palette1 = "#fc3d5d",
   palette2 = "#4753f8",
   alpha1 = 0.5,
@@ -37,6 +39,8 @@
   bar_offset = 0.01,
   arrow_pt = 4,
   scale_legend_colour = "black",
+  min.cutoff1 = 0,
+  min.cutoff2 = 0,
   max.cutoff1 = 1,
   max.cutoff2 = 1,
   legend_digits = 1
@@ -47,6 +51,8 @@
   grid_name,
   density1_name,
   density2_name = NULL,
+  value_layer = "density",
+  value_scale_factor = 10000,
   palette1 = "#fc3d5d",
   palette2 = "#4753f8",
   alpha1 = 0.5,
@@ -75,6 +81,8 @@
   bar_offset = 0.01,
   arrow_pt = 4,
   scale_legend_colour = "black",
+  min.cutoff1 = 0,
+  min.cutoff2 = 0,
   max.cutoff1 = 1,
   max.cutoff2 = 1,
   legend_digits = 1
@@ -85,9 +93,18 @@
 
 \item{grid_name}{Name of the grid layer to plot (e.g. "grid50").}
 
-\item{density1_name}{Column names to plot.}
+\item{density1_name}{Column names to plot. Can be a character vector of
+genes; when multiple genes are provided, their values are averaged.}
 
-\item{density2_name}{Column names to plot.}
+\item{density2_name}{Column names to plot. Can be a character vector of
+genes; when multiple genes are provided, their values are averaged.}
+
+\item{value_layer}{Source of values to plot. Use `"density"` (default) to
+read from `scope_obj@density`; otherwise this can be a grid expression
+matrix name (e.g., `"logCPM"`) or a normalization mode computed from
+grid counts (`"counts"`, `"per_grid"`, `"cpm"`, `"logcpm"`, `"global_gene"`).}
+
+\item{value_scale_factor}{Scale factor used for CPM/logCPM (default 1e4).}
 
 \item{palette1}{Color palettes for density1 and density2.}
 
@@ -147,6 +164,12 @@ choices are "bottom-left", "bottom-right", "top-left", "top-right".}
 \item{arrow_pt}{Arrow point size for scale bar.}
 
 \item{scale_legend_colour}{Color of scale bar and text.}
+
+\item{min.cutoff1}{Minimum cutoff fractions for density values. Spots below
+this fraction of the layer maximum are hidden.}
+
+\item{min.cutoff2}{Minimum cutoff fractions for density values. Spots below
+this fraction of the layer maximum are hidden.}
 
 \item{max.cutoff1}{Maximum cutoff fractions for density values.}
 

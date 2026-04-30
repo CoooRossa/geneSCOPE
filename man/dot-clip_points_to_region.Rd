@@ -4,7 +4,14 @@
 \alias{.clip_points_to_region}
 \title{Clip Points To Region}
 \usage{
-.clip_points_to_region(points, region, chunk_size = 5e+05, workers = 1L)
+.clip_points_to_region(
+  points,
+  region,
+  chunk_size = 5e+05,
+  workers = 1L,
+  parallel_backend = NULL,
+  psock_batch_chunks = NULL
+)
 }
 \arguments{
 \item{points}{Parameter value.}
@@ -14,6 +21,10 @@
 \item{chunk_size}{Parameter value.}
 
 \item{workers}{Parameter value.}
+
+\item{parallel_backend}{Parameter value.}
+
+\item{psock_batch_chunks}{Parameter value.}
 }
 \value{
 Return value used internally.

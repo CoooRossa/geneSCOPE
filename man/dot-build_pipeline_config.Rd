@@ -55,7 +55,8 @@
   hotspot_k = NULL,
   hotspot_min_module_size = 5L,
   future_globals_min_bytes = 2 * 1024^3,
-  system_memory_bytes = NA_real_
+  system_memory_bytes = NA_real_,
+  execution_mode = mode
 )
 }
 \arguments{
@@ -160,6 +161,8 @@
 \item{future_globals_min_bytes}{Parameter value.}
 
 \item{system_memory_bytes}{Parameter value.}
+
+\item{execution_mode}{Requested execution mode.}
 }
 \value{
 A named configuration list consumed by downstream helpers.

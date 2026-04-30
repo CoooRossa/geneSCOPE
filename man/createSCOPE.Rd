@@ -7,6 +7,18 @@
 createSCOPE(
   data_dir = NULL,
   prefer = c("auto", "xenium", "cosmx", "visium"),
+  grid_length = NULL,
+  seg_type = c("cell", "nucleus", "both"),
+  roi_path = NULL,
+  num_workers = 1L,
+  filter_genes = NULL,
+  max_distance_to_nucleus = 25,
+  filter_molecules = TRUE,
+  exclude_prefixes = c("Unassigned", "NegControl", "Background", "DeprecatedCodeword",
+    "SystemControl", "Negative"),
+  min_quality = 20,
+  min_segmentation_points = 0,
+  parallel_backend = c("auto", "fork", "psock", "serial"),
   verbose = TRUE,
   sctransform = TRUE,
   ...
@@ -17,18 +29,47 @@ createSCOPE(
 
 \item{prefer}{Override platform detection (`auto`, `xenium`, `cosmx`, `visium`).}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{grid_length}{Grid size in microns for Xenium/CosMx (required for these platforms).}
 
-\item{sctransform}{Run SCTransform when using the Visium Seurat builder.}
+\item{seg_type}{Segmentation type for Xenium (`cell`, `nucleus`, or `both`).}
 
-\item{...}{Additional arguments (currently unused).}
+\item{roi_path}{Optional path to ROI coordinate file.}
+
+\item{num_workers}{Number of parallel workers for data processing.}
+
+\item{filter_genes}{Optional character vector of genes to filter out.}
+
+\item{max_distance_to_nucleus}{Maximum distance (in microns) from molecule to nucleus.}
+
+\item{filter_molecules}{Whether to apply molecule quality filtering.}
+
+\item{exclude_prefixes}{Character vector of gene prefixes to exclude.}
+
+\item{min_quality}{Minimum quality score threshold for molecules.}
+
+\item{min_segmentation_points}{Minimum points per segmentation unit.}
+
+\item{parallel_backend}{Parallel backend choice (`auto`, `fork`, `psock`, `serial`).}
+
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
+
+\item{sctransform}{Run SCTransform when using the Visium Seurat builder.
+Must be `TRUE` for Visium inputs in this release.}
+
+\item{...}{Additional arguments forwarded to the platform constructor.}
 }
 \value{
 A constructed `scope_object`.
 }
 \description{
 Auto-detects Xenium/CosMx/Visium inputs under `data_dir` (or uses an explicit
-`prefer` override) and dispatches to the matching constructor.
+`prefer` override) and dispatches to the matching constructor. The Visium
+constructor uses the Seurat spatial builder with SCTransform by default.
+Non-SCT Visium construction is no longer a supported public path and fails
+fast with an explicit error. HDF5-backed Visium inputs require `hdf5r`
+before `Seurat::Load10X_Spatial()` is called.
 }
 \examples{
 \dontrun{

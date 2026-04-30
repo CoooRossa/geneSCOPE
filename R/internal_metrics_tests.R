@@ -187,10 +187,10 @@
     invisible(scope_obj)
 }
 
-#' Compute gene–gene Jaccard heatmap
+#' Compute gene-gene Jaccard heatmap
 #' @description
 #' Internal helper for `.compute_gene_gene_jaccard_heatmap`.
-#' Builds a binary gene × bin matrix and renders a Jaccard similarity heatmap,
+#' Builds a binary gene x bin matrix and renders a Jaccard similarity heatmap,
 #' optionally stratified by cluster annotations.
 #' @param scope_obj A `scope_object` with grid counts or Xz matrix.
 #' @param grid_name Grid layer name (default `grid30`).
@@ -246,7 +246,7 @@
     } else if (!(cluster_col %in% colnames(meta_df))) {
       warning("cluster column ", cluster_col, " is not present in meta.data; ignore this parameter.")
     } else if (is.null(rownames(meta_df))) {
-      warning("meta.data has no rownames, cannot map gene → cluster; ignore cluster_col.")
+      warning("meta.data has no rownames, cannot map gene -> cluster; ignore cluster_col.")
     } else {
       cluster_lookup <- as.character(meta_df[[cluster_col]])
       names(cluster_lookup) <- rownames(meta_df)
@@ -269,7 +269,7 @@
     }
     counts_df <- as.data.frame(grid_layer$counts)
     if (!nrow(counts_df)) {
-      warning("Grid layer ", grid_name, " has no gene × bin records.")
+      warning("Grid layer ", grid_name, " has no gene x bin records.")
       return(invisible(NULL))
     }
 
@@ -284,7 +284,7 @@
     counts_df$count <- as.numeric(as.character(counts_df$count))
     counts_df <- counts_df[!is.na(counts_df$gene) & !is.na(counts_df$grid_id) & counts_df$count > 0, , drop = FALSE]
     if (!nrow(counts_df)) {
-      warning("No gene × bin records remain after filtering NA/zero.")
+      warning("No gene x bin records remain after filtering NA/zero.")
       return(invisible(NULL))
     }
 
@@ -324,7 +324,7 @@
   }
 
   if (is.null(gene_bin_mat) || !nrow(gene_bin_mat)) {
-    warning("No usable gene × bin information; cannot compute Jaccard.")
+    warning("No usable gene x bin information; cannot compute Jaccard.")
     return(invisible(NULL))
   }
 
@@ -609,10 +609,10 @@
   ))
 }
 
-#' Compute the Iδ statistic for spatial genes
+#' Compute the Idelta statistic for spatial genes
 #' @description
 #' Internal helper for `.compute_idelta`.
-#' Calculates Moran's Iδ for each gene at grid or cell level and stores results
+#' Calculates Moran's Idelta for each gene at grid or cell level and stores results
 #' under `scope_obj@stats`.
 #' @param scope_obj A `scope_object` with grid or cell data.
 #' @param grid_name Grid layer name when `level = \"grid\"`.
@@ -649,7 +649,7 @@
             verbose
         )
 
-        ## ---- 2. Build gene × grid sparse matrix ------------------------------------
+        ## ---- 2. Build gene x grid sparse matrix ------------------------------------
         dt <- g_layer$counts[g_layer$counts$count > 0, ] # Keep only positive counts
         genes <- sort(unique(dt$gene))
         grids <- g_layer$grid_info$grid_id
@@ -670,8 +670,8 @@
             stop("No cell count matrix found. Please run .add_single_cells() first.")
         }
 
-        ## ---- 2. Use existing gene × cell sparse matrix -----------------------------
-        Gsp <- scope_obj@cells$counts # Already genes × cells
+        ## ---- 2. Use existing gene x cell sparse matrix -----------------------------
+        Gsp <- scope_obj@cells$counts # Already genes x cells
         if (!inherits(Gsp, "dgCMatrix")) {
             stop("Cell count matrix must be a dgCMatrix.")
         }
@@ -682,7 +682,7 @@
         col_suffix <- "cell_iDelta"
     }
 
-    ## ---- 3. Call C++ kernel to compute Iδ -----------------------------------------
+    ## ---- 3. Call C++ kernel to compute Idelta -----------------------------------------
     .log_backend("computeIDelta", "S01", "matrix", "dgCMatrix sparse", verbose = verbose)
     step_s01$done(extra = paste0("n_genes=", length(genes), " n_cols=", ncol(Gsp)))
 
@@ -813,7 +813,7 @@
         verbose
     )
 
-    ## —— 1. Select and check grid layer —— ##
+    ## ---- 1. Select and check grid layer ---- ##
     g_layer <- .select_grid_layer(scope_obj, grid_name)
     gname <- names(scope_obj@grid)[
         vapply(scope_obj@grid, identical, logical(1), g_layer)
@@ -822,7 +822,7 @@
 
     .log_info("computeMH", "S01", paste0("Selected grid layer: ", gname), verbose)
 
-    ## —— 2. Get Lee's L —— ##
+    ## ---- 2. Get Lee's L ---- ##
     Lmat <- .get_lee_matrix(scope_obj, grid_name = gname, lee_layer = lee_layer)
 
     .log_info("computeMH", "S01",
@@ -841,12 +841,12 @@
     }
     step_s01$done(extra = paste0("n_genes=", nrow(Lmat)))
 
-    ## —— 3. Try to read existing graph (only when graph_slot is not NULL) —— ##
+    ## ---- 3. Try to read existing graph (only when graph_slot is not NULL) ---- ##
     step_s02 <- .log_step("computeMH", "S02", "resolve or build graph", verbose)
     step_s02$enter(extra = paste0("graph_slot=", if (is.null(graph_slot)) "NULL" else graph_slot))
     gnet <- NULL
     if (!is.null(graph_slot)) {
-        # ① First check @stats
+        # (1) First check @stats
         if (!is.null(scope_obj@stats) &&
             !is.null(scope_obj@stats[[gname]]) &&
             !is.null(scope_obj@stats[[gname]][[lee_layer]]) &&
@@ -855,7 +855,7 @@
             .log_backend("computeMH", "S02", "igraph", "reuse_stats", verbose = verbose)
             .log_info("computeMH", "S02", "Found existing graph in @stats", verbose)
         }
-        # ② Then check legacy @grid
+        # (2) Then check legacy @grid
         else if (!is.null(g_layer[[lee_layer]]) &&
             !is.null(g_layer[[lee_layer]][[graph_slot]])) {
             gnet <- g_layer[[lee_layer]][[graph_slot]]
@@ -867,7 +867,7 @@
         .log_info("computeMH", "S02", "graph_slot is NULL, will build temporary graph", verbose)
     }
 
-    ## —— 4. If still no network, build based on L_min —— ##
+    ## ---- 4. If still no network, build based on L_min ---- ##
     if (is.null(gnet)) {
         .log_backend("computeMH", "S02", "igraph",
             paste0("build_from_L L_min=", L_min),
@@ -914,7 +914,7 @@
     }
     step_s02$done()
 
-    ## —— 5. gene × grid sparse count matrix (same as legacy) —— ##
+    ## ---- 5. gene x grid sparse count matrix (same as legacy) ---- ##
     step_s03 <- .log_step("computeMH", "S03", "build gene-by-grid matrix", verbose)
     step_s03$enter()
     counts_dt <- g_layer$counts[count > 0]
@@ -957,7 +957,7 @@
     }
     step_s03$done(extra = paste0("n_genes=", length(genes)))
 
-    ## —— 5a. Optional area normalization —— ##
+    ## ---- 5a. Optional area normalization ---- ##
     step_s04 <- .log_step("computeMH", "S04", "apply area normalization", verbose)
     step_s04$enter(extra = paste0("area_norm=", area_norm))
     if (area_norm) {
@@ -996,7 +996,7 @@
     }
     step_s04$done()
 
-    ## —— 6. Morisita–Horn (C++) —— ##
+    ## ---- 6. Morisita-Horn (C++) ---- ##
     step_s05 <- .log_step("computeMH", "S05", "compute Morisita-Horn", verbose)
     step_s05$enter()
     ed <- t(igraph::as_edgelist(gnet, names = FALSE) - 1L)
@@ -1063,7 +1063,7 @@
         igraph::edge_attr(gnet, "CMH") <- mh_vec
     }
 
-    ## —— 7. Build sparse CMH matrix aligned to Lee's L gene set —— ##
+    ## ---- 7. Build sparse CMH matrix aligned to Lee's L gene set ---- ##
     step_s06 <- .log_step("computeMH", "S06", "build MH matrix", verbose)
     step_s06$enter()
     gene_all <- rownames(Lmat)
@@ -1094,7 +1094,7 @@
     }
     step_s06$done(extra = paste0("nnz=", nnzero(MH)))
 
-    ## —— 8. Write to @stats —— ##
+    ## ---- 8. Write to @stats ---- ##
     step_s07 <- .log_step("computeMH", "S07", "store outputs", verbose)
     step_s07$enter(extra = paste0("out=", out))
     if (is.null(scope_obj@stats)) scope_obj@stats <- list()

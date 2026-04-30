@@ -11,6 +11,8 @@ Named list.
 }
 \description{
 Returns a list describing whether the package was compiled with OpenMP, and
-basic runtime capacity fields.
+basic runtime capacity fields. On Darwin/macOS, native OpenMP diagnostics
+obey the spatial native safe default and return a structured disabled
+payload unless diagnostics are explicitly allowed.
 }
 \keyword{internal}

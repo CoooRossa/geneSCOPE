@@ -3,6 +3,7 @@
 
 #include <RcppArmadillo.h>
 #include <RcppEigen.h>
+#include <Rcpp.h>
 
 using namespace Rcpp;
 
@@ -11,10 +12,29 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+static bool genescope_rcpp_exports_option_true(const char* name) {
+    SEXP value = Rf_GetOption1(Rf_install(name));
+    return TYPEOF(value) == LGLSXP && Rf_length(value) > 0 && LOGICAL(value)[0] == TRUE;
+}
+
+static void genescope_rcpp_exports_darwin_spatial_guard(const char* entrypoint,
+                                                        const char* disable_option) {
+#ifdef __APPLE__
+    if (genescope_rcpp_exports_option_true("geneSCOPE.disable_darwin_native_spatial")) {
+        Rf_error("%s native backend disabled by option geneSCOPE.disable_darwin_native_spatial. Unset this option or set it to FALSE to use the native path.", entrypoint);
+    }
+#endif
+    if (disable_option != nullptr && genescope_rcpp_exports_option_true(disable_option)) {
+        Rf_error("%s native backend disabled by option %s.", entrypoint, disable_option);
+    }
+}
+
+
 // grid_nb_omp
 List grid_nb_omp(const int nrow, const int ncol, const bool queen);
 RcppExport SEXP _geneSCOPE_grid_nb_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_omp", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -28,6 +48,7 @@ END_RCPP
 List grid_nb_serial(const int nrow, const int ncol, const bool queen);
 RcppExport SEXP _geneSCOPE_grid_nb_serial(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_serial", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -41,6 +62,7 @@ END_RCPP
 List grid_nb_hex_omp(const int nrow, const int ncol, const bool oddr);
 RcppExport SEXP _geneSCOPE_grid_nb_hex_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_hex_omp", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -54,6 +76,7 @@ END_RCPP
 List grid_nb_hex(const int nrow, const int ncol, const bool oddr);
 RcppExport SEXP _geneSCOPE_grid_nb_hex(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddrSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_hex", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -67,6 +90,7 @@ END_RCPP
 List grid_nb_hexq_omp(const int nrow, const int ncol, const bool oddq);
 RcppExport SEXP _geneSCOPE_grid_nb_hexq_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddqSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_hexq_omp", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -80,6 +104,7 @@ END_RCPP
 List grid_nb_hexq(const int nrow, const int ncol, const bool oddq);
 RcppExport SEXP _geneSCOPE_grid_nb_hexq(SEXP nrowSEXP, SEXP ncolSEXP, SEXP oddqSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb_hexq", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -93,6 +118,7 @@ END_RCPP
 SEXP listw_B_omp(const List nb);
 RcppExport SEXP _geneSCOPE_listw_B_omp(SEXP nbSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("listw_B_omp", "geneSCOPE.disable_native_listw_builder");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const List >::type nb(nbSEXP);
@@ -104,6 +130,7 @@ END_RCPP
 SEXP grid_weights_kernel_rect_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool queen, const int radius, const std::string kernel, const double sigma);
 RcppExport SEXP _geneSCOPE_grid_weights_kernel_rect_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP queenSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_weights_kernel_rect_omp", "geneSCOPE.disable_native_kernel_weights");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -122,6 +149,7 @@ END_RCPP
 SEXP grid_weights_kernel_hexr_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool oddr, const int radius, const std::string kernel, const double sigma);
 RcppExport SEXP _geneSCOPE_grid_weights_kernel_hexr_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP oddrSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_weights_kernel_hexr_omp", "geneSCOPE.disable_native_kernel_weights");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -140,6 +168,7 @@ END_RCPP
 SEXP grid_weights_kernel_hexq_omp(const int nrow, const int ncol, const IntegerVector gx, const IntegerVector gy, const bool oddq, const int radius, const std::string kernel, const double sigma);
 RcppExport SEXP _geneSCOPE_grid_weights_kernel_hexq_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP gxSEXP, SEXP gySEXP, SEXP oddqSEXP, SEXP radiusSEXP, SEXP kernelSEXP, SEXP sigmaSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_weights_kernel_hexq_omp", "geneSCOPE.disable_native_kernel_weights");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -158,6 +187,7 @@ END_RCPP
 SEXP grid_nb(const int nrow, const int ncol, const bool queen);
 RcppExport SEXP _geneSCOPE_grid_nb(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("grid_nb", "geneSCOPE.disable_native_grid_nb");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const int >::type nrow(nrowSEXP);
@@ -171,6 +201,7 @@ END_RCPP
 SEXP nb2mat(SEXP nb);
 RcppExport SEXP _geneSCOPE_nb2mat(SEXP nbSEXP) {
 BEGIN_RCPP
+    genescope_rcpp_exports_darwin_spatial_guard("nb2mat", "geneSCOPE.disable_native_listw_builder");
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type nb(nbSEXP);

@@ -30,6 +30,7 @@ createSCOPE_visium(
 A constructed `scope_object`.
 }
 \description{
-User-facing Visium constructor that wraps the tiling builder.
+Legacy Visium constructor. Visium construction is SCT-only in this release;
+call `createSCOPE(..., prefer = "visium", sctransform = TRUE)` instead.
 }
 \keyword{internal}

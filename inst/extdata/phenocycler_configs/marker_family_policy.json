@@ -1,0 +1,9 @@
+{
+  "punctate_sources": ["punctate_event", "connected_component_event"],
+  "diffuse_sources": ["support_grid_point", "support_superpixel"],
+  "boundary_sources": "support_contour_anchor",
+  "feature_family_overrides": [],
+  "source_family_overrides": [],
+  "defaults": ["event", "grid_field", "weighted_anchor"],
+  "version": "phenocycler_marker_policy_v1"
+}

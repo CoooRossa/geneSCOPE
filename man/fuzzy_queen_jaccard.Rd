@@ -13,9 +13,9 @@ fuzzy_queen_jaccard(x, y, W, alpha = 0.5, steps = 1L, row_normalize = TRUE)
 
 \item{W}{Sparse \code{dgCMatrix} queen adjacency.}
 
-\item{alpha}{Diffusion weight per step (0–1).}
+\item{alpha}{Diffusion weight per step (0-1).}
 
-\item{steps}{Integer number of diffusion steps (≥ 0).}
+\item{steps}{Integer number of diffusion steps (>= 0).}
 
 \item{row_normalize}{Logical; row-normalise \code{W} before diffusion.}
 }

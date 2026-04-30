@@ -29,22 +29,430 @@
 }
 
 # Internal aliases for native helpers (RcppExports uses non-dot names).
-.grid_nb_omp <- function(nrow, ncol, queen = TRUE) grid_nb_omp(nrow, ncol, queen)
+# Round 5: Use R fallbacks when native backends are disabled
+.grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
+    if (.spw_darwin_native_spatial_disabled()) {
+        warning("grid_nb_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
+        return(.grid_nb_r(nrow, ncol, queen))
+    }
+    grid_nb_omp(nrow, ncol, queen)
+}
 .grid_nb <- function(nrow, ncol, queen = TRUE) grid_nb(nrow, ncol, queen)
-.grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) grid_nb_hex_omp(nrow, ncol, oddr)
+.grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
+    if (.spw_darwin_native_spatial_disabled()) {
+        warning("grid_nb_hex_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
+        return(.grid_nb_hex_r(nrow, ncol, oddr))
+    }
+    grid_nb_hex_omp(nrow, ncol, oddr)
+}
 .grid_nb_hex <- function(nrow, ncol, oddr = TRUE) grid_nb_hex(nrow, ncol, oddr)
-.grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) grid_nb_hexq_omp(nrow, ncol, oddq)
+.grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
+    if (.spw_darwin_native_spatial_disabled()) {
+        warning("grid_nb_hexq_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
+        return(.grid_nb_hexq_r(nrow, ncol, oddq))
+    }
+    grid_nb_hexq_omp(nrow, ncol, oddq)
+}
 .grid_nb_hexq <- function(nrow, ncol, oddq = TRUE) grid_nb_hexq(nrow, ncol, oddq)
 .grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+    stop("grid_weights_kernel_rect_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
+  }
   grid_weights_kernel_rect_omp(nrow, ncol, gx, gy, queen, radius, kernel, sigma)
 }
 .grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+    stop("grid_weights_kernel_hexr_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
+  }
   grid_weights_kernel_hexr_omp(nrow, ncol, gx, gy, oddr, radius, kernel, sigma)
 }
 .grid_weights_kernel_hexq_omp <- function(nrow, ncol, gx, gy, oddq = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+    stop("grid_weights_kernel_hexq_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
+  }
   grid_weights_kernel_hexq_omp(nrow, ncol, gx, gy, oddq, radius, kernel, sigma)
 }
-.listw_b_omp <- function(nb) listw_B_omp(nb)
+.spw_kernel_raw_weight <- function(dist, kernel = "gaussian", sigma = 1.0) {
+  if (identical(kernel, "flat")) {
+    return(1.0)
+  }
+  exp(-((dist * dist) / (2 * sigma * sigma)))
+}
+
+.spw_make_rect_offsets <- function(radius, queen = TRUE) {
+  offsets <- expand.grid(
+    dr = seq.int(-radius, radius),
+    dc = seq.int(-radius, radius),
+    KEEP.OUT.ATTRS = FALSE,
+    stringsAsFactors = FALSE
+  )
+  offsets <- offsets[!(offsets$dr == 0L & offsets$dc == 0L), , drop = FALSE]
+  if (!isTRUE(queen)) {
+    offsets <- offsets[(abs(offsets$dr) + abs(offsets$dc)) <= radius, , drop = FALSE]
+  }
+  offsets$dist <- sqrt((offsets$dr * offsets$dr) + (offsets$dc * offsets$dc))
+  offsets
+}
+
+.spw_make_cube_offsets <- function(radius) {
+  out <- vector("list", 0L)
+  for (dx in seq.int(-radius, radius)) {
+    dy_min <- max(-radius, -dx - radius)
+    dy_max <- min(radius, -dx + radius)
+    for (dy in seq.int(dy_min, dy_max)) {
+      dz <- -dx - dy
+      if (dx == 0L && dy == 0L && dz == 0L) {
+        next
+      }
+      out[[length(out) + 1L]] <- c(
+        dx = dx,
+        dy = dy,
+        dz = dz,
+        dist = max(abs(dx), abs(dy), abs(dz))
+      )
+    }
+  }
+  do.call(rbind, out)
+}
+
+.spw_offset_to_axial_oddr <- function(row, col) {
+  row <- unname(row)
+  col <- unname(col)
+  c(q = col - ((row - bitwAnd(row, 1L)) %/% 2L), r = row)
+}
+.spw_offset_to_axial_evenr <- function(row, col) {
+  row <- unname(row)
+  col <- unname(col)
+  c(q = col - ((row + bitwAnd(row, 1L)) %/% 2L), r = row)
+}
+.spw_axial_to_offset_oddr <- function(q, r) {
+  q <- unname(q)
+  r <- unname(r)
+  c(row = r, col = q + ((r - bitwAnd(r, 1L)) %/% 2L))
+}
+.spw_axial_to_offset_evenr <- function(q, r) {
+  q <- unname(q)
+  r <- unname(r)
+  c(row = r, col = q + ((r + bitwAnd(r, 1L)) %/% 2L))
+}
+.spw_offset_to_axial_oddq <- function(row, col) {
+  row <- unname(row)
+  col <- unname(col)
+  c(q = col, r = row - ((col - bitwAnd(col, 1L)) %/% 2L))
+}
+.spw_offset_to_axial_evenq <- function(row, col) {
+  row <- unname(row)
+  col <- unname(col)
+  c(q = col, r = row - ((col + bitwAnd(col, 1L)) %/% 2L))
+}
+.spw_axial_to_offset_oddq <- function(q, r) {
+  q <- unname(q)
+  r <- unname(r)
+  c(row = r + ((q - bitwAnd(q, 1L)) %/% 2L), col = q)
+}
+.spw_axial_to_offset_evenq <- function(q, r) {
+  q <- unname(q)
+  r <- unname(r)
+  c(row = r + ((q + bitwAnd(q, 1L)) %/% 2L), col = q)
+}
+
+.spw_kernel_sparse_from_rows <- function(neighbour_idx, neighbour_val, n_active) {
+  lens <- lengths(neighbour_idx)
+  if (!length(lens) || !any(lens > 0L)) {
+    return(Matrix::sparseMatrix(
+      i = integer(0),
+      j = integer(0),
+      x = numeric(0),
+      dims = c(n_active, n_active),
+      giveCsparse = TRUE
+    ))
+  }
+  Matrix::sparseMatrix(
+    i = rep.int(seq_len(n_active), lens),
+    j = unlist(neighbour_idx, use.names = FALSE),
+    x = unlist(neighbour_val, use.names = FALSE),
+    dims = c(n_active, n_active),
+    giveCsparse = TRUE
+  )
+}
+
+.spw_validate_kernel_grid_inputs <- function(nrow, ncol, gx, gy, caller) {
+  nrow <- suppressWarnings(as.integer(nrow)[1L])
+  ncol <- suppressWarnings(as.integer(ncol)[1L])
+  gx <- suppressWarnings(as.integer(gx))
+  gy <- suppressWarnings(as.integer(gy))
+
+  if (is.na(nrow) || is.na(ncol) || nrow < 1L || ncol < 1L) {
+    stop(caller, ": nrow and ncol must be positive integers.", call. = FALSE)
+  }
+  if (length(gx) != length(gy)) {
+    stop(caller, ": gx and gy must have the same length.", call. = FALSE)
+  }
+  if (anyNA(gx) || anyNA(gy)) {
+    stop(caller, ": gx and gy must not contain NA values.", call. = FALSE)
+  }
+  if (length(gx) && any(gx < 1L | gx > ncol | gy < 1L | gy > nrow)) {
+    stop(caller, ": gx/gy coordinates are outside the declared grid.", call. = FALSE)
+  }
+
+  list(nrow = nrow, ncol = ncol, gx = gx, gy = gy)
+}
+
+.grid_weights_kernel_rect_r <- function(nrow, ncol, gx, gy, queen = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  args <- .spw_validate_kernel_grid_inputs(nrow, ncol, gx, gy, ".grid_weights_kernel_rect_r")
+  nrow <- args$nrow
+  ncol <- args$ncol
+  gx <- args$gx
+  gy <- args$gy
+  n_active <- length(gx)
+  idx_map <- integer(nrow * ncol)
+  idx_map[((gy - 1L) * ncol) + gx] <- seq_len(n_active)
+  offsets <- .spw_make_rect_offsets(radius = as.integer(radius), queen = queen)
+  neighbour_idx <- vector("list", n_active)
+  neighbour_val <- vector("list", n_active)
+
+  for (i_act in seq_len(n_active)) {
+    r0 <- gy[[i_act]]
+    c0 <- gx[[i_act]]
+    idx <- integer(0)
+    raw <- numeric(0)
+    wsum <- 0
+    for (k in seq_len(base::nrow(offsets))) {
+      rr <- r0 + offsets$dr[[k]]
+      cc <- c0 + offsets$dc[[k]]
+      if (rr < 1L || rr > nrow || cc < 1L || cc > ncol) {
+        next
+      }
+      j_act <- idx_map[((rr - 1L) * ncol) + cc]
+      if (j_act < 1L) {
+        next
+      }
+      w_raw <- .spw_kernel_raw_weight(offsets$dist[[k]], kernel = kernel, sigma = sigma)
+      idx <- c(idx, j_act)
+      raw <- c(raw, w_raw)
+      wsum <- wsum + w_raw
+    }
+    if (wsum > 0) {
+      neighbour_idx[[i_act]] <- idx
+      neighbour_val[[i_act]] <- raw / wsum
+    } else {
+      neighbour_idx[[i_act]] <- integer(0)
+      neighbour_val[[i_act]] <- numeric(0)
+    }
+  }
+
+  .spw_kernel_sparse_from_rows(neighbour_idx, neighbour_val, n_active)
+}
+
+.grid_weights_kernel_hexr_r <- function(nrow, ncol, gx, gy, oddr = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  args <- .spw_validate_kernel_grid_inputs(nrow, ncol, gx, gy, ".grid_weights_kernel_hexr_r")
+  nrow <- args$nrow
+  ncol <- args$ncol
+  gx <- args$gx
+  gy <- args$gy
+  n_active <- length(gx)
+  idx_map <- integer(nrow * ncol)
+  idx_map[((gy - 1L) * ncol) + gx] <- seq_len(n_active)
+  cube_offs <- .spw_make_cube_offsets(as.integer(radius))
+  to_axial <- if (isTRUE(oddr)) .spw_offset_to_axial_oddr else .spw_offset_to_axial_evenr
+  to_offset <- if (isTRUE(oddr)) .spw_axial_to_offset_oddr else .spw_axial_to_offset_evenr
+  neighbour_idx <- vector("list", n_active)
+  neighbour_val <- vector("list", n_active)
+
+  for (i_act in seq_len(n_active)) {
+    row0 <- gy[[i_act]] - 1L
+    col0 <- gx[[i_act]] - 1L
+    axial0 <- to_axial(row0, col0)
+    x0 <- axial0[["q"]]
+    z0 <- axial0[["r"]]
+    y0 <- -x0 - z0
+    idx <- integer(0)
+    raw <- numeric(0)
+    wsum <- 0
+
+    for (k in seq_len(base::nrow(cube_offs))) {
+      x1 <- x0 + unname(cube_offs[k, "dx"])
+      y1 <- y0 + unname(cube_offs[k, "dy"])
+      z1 <- z0 + unname(cube_offs[k, "dz"])
+      q1 <- x1
+      r1 <- z1
+      offset1 <- to_offset(q1, r1)
+      rr <- offset1[["row"]]
+      cc <- offset1[["col"]]
+      if (rr < 0L || rr >= nrow || cc < 0L || cc >= ncol) {
+        next
+      }
+      j_act <- idx_map[(rr * ncol) + cc + 1L]
+      if (j_act < 1L) {
+        next
+      }
+      w_raw <- .spw_kernel_raw_weight(unname(cube_offs[k, "dist"]), kernel = kernel, sigma = sigma)
+      idx <- c(idx, j_act)
+      raw <- c(raw, w_raw)
+      wsum <- wsum + w_raw
+    }
+
+    if (wsum > 0) {
+      neighbour_idx[[i_act]] <- idx
+      neighbour_val[[i_act]] <- raw / wsum
+    } else {
+      neighbour_idx[[i_act]] <- integer(0)
+      neighbour_val[[i_act]] <- numeric(0)
+    }
+  }
+
+  .spw_kernel_sparse_from_rows(neighbour_idx, neighbour_val, n_active)
+}
+
+.grid_weights_kernel_hexq_r <- function(nrow, ncol, gx, gy, oddq = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
+  args <- .spw_validate_kernel_grid_inputs(nrow, ncol, gx, gy, ".grid_weights_kernel_hexq_r")
+  nrow <- args$nrow
+  ncol <- args$ncol
+  gx <- args$gx
+  gy <- args$gy
+  n_active <- length(gx)
+  idx_map <- integer(nrow * ncol)
+  idx_map[((gx - 1L) * nrow) + gy] <- seq_len(n_active)
+  cube_offs <- .spw_make_cube_offsets(as.integer(radius))
+  to_axial <- if (isTRUE(oddq)) .spw_offset_to_axial_oddq else .spw_offset_to_axial_evenq
+  to_offset <- if (isTRUE(oddq)) .spw_axial_to_offset_oddq else .spw_axial_to_offset_evenq
+  neighbour_idx <- vector("list", n_active)
+  neighbour_val <- vector("list", n_active)
+
+  for (i_act in seq_len(n_active)) {
+    row0 <- gy[[i_act]] - 1L
+    col0 <- gx[[i_act]] - 1L
+    axial0 <- to_axial(row0, col0)
+    x0 <- axial0[["q"]]
+    z0 <- axial0[["r"]]
+    y0 <- -x0 - z0
+    idx <- integer(0)
+    raw <- numeric(0)
+    wsum <- 0
+
+    for (k in seq_len(base::nrow(cube_offs))) {
+      x1 <- x0 + unname(cube_offs[k, "dx"])
+      y1 <- y0 + unname(cube_offs[k, "dy"])
+      z1 <- z0 + unname(cube_offs[k, "dz"])
+      q1 <- x1
+      r1 <- z1
+      offset1 <- to_offset(q1, r1)
+      rr <- offset1[["row"]]
+      cc <- offset1[["col"]]
+      if (rr < 0L || rr >= nrow || cc < 0L || cc >= ncol) {
+        next
+      }
+      j_act <- idx_map[(cc * nrow) + rr + 1L]
+      if (j_act < 1L) {
+        next
+      }
+      w_raw <- .spw_kernel_raw_weight(unname(cube_offs[k, "dist"]), kernel = kernel, sigma = sigma)
+      idx <- c(idx, j_act)
+      raw <- c(raw, w_raw)
+      wsum <- wsum + w_raw
+    }
+
+    if (wsum > 0) {
+      neighbour_idx[[i_act]] <- idx
+      neighbour_val[[i_act]] <- raw / wsum
+    } else {
+      neighbour_idx[[i_act]] <- integer(0)
+      neighbour_val[[i_act]] <- numeric(0)
+    }
+  }
+
+  .spw_kernel_sparse_from_rows(neighbour_idx, neighbour_val, n_active)
+}
+
+.listw_b_omp <- function(nb) {
+  nb <- .spw_sanitize_nb(nb, caller = ".listw_b_omp")
+  if (.spw_darwin_native_spatial_disabled()) {
+    warning("listw_B_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
+    return(.listw_b_r(nb))
+  }
+  if (isTRUE(getOption("geneSCOPE.disable_native_listw_builder", FALSE))) {
+    stop("listw_B_omp native backend disabled by option; using R sparse builder.", call. = FALSE)
+  }
+  listw_B_omp(nb)
+}
+
+.spw_sanitize_nb <- function(nb,
+                             region_id = attr(nb, "region.id", exact = TRUE),
+                             topology = attr(nb, "topology", exact = TRUE),
+                             queen = attr(nb, "queen", exact = TRUE),
+                             caller = ".spw_sanitize_nb") {
+  if (!is.list(nb)) {
+    stop(caller, ": nb must be a list.", call. = FALSE)
+  }
+
+  n <- length(nb)
+  if (is.null(region_id)) {
+    region_id <- seq_len(n)
+  }
+  if (length(region_id) != n) {
+    stop(caller, ": region_id length does not match nb length.", call. = FALSE)
+  }
+
+  extra_attrs <- attributes(nb)
+  extra_keep <- setdiff(names(extra_attrs), c("names", "class", "region.id", "queen", "topology"))
+  clean <- vector("list", n)
+
+  for (i in seq_len(n)) {
+    raw <- nb[[i]]
+    if (is.null(raw)) {
+      clean[[i]] <- integer(0)
+      next
+    }
+
+    vals <- suppressWarnings(as.integer(raw))
+    if (anyNA(vals)) {
+      stop(caller, ": nb[[", i, "]] contains NA or non-integer neighbour indices.", call. = FALSE)
+    }
+
+    vals <- vals[vals != 0L]
+    if (!length(vals)) {
+      clean[[i]] <- integer(0)
+      next
+    }
+    if (any(vals < 1L | vals > n)) {
+      bad <- unique(vals[vals < 1L | vals > n])
+      stop(
+        caller, ": nb[[", i, "]] contains out-of-bounds neighbour indices: ",
+        paste(bad, collapse = ", "), ".",
+        call. = FALSE
+      )
+    }
+    clean[[i]] <- unique(vals)
+  }
+
+  attr(clean, "class") <- "nb"
+  attr(clean, "region.id") <- region_id
+  attr(clean, "queen") <- isTRUE(queen)
+  if (!is.null(topology)) {
+    attr(clean, "topology") <- topology
+  }
+  for (name in extra_keep) {
+    attr(clean, name) <- extra_attrs[[name]]
+  }
+  clean
+}
+
+.spw_nb_to_sparse_matrix_r <- function(nb, caller = ".spw_nb_to_sparse_matrix_r") {
+  nb <- .spw_sanitize_nb(nb, caller = caller)
+  n <- length(nb)
+  if (!n) {
+    return(Matrix::sparseMatrix(i = integer(0), j = integer(0), x = numeric(0), dims = c(0L, 0L)))
+  }
+
+  lens <- lengths(nb)
+  if (!length(lens) || !any(lens > 0L)) {
+    return(Matrix::sparseMatrix(i = integer(0), j = integer(0), x = numeric(0), dims = c(n, n)))
+  }
+
+  ii <- rep.int(seq_len(n), lens)
+  jj <- unlist(nb, use.names = FALSE)
+  Matrix::sparseMatrix(i = ii, j = jj, x = 1, dims = c(n, n), giveCsparse = TRUE)
+}
 
 #' Builds spatial neighbourhood structures, converts them to listw/sparse
 #' @description
@@ -64,6 +472,7 @@
 #' @param kernel_radius Kernel radius for `style="kernel_*"` (overrides `max_order`).
 #' @param kernel_sigma Kernel sigma for `style="kernel_*"` (overrides `min_neighbors`).
 #' @param ncores Number of threads to use.
+#' @param backend Backend policy (`auto`, `cpp`, `python`, `r`).
 #' @return The modified `scope_object`.
 #' @keywords internal
 .compute_weights <- function(scope_obj,
@@ -79,7 +488,16 @@
                            max_order = NULL,
                            kernel_radius = NULL,
                            kernel_sigma = NULL,
-                           ncores = detectCores(logical = TRUE)) {
+                           ncores = detectCores(logical = TRUE),
+                           backend = "cpp") {
+  backend <- if (missing(backend)) {
+    "cpp"
+  } else {
+    .normalize_core_backend(backend, arg = "backend", allow_auto = TRUE)
+  }
+  if (identical(backend, "python")) {
+    stop(.core_backend_python_unavailable_message("computeWeights"), call. = FALSE)
+  }
   topology <- match.arg(topology)
   use_fuzzy <- grepl("^fuzzy", topology)
   topo_arg <- if (use_fuzzy) {
@@ -94,6 +512,17 @@
 
   guard <- .spw_thread_guard_v2()
   on.exit(guard$restore(), add = TRUE)
+  old_force_r <- Sys.getenv("GENESCOPE_FORCE_R_GRID_NB", unset = NA_character_)
+  on.exit({
+    if (is.na(old_force_r)) {
+      Sys.unsetenv("GENESCOPE_FORCE_R_GRID_NB")
+    } else {
+      Sys.setenv(GENESCOPE_FORCE_R_GRID_NB = old_force_r)
+    }
+  }, add = TRUE)
+  if (identical(backend, "r")) {
+    Sys.setenv(GENESCOPE_FORCE_R_GRID_NB = "1")
+  }
 
   # 1) Select grid layer and basic metadata
   layer_info <- .spw_select_layer(scope_obj, grid_name)
@@ -121,6 +550,8 @@
   kernel_token <- NULL
   kernel_radius_use <- NULL
   kernel_sigma_use <- NULL
+  kernel_builder <- NA_character_
+  kernel_backend <- NA_character_
   store_mat_effective <- store_mat
   if (kernel_style) {
     if (use_fuzzy) {
@@ -204,53 +635,134 @@
   listw_obj <- NULL
   relabel_nb <- NULL
   nb_backend <- NULL
+  matrix_builder <- NA_character_
   zero_idx <- integer(0)
 
   if (kernel_style) {
     topology_resolved <- topo_info$topology
-    .log_backend(parent, "S03", "kernel_builder", "C++", verbose = verbose)
     .log_info(parent, "S03", paste0(
       "topology=", topology_resolved,
       " kernel=", kernel_token,
       " radius=", kernel_radius_use,
       " sigma=", kernel_sigma_use
     ), verbose)
-    W <- if (topology_resolved %in% c("queen", "rook")) {
-      .grid_weights_kernel_rect_omp(
-        nrow = meta$ybins_eff,
-        ncol = meta$xbins_eff,
-        gx = meta$gx,
-        gy = meta$gy,
-        queen = identical(topology_resolved, "queen"),
-        radius = kernel_radius_use,
-        kernel = kernel_token,
-        sigma = kernel_sigma_use
+    kernel_builders <- if (topology_resolved %in% c("queen", "rook")) {
+      list(
+        native = function() {
+          .grid_weights_kernel_rect_omp(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            queen = identical(topology_resolved, "queen"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        r = function() {
+          .grid_weights_kernel_rect_r(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            queen = identical(topology_resolved, "queen"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        native_label = "C++ .grid_weights_kernel_rect_omp",
+        r_label = "R .grid_weights_kernel_rect_r"
       )
     } else if (topology_resolved %in% c("hex-oddr", "hex-evenr")) {
-      .grid_weights_kernel_hexr_omp(
-        nrow = meta$ybins_eff,
-        ncol = meta$xbins_eff,
-        gx = meta$gx,
-        gy = meta$gy,
-        oddr = identical(topology_resolved, "hex-oddr"),
-        radius = kernel_radius_use,
-        kernel = kernel_token,
-        sigma = kernel_sigma_use
+      list(
+        native = function() {
+          .grid_weights_kernel_hexr_omp(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            oddr = identical(topology_resolved, "hex-oddr"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        r = function() {
+          .grid_weights_kernel_hexr_r(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            oddr = identical(topology_resolved, "hex-oddr"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        native_label = "C++ .grid_weights_kernel_hexr_omp",
+        r_label = "R .grid_weights_kernel_hexr_r"
       )
     } else if (topology_resolved %in% c("hex-oddq", "hex-evenq")) {
-      .grid_weights_kernel_hexq_omp(
-        nrow = meta$ybins_eff,
-        ncol = meta$xbins_eff,
-        gx = meta$gx,
-        gy = meta$gy,
-        oddq = identical(topology_resolved, "hex-oddq"),
-        radius = kernel_radius_use,
-        kernel = kernel_token,
-        sigma = kernel_sigma_use
+      list(
+        native = function() {
+          .grid_weights_kernel_hexq_omp(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            oddq = identical(topology_resolved, "hex-oddq"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        r = function() {
+          .grid_weights_kernel_hexq_r(
+            nrow = meta$ybins_eff,
+            ncol = meta$xbins_eff,
+            gx = meta$gx,
+            gy = meta$gy,
+            oddq = identical(topology_resolved, "hex-oddq"),
+            radius = kernel_radius_use,
+            kernel = kernel_token,
+            sigma = kernel_sigma_use
+          )
+        },
+        native_label = "C++ .grid_weights_kernel_hexq_omp",
+        r_label = "R .grid_weights_kernel_hexq_r"
       )
     } else {
       stop("Unknown topology for kernel weights: ", topology_resolved)
     }
+    if (identical(backend, "r")) {
+      kernel_builder <- kernel_builders$r_label
+      kernel_backend <- "r"
+      W <- kernel_builders$r()
+    } else {
+      kernel_builder <- kernel_builders$native_label
+      kernel_backend <- "cpp"
+      W <- tryCatch(
+        kernel_builders$native(),
+        error = function(e) {
+          kernel_builder <<- kernel_builders$r_label
+          kernel_backend <<- "r"
+          .log_info(
+            parent,
+            "S03",
+            paste0(
+              "Native kernel builder failed; falling back to R kernel builder (",
+              conditionMessage(e),
+              ")."
+            ),
+            verbose
+          )
+          kernel_builders$r()
+        }
+      )
+    }
+    .log_backend(parent, "S03", "kernel_builder", kernel_builder, verbose = verbose)
     diag(W) <- 0
     dimnames(W) <- list(meta$grid_id, meta$grid_id)
   } else {
@@ -297,14 +809,43 @@
       }
     }
   }
+  relabel_nb <- .spw_sanitize_nb(
+    relabel_nb,
+    region_id = meta$grid_id,
+    topology = topo_info$topology,
+    queen = identical(topo_info$topology, "queen"),
+    caller = ".compute_weights"
+  )
 
   # 4) Convert to requested outputs
     if (store_mat_effective) {
-      W <- .listw_b_omp(relabel_nb)
+      if (identical(backend, "r")) {
+        matrix_builder <- "R Matrix::sparseMatrix"
+        W <- .spw_nb_to_sparse_matrix_r(relabel_nb, caller = ".compute_weights")
+      } else {
+        matrix_builder <- "C++ .listw_b_omp"
+        W <- tryCatch(
+          .listw_b_omp(relabel_nb),
+          error = function(e) {
+            matrix_builder <<- "R Matrix::sparseMatrix"
+            .log_info(
+              parent,
+              "S03",
+              paste0(
+                "Native listw_B_omp failed; falling back to R sparse builder (",
+                conditionMessage(e),
+                ")."
+              ),
+              verbose
+            )
+            .spw_nb_to_sparse_matrix_r(relabel_nb, caller = ".compute_weights")
+          }
+        )
+      }
       diag(W) <- 0
-      W@x[] <- 1
+      if (length(W@x)) W@x[] <- 1
       dimnames(W) <- list(meta$grid_id, meta$grid_id)
-      .log_backend(parent, "S03", "matrix_builder", "C++ .listw_b_omp", verbose = verbose)
+      .log_backend(parent, "S03", "matrix_builder", matrix_builder, verbose = verbose)
     }
   }
 
@@ -330,6 +871,8 @@
   if (kernel_style) {
     if (store_mat_effective) {
       scope_obj@grid[[grid_name]]$W <- W
+      attr(scope_obj@grid[[grid_name]]$W, "weight_style") <- "W"
+      attr(scope_obj@grid[[grid_name]]$W, "backend") <- kernel_backend
     }
     if (store_listw) {
       scope_obj@grid[[grid_name]]$listw <- spdep::mat2listw(W,
@@ -347,6 +890,8 @@
     }
     if (store_mat_effective) {
       scope_obj@grid[[grid_name]]$W <- W
+      attr(scope_obj@grid[[grid_name]]$W, "weight_style") <- style
+      attr(scope_obj@grid[[grid_name]]$W, "backend") <- if (identical(backend, "r") || identical(nb_backend, "R") || identical(matrix_builder, "R Matrix::sparseMatrix")) "r" else "cpp"
     }
     if (store_listw) {
       scope_obj@grid[[grid_name]]$listw <- listw_obj
@@ -401,6 +946,27 @@
     NA
   }
   row_norm_flag <- if (use_fuzzy) "fuzzy" else "FALSE"
+  selected_backend <- if (kernel_style) {
+    kernel_backend %||% if (identical(backend, "r")) "r" else "cpp"
+  } else if (identical(backend, "r") || identical(nb_backend, "R") || identical(matrix_builder, "R Matrix::sparseMatrix")) {
+    "r"
+  } else {
+    "cpp"
+  }
+  scope_obj@grid[[grid_name]]$weights_meta <- list(
+    backend_requested = backend,
+    backend_selected = selected_backend,
+    backend_policy = .core_backend_policy(
+      backend,
+      python_supported = FALSE,
+      cpp_supported = TRUE,
+      r_supported = TRUE
+    ),
+    nb_backend = nb_backend,
+    matrix_builder = if (kernel_style) kernel_builder else matrix_builder,
+    kernel_style = if (kernel_style) style else NA_character_,
+    weight_style = if (kernel_style) "W" else style
+  )
   summary_msg <- paste0(
     "grid_name=", grid_name,
     " W=", if (!is.null(W)) "TRUE" else "FALSE",
@@ -409,6 +975,7 @@
     " diag_zero=", diag_zero,
     " binary=", w_binary,
     " row_normalized=", row_norm_flag,
+    " backend=", selected_backend,
     " listw=", store_listw,
     if (use_fuzzy) " fuzzy=TRUE" else ""
   )
@@ -544,6 +1111,12 @@
   if (force_r) {
     fallback_reason <- "GENESCOPE_FORCE_R_GRID_NB=1"
   }
+  if (.spw_darwin_native_spatial_disabled()) {
+    fallback_reason <- fallback_reason %||% .spw_darwin_native_spatial_reason()
+  }
+  if (isTRUE(getOption("geneSCOPE.disable_native_grid_nb", FALSE))) {
+    fallback_reason <- fallback_reason %||% "geneSCOPE.disable_native_grid_nb=TRUE"
+  }
 
   if (!is.null(fallback_reason) && fallback_supported) {
     .log_info(parent, step, paste0(
@@ -665,8 +1238,8 @@ fuzzy_queen_diffuse_mat <- function(X, W, alpha = 0.5, steps = 1L, row_normalize
 #' @param x Numeric/logical vectors (0/1) of identical length.
 #' @param y Numeric/logical vectors (0/1) of identical length.
 #' @param W Sparse \code{dgCMatrix} queen adjacency.
-#' @param alpha Diffusion weight per step (0–1).
-#' @param steps Integer number of diffusion steps (≥ 0).
+#' @param alpha Diffusion weight per step (0-1).
+#' @param steps Integer number of diffusion steps (>= 0).
 #' @param row_normalize Logical; row-normalise \code{W} before diffusion.
 #' @return Scalar numeric fuzzy Jaccard similarity in \eqn{[0, 1]} (or \code{NA}
 #'   when both patterns are empty).
@@ -859,7 +1432,9 @@ fuzzy_queen_jaccard <- function(x, y,
 
   if (!is.null(min_neighbors)) {
     min_neighbors <- as.numeric(min_neighbors)
-    if (!is.finite(min_neighbors) || min_neighbors <= 0) min_neighbors <- NULL
+    if (!is.finite(min_neighbors) || min_neighbors <= 0) {
+      stop("min_neighbors must be > 0 when provided.", call. = FALSE)
+    }
   }
 
   expand_once <- function(ord) {
@@ -1038,16 +1613,7 @@ fuzzy_queen_jaccard <- function(x, y,
   list(layer = layer, grid_name = grid_name)
 }
 
-#' Spw Thread Guard V2
-#' @description
-#' Internal helper for `.spw_thread_guard_v2`.
-#' @param builder_threads Parameter value.
-#' @param requested_ncores Parameter value.
-#' @param builder_backend Parameter value.
-#' @param other_threads Parameter value.
-#' @param context String label used for tracing/debug messages.
-#' @return Return value used internally.
-#' @keywords internal
+# Internal thread guard with full parameter control (used via _internal alias)
 .spw_thread_guard_v2 <- function(builder_threads = 1L,
                               requested_ncores = detectCores(logical = TRUE),
                               builder_backend = "serial",
@@ -1106,7 +1672,7 @@ fuzzy_queen_jaccard <- function(x, y,
   xbins_eff <- layer$xbins_eff
   ybins_eff <- layer$ybins_eff
   if (any(gx < 1 | gx > xbins_eff | gy < 1 | gy > ybins_eff)) {
-    stop("gx/gy exceed xbins_eff × ybins_eff range; check coordinates.")
+    stop("gx/gy exceed xbins_eff x ybins_eff range; check coordinates.")
   }
   list(
     grid_info = as.data.table(grid_info),

@@ -82,6 +82,10 @@
     consensus
 }
 
+# NOTE: .compute_consensus_sparse_r is defined in R/internal_graph_core.R
+# This duplicate definition was removed to resolve documentation inconsistencies.
+# The version in internal_graph_core.R uses 'memb' as the parameter name.
+
 #' Build default clustering configuration.
 #' @description
 #' Internal helper for `.build_pipeline_config`.
@@ -136,6 +140,7 @@
 #' @param hotspot_min_module_size Parameter value.
 #' @param future_globals_min_bytes Parameter value.
 #' @param system_memory_bytes Parameter value.
+#' @param execution_mode Requested execution mode.
 #' @return A named configuration list consumed by downstream helpers.
 #' @keywords internal
 .build_pipeline_config <- function(
@@ -189,9 +194,11 @@
     hotspot_k = NULL,
     hotspot_min_module_size = 5L,
     future_globals_min_bytes = 2 * 1024^3,
-    system_memory_bytes = NA_real_) {
+    system_memory_bytes = NA_real_,
+    execution_mode = mode) {
 
     algo <- match.arg(algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
+    mode <- match.arg(mode, c("auto", "safe", "aggressive", "fast"))
     if (identical(algo, "hotspot")) algo <- "hotspot-like"
     if (!is.null(stage2_algo)) {
         stage2_algo <- match.arg(stage2_algo, c("leiden", "louvain", "hotspot-like", "hotspot"))
@@ -206,6 +213,13 @@
         CI_rule <- "remove_within"
     }
     ci_filter_flag <- !is.null(CI_rule)
+
+    if (!is.numeric(resolution) || length(resolution) != 1L || !is.finite(resolution) || resolution <= 0) {
+        stop("resolution must be a single finite numeric value > 0.", call. = FALSE)
+    }
+    if (!is.numeric(min_cluster_size) || length(min_cluster_size) != 1L || !is.finite(min_cluster_size) || min_cluster_size < 1) {
+        stop("min_cluster_size must be a single finite numeric value >= 1.", call. = FALSE)
+    }
 
     list(
         min_cutoff = min_cutoff,
@@ -258,7 +272,8 @@
         hotspot_k = if (is.null(hotspot_k)) NULL else as.integer(hotspot_k),
         hotspot_min_module_size = as.integer(hotspot_min_module_size),
         future_globals_min_bytes = as.numeric(future_globals_min_bytes),
-        system_memory_bytes = as.numeric(system_memory_bytes)
+        system_memory_bytes = as.numeric(system_memory_bytes),
+        execution_mode = as.character(execution_mode)[1]
     )
 }
 
@@ -347,47 +362,6 @@
 .cluster_timestamp <- function() format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 
 #' Compute consensus matrix in pure R (sparse).
-#' @description
-#' Internal helper for `.compute_consensus_sparse_r`.
-#' @param memb Integer matrix of memberships (genes x runs).
-#' @param thr Numeric consensus threshold.
-#' @return Symmetric sparseMatrix of mean co-occurrence scores.
-#' @keywords internal
-.compute_consensus_sparse_r <- function(memb, thr = 0) {
-    if (is.null(dim(memb))) memb <- matrix(as.integer(memb), nrow = length(memb))
-    if (!is.matrix(memb)) memb <- as.matrix(memb)
-    storage.mode(memb) <- "integer"
-    n <- nrow(memb); r <- ncol(memb)
-    if (!is.finite(r) || r < 1L) return(Matrix(0, n, n, sparse = TRUE))
-    acc <- Matrix(0, n, n, sparse = FALSE)
-    for (jj in seq_len(r)) {
-        labs <- as.integer(memb[, jj])
-        keep <- !is.na(labs)
-        if (!any(keep)) next
-        labs2 <- labs[keep]
-        K <- suppressWarnings(max(labs2))
-        if (!is.finite(K) || K < 1L) next
-        ind <- sparseMatrix(i = which(keep), j = labs2, x = 1, dims = c(n, K))
-        acc <- acc + as.matrix(ind %*% t(ind))
-    }
-    acc <- acc / max(1L, r)
-    diag(acc) <- 0
-    M <- drop0(Matrix(acc, sparse = TRUE))
-    rn <- rownames(memb)
-    if (!is.null(rn) && length(rn) == nrow(M)) {
-        try({ dimnames(M) <- list(rn, rn) }, silent = TRUE)
-    }
-    if (thr > 0) {
-        TT <- as(M, "TsparseMatrix")
-        if (length(TT@x)) {
-            keep <- TT@x >= thr
-            M <- sparseMatrix(i = TT@i[keep] + 1L, j = TT@j[keep] + 1L, x = TT@x[keep], dims = dim(M), symmetric = TRUE)
-            try({ dimnames(M) <- list(rn, rn) }, silent = TRUE)
-        }
-    }
-    M
-}
-
 #' Configure Networkit Python
 #' @description
 #' Internal helper for `.configure_networkit_python`.
@@ -499,7 +473,7 @@
                                         significance_slot = "FDR",
                                         use_significance = TRUE,
                                         verbose = TRUE) {
-    .cluster_message(verbose, "[cluster] Prep: extracting container layers…",
+    .cluster_message(verbose, "[cluster] Prep: extracting container layers...",
         parent = "clusterGenes", step = "S03"
     )
 
@@ -507,12 +481,92 @@
     gname <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
     .check_grid_content(scope_obj, gname)
 
-    if (is.null(scope_obj@stats[[gname]]) ||
-        is.null(scope_obj@stats[[gname]][[stats_layer]])) {
-        stop("Statistics layer missing: ", grid_name, "/", stats_layer)
+    prefer_cell <- FALSE
+    if (is.null(grid_name)) {
+        if (endsWith(stats_layer, "_cell")) {
+            prefer_cell <- TRUE
+        } else if (identical(stats_layer, "pearson_cor") &&
+            !is.null(scope_obj@stats[["cell"]]) &&
+            !is.null(scope_obj@stats[["cell"]][["pearson_cor_cell"]])) {
+            prefer_cell <- TRUE
+        }
     }
 
-    stats_obj <- scope_obj@stats[[gname]][[stats_layer]]
+    stats_obj <- NULL
+    if (!prefer_cell &&
+        !is.null(scope_obj@stats[[gname]]) &&
+        !is.null(scope_obj@stats[[gname]][[stats_layer]])) {
+        stats_obj <- scope_obj@stats[[gname]][[stats_layer]]
+    } else {
+        alt <- NULL
+        alt_source <- NULL
+        alt_layer <- stats_layer
+        if (!is.null(scope_obj@stats[["cell"]]) &&
+            !is.null(scope_obj@stats[["cell"]][[stats_layer]])) {
+            alt <- scope_obj@stats[["cell"]][[stats_layer]]
+            alt_source <- "stats_cell"
+        }
+        if (is.null(alt) && !endsWith(stats_layer, "_cell")) {
+            alt_cell <- paste0(stats_layer, "_cell")
+            if (!is.null(scope_obj@stats[["cell"]]) &&
+                !is.null(scope_obj@stats[["cell"]][[alt_cell]])) {
+                alt <- scope_obj@stats[["cell"]][[alt_cell]]
+                alt_source <- "stats_cell"
+                alt_layer <- alt_cell
+            }
+        }
+        if (is.null(alt) && !is.null(scope_obj@grid[[gname]]) &&
+            !is.null(scope_obj@grid[[gname]][[stats_layer]])) {
+            alt <- scope_obj@grid[[gname]][[stats_layer]]
+            alt_source <- "grid"
+        }
+        if (is.null(alt) && !is.null(scope_obj@cells[[stats_layer]])) {
+            alt <- scope_obj@cells[[stats_layer]]
+            alt_source <- "cells"
+        }
+        if (is.null(alt) && !endsWith(stats_layer, "_cell")) {
+            alt_cell <- paste0(stats_layer, "_cell")
+            if (!is.null(scope_obj@cells[[alt_cell]])) {
+                alt <- scope_obj@cells[[alt_cell]]
+                alt_source <- "cells"
+                alt_layer <- alt_cell
+            }
+        }
+        if (!is.null(alt) && (is.matrix(alt) || inherits(alt, "Matrix"))) {
+            stats_obj <- list()
+            stats_obj[[similarity_slot]] <- alt
+            fdr_name <- paste0(alt_layer, "_FDR")
+            if (identical(alt_source, "grid") &&
+                !is.null(scope_obj@grid[[gname]][[fdr_name]])) {
+                stats_obj[[significance_slot]] <- scope_obj@grid[[gname]][[fdr_name]]
+            }
+            if (identical(alt_source, "cells") &&
+                !is.null(scope_obj@cells[[fdr_name]])) {
+                stats_obj[[significance_slot]] <- scope_obj@cells[[fdr_name]]
+            }
+            if (identical(alt_source, "stats_cell") &&
+                !is.null(scope_obj@stats[["cell"]][[fdr_name]])) {
+                stats_obj[[significance_slot]] <- scope_obj@stats[["cell"]][[fdr_name]]
+            }
+        } else if (!is.null(alt)) {
+            stats_obj <- alt
+        }
+    }
+
+    if (!is.null(stats_obj) && (is.matrix(stats_obj) || inherits(stats_obj, "Matrix"))) {
+        tmp <- list()
+        tmp[[similarity_slot]] <- stats_obj
+        fdr_name <- paste0(stats_layer, "_FDR")
+        if (!is.null(scope_obj@stats[[gname]]) &&
+            !is.null(scope_obj@stats[[gname]][[fdr_name]])) {
+            tmp[[significance_slot]] <- scope_obj@stats[[gname]][[fdr_name]]
+        }
+        stats_obj <- tmp
+    }
+
+    if (is.null(stats_obj)) {
+        stop("Statistics layer missing: ", grid_name, "/", stats_layer)
+    }
     sim_mat <- stats_obj[[similarity_slot]]
     if (is.null(sim_mat)) stop("Similarity slot missing in stats layer: ", similarity_slot)
     sig_mat <- if (use_significance) stats_obj[[significance_slot]] else NULL
@@ -2202,7 +2256,7 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
                                       config,
                                       verbose = TRUE,
                                       networkit_config = list()) {
-    .cluster_message(verbose, "[cluster] Step2: running Stage-1 consensus…",
+    .cluster_message(verbose, "[cluster] Step2: running Stage-1 consensus...",
         parent = "clusterGenes", step = "S05"
     )
 
@@ -2510,7 +2564,7 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
                                    aux_stats = NULL,
                                    pearson_matrix = NULL,
                                    verbose = TRUE) {
-    .cluster_message(verbose, "[cluster] Step3: Stage-2 correction & clustering…",
+    .cluster_message(verbose, "[cluster] Step3: Stage-2 correction & clustering...",
         parent = "clusterGenes", step = "S07"
     )
 

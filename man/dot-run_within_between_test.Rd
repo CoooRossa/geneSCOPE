@@ -44,7 +44,7 @@ List with `jaccard` (matrix, heatmap, clusters) and `within_between`
 }
 \description{
 Internal helper for `.run_within_between_test`.
-Wrapper that computes the gene–gene Jaccard matrix on a given grid/layer and
+Wrapper that computes the gene-gene Jaccard matrix on a given grid/layer and
 then runs the per-gene within vs between test. No files are written.
 }
 \keyword{internal}

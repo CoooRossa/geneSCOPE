@@ -30,7 +30,9 @@ src-x64/
 
 # Development files
 dev/
-Scripts/
+/Scripts/
+!scripts/
+!scripts/**
 
 # Log files
 *.log
@@ -53,6 +55,8 @@ tests/testthat/test-results/
 
 # Output files from R CMD check
 /*.Rcheck/
+..Rcheck/
+.Rcheck/
 
 # produced vignettes
 vignettes/*.html
@@ -73,12 +77,24 @@ vignettes/*.pdf
 .Renviron
 
 # pkgdown site
-docs/
+docs/*
+!docs/idelta_precompute_ledger.md
+!docs/idelta_gridselect_tool_version.txt
 
 # translation temp files
 po/*~
 
+# Backup files
+*.bak
+*.orig
+
+# Compiled Python
+__pycache__/
+*.pyc
+
+# Codex temp install
+.codex_tmp_install//
+
 # RStudio Connect folder
 rsconnect/
-.DS_Store
 .quarto

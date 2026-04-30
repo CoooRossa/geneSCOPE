@@ -2,7 +2,8 @@
 % Please edit documentation in R/internal_pipeline.R
 \name{.configure_networkit_python}
 \alias{.configure_networkit_python}
-\title{Configure Networkit Python}
+\title{Compute consensus matrix in pure R (sparse).
+Configure Networkit Python}
 \usage{
 .configure_networkit_python(
   conda_env = NULL,

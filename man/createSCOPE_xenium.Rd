@@ -9,6 +9,7 @@ createSCOPE_xenium(
   grid_length,
   seg_type = c("cell", "nucleus", "both"),
   data_type = "xenium",
+  parallel_backend = c("auto", "fork", "psock", "serial"),
   ...
 )
 }
@@ -20,6 +21,8 @@ createSCOPE_xenium(
 \item{seg_type}{Segmentation strategy (`cell`, `nucleus`, `both`).}
 
 \item{data_type}{Data type label for the resulting scope object.}
+
+\item{parallel_backend}{Parallel backend for ROI clipping (`auto`, `fork`, `psock`, `serial`).}
 
 \item{...}{Additional arguments (currently unused).}
 }

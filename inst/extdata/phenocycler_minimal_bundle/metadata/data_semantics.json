@@ -1,0 +1,10 @@
+{
+  "primary_analytical_layers": {
+    "protein_events": "discrete punctate/connected-component events",
+    "signal_supports": "diffuse or boundary support summaries"
+  },
+  "count_like_layers": {
+    "protein_events": true,
+    "signal_supports": false
+  }
+}

@@ -50,7 +50,7 @@ For a given `scope_obj`, extract the Lee's L matrix from
   Summarize each gene's total count across all grid cells from
   `scope_obj@grid[[grid_name]]$counts`. For every gene pair (i, j) with i < j,
   compute Lee's L and the fold change of their total counts
-  (fold change = max(total_i, total_j) / min(total_i, total_j), ≥ 1).
+  (fold change = max(total_i, total_j) / min(total_i, total_j), >= 1).
   Finally, plot a scatterplot with Lee's L on the x-axis and fold change on
   the y-axis, using a 25% gray background and publication-quality aesthetics.
 }

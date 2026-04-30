@@ -2,7 +2,7 @@
 % Please edit documentation in R/internal_metrics_tests.R
 \name{.compute_gene_gene_jaccard_heatmap}
 \alias{.compute_gene_gene_jaccard_heatmap}
-\title{Compute gene–gene Jaccard heatmap}
+\title{Compute gene-gene Jaccard heatmap}
 \usage{
 .compute_gene_gene_jaccard_heatmap(
   scope_obj,
@@ -47,7 +47,7 @@ Invisibly returns the heatmap object (if created).
 }
 \description{
 Internal helper for `.compute_gene_gene_jaccard_heatmap`.
-Builds a binary gene × bin matrix and renders a Jaccard similarity heatmap,
+Builds a binary gene x bin matrix and renders a Jaccard similarity heatmap,
 optionally stratified by cluster annotations.
 }
 \keyword{internal}

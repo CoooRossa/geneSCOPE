@@ -2,7 +2,7 @@
 % Please edit documentation in R/internal_metrics_tests.R
 \name{.compute_idelta}
 \alias{.compute_idelta}
-\title{Compute the Iδ statistic for spatial genes}
+\title{Compute the Idelta statistic for spatial genes}
 \usage{
 .compute_idelta(
   scope_obj,
@@ -28,7 +28,7 @@ The modified `scope_object`.
 }
 \description{
 Internal helper for `.compute_idelta`.
-Calculates Moran's Iδ for each gene at grid or cell level and stores results
+Calculates Moran's Idelta for each gene at grid or cell level and stores results
 under `scope_obj@stats`.
 }
 \keyword{internal}

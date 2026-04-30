@@ -1,0 +1,10 @@
+{
+  "grid_lengths": [20, 40],
+  "field_weight_col": "support_score",
+  "anchor_weight_col": "support_score",
+  "area_col": "support_area_um2",
+  "region_mode": "bbox_proxy",
+  "include_boundary_in_dual": true,
+  "min_weight": 0,
+  "version": "phenocycler_diffuse_config_v1"
+}

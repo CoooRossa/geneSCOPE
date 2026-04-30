@@ -155,6 +155,28 @@
   cor_mat
 }
 
+#' Dense R Pearson correlation for centered expression matrices.
+#' @description
+#' Internal reference backend for dense in-memory Pearson correlation. The input
+#' orientation matches `.pearson_cor`: samples in rows, genes in columns.
+#' @param expr_centered Numeric matrix already centered by column.
+#' @return Dense gene by gene Pearson correlation matrix.
+#' @keywords internal
+.compute_correlation_dense_pearson_r <- function(expr_centered) {
+  expr_centered <- as.matrix(expr_centered)
+  ss <- colSums(expr_centered^2)
+  denom <- sqrt(outer(ss, ss))
+  cor_mat <- crossprod(expr_centered)
+  pos <- denom > 0
+  cor_mat[pos] <- cor_mat[pos] / denom[pos]
+  cor_mat[!pos] <- 0
+  cor_mat[!is.finite(cor_mat)] <- 0
+  diag(cor_mat) <- 1
+  rownames(cor_mat) <- colnames(expr_centered)
+  colnames(cor_mat) <- colnames(expr_centered)
+  cor_mat
+}
+
 #' Extract Pearson correlations for specific edge pairs without densifying.
 #' @description
 #' Internal helper for `.get_pairwise_cor_for_edges`.
@@ -273,7 +295,8 @@
     level <- match.arg(level)
 
     ## ---------- 1. Set layer name & final target ------------------------------------
-    corr_name <- ".pearson_cor"
+    corr_name <- "pearson_cor"
+    corr_name_legacy <- ".pearson_cor"
     f_cell_suf <- "_cell" # single-cell layer suffix
 
     ## ---------- 2. Get matrix --------------------------------------------------
@@ -289,6 +312,9 @@
         rmat <- if (!is.null(scope_obj@stats[[grid_name]]) &&
             !is.null(scope_obj@stats[[grid_name]][[corr_name]])) {
             scope_obj@stats[[grid_name]][[corr_name]]
+        } else if (!is.null(scope_obj@stats[[grid_name]]) &&
+            !is.null(scope_obj@stats[[grid_name]][[corr_name_legacy]])) {
+            scope_obj@stats[[grid_name]][[corr_name_legacy]]
         } else {
             NULL
         }
@@ -296,6 +322,9 @@
         ##   2b. Fallback: @grid[[grid_name]]
         if (is.null(rmat) && !is.null(g_layer[[corr_name]])) {
             rmat <- g_layer[[corr_name]]
+        }
+        if (is.null(rmat) && !is.null(g_layer[[corr_name_legacy]])) {
+            rmat <- g_layer[[corr_name_legacy]]
         }
 
         if (is.null(rmat)) {
@@ -317,13 +346,19 @@
         rmat <- if (!is.null(scope_obj@stats[["cell"]]) &&
             !is.null(scope_obj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]])) {
             scope_obj@stats[["cell"]][[paste0(corr_name, f_cell_suf)]]
+        } else if (!is.null(scope_obj@stats[["cell"]]) &&
+            !is.null(scope_obj@stats[["cell"]][[paste0(corr_name_legacy, f_cell_suf)]])) {
+            scope_obj@stats[["cell"]][[paste0(corr_name_legacy, f_cell_suf)]]
         } else {
             NULL
         }
 
-        ##   2b. Fallback: @cells$.pearson_cor
+        ##   2b. Fallback: @cells$pearson_cor
         if (is.null(rmat) && !is.null(scope_obj@cells[[corr_name]])) {
             rmat <- scope_obj@cells[[corr_name]]
+        }
+        if (is.null(rmat) && !is.null(scope_obj@cells[[corr_name_legacy]])) {
+            rmat <- scope_obj@cells[[corr_name_legacy]]
         }
 
         if (is.null(rmat)) {
@@ -422,7 +457,10 @@
 #' @param level Correlation level (`cell` or `grid`).
 #' @param grid_name Optional grid name when operating on grid-level data.
 #' @param layer Expression layer name to correlate (e.g., `logCPM`).
-#' @param method Correlation method (`pearson`, `spearman`, `kendall`).
+#' @param method Requested correlation method. The only supported method value
+#'   is `pearson`; other values fail fast instead of silently reusing the
+#'   Pearson path.
+#' @param backend Core backend policy (`auto`, `cpp`, `python`, `r`).
 #' @param ncores Number of threads to use for computation.
 #' @param store_layer Target slot name for storing the correlation matrix.
 #' @param compute_fdr Whether to compute FDR alongside correlations.
@@ -440,7 +478,8 @@
                                level = c("cell", "grid"),
                                grid_name = NULL,
                                layer = "logCPM",
-                               method = c("pearson", "spearman", "kendall"),
+                               method = "pearson",
+                               backend = "cpp",
                                blocksize = 2000,
                                ncores = 16,
                                chunk_size = 1000,
@@ -448,12 +487,38 @@
                                use_bigmemory = TRUE,
                                backing_path = tempdir(),
                                force_compute = FALSE,
-                               store_layer = ".pearson_cor",
+                               store_layer = "pearson_cor",
                                compute_fdr = TRUE,
                                fdr_method = "BH",
                                verbose = TRUE) {
   level <- match.arg(level)
-  method <- match.arg(method)
+  method <- as.character(method)[1]
+  if (is.na(method) || !nzchar(method)) {
+    stop(
+      "[geneSCOPE::computeCorrelation] method must be a single non-empty string. ",
+      "Only method='pearson' is currently supported.",
+      call. = FALSE
+    )
+  }
+  method <- tolower(method)
+  if (!identical(method, "pearson")) {
+    stop(
+      "[geneSCOPE::computeCorrelation] method='", method,
+      "' is not implemented in the current backend. ",
+      "Only method='pearson' is currently supported; previous releases ",
+      "silently reused the Pearson path here. ",
+      "Use method='pearson' or compute an alternative correlation matrix externally.",
+      call. = FALSE
+    )
+  }
+  backend <- if (missing(backend)) {
+    "cpp"
+  } else {
+    .normalize_core_backend(backend, arg = "backend", allow_auto = TRUE)
+  }
+  if (identical(backend, "python")) {
+    stop(.core_backend_python_unavailable_message("computeCorrelation"), call. = FALSE)
+  }
 
   step_s01 <- .log_step("computeCorrelation", "S01", "resolve runtime config", verbose)
   summary_parts <- c(
@@ -461,6 +526,7 @@
     if (!is.null(grid_name)) paste0("grid=", grid_name) else NULL,
     paste0("layer=", layer),
     paste0("method=", method),
+    paste0("backend=", backend),
     paste0("ncores=", ncores),
     paste0("memory_limit_gb=", memory_limit_gb),
     paste0("use_bigmemory=", use_bigmemory),
@@ -565,7 +631,7 @@
 
     if (densify_risky) {
       .log_info("computeCorrelation", "S03",
-        paste0("Input densification estimated at ~", round(dense_input_gb, 1), " GB; using sparse Pearson path."),
+        paste0("Input densification estimated at ~", round(dense_input_gb, 1), " GB; falling back to sparse R Pearson path."),
         verbose
       )
       .log_backend("computeCorrelation", "S03", "R",
@@ -574,8 +640,12 @@
       )
       use_sparse_path <- TRUE
     } else {
-      .log_backend("computeCorrelation", "S03", "native",
-        "pearson_cor matrix=dense spmm=FALSE center=TRUE scale=FALSE",
+      preprocess_backend <- if (identical(backend, "r")) "R" else "native"
+      .log_backend("computeCorrelation", "S03", preprocess_backend,
+        paste0(
+          if (identical(backend, "r")) "dense_pearson_r" else "pearson_cor",
+          " matrix=dense spmm=FALSE center=TRUE scale=FALSE"
+        ),
         verbose = verbose
       )
       # Transpose matrix to cells x genes (.pearson_cor expects this)
@@ -617,6 +687,12 @@
       expr_mat,
       verbose = verbose
     )
+  } else if (identical(backend, "r")) {
+    .log_backend("computeCorrelation", "S04", "R",
+      "dense_pearson_r matrix=dense threads=1 thread_source=single",
+      verbose = verbose
+    )
+    cor_matrix <- .compute_correlation_dense_pearson_r(expr_centered)
   } else {
     .log_info("computeCorrelation", "S04",
       paste0("Starting correlation matrix computation (using ", ncores_safe, " threads)..."),
@@ -633,6 +709,25 @@
 
     start_time <- Sys.time()
 
+    run_native_single_thread <- function(error) {
+      if (grepl("disabled on Darwin", conditionMessage(error), fixed = TRUE)) {
+        stop(error)
+      }
+      .log_backend("computeCorrelation", "S04", "native",
+        "pearson_cor threads=1 thread_source=fallback",
+        reason = "fallback_single_thread", verbose = verbose
+      )
+      .log_info("computeCorrelation", "S04",
+        paste0("!!! Warning: Multithreaded computation failed, trying single thread: ", conditionMessage(error), " !!!"),
+        verbose
+      )
+      .pearson_cor(
+        X = expr_centered,
+        bs = blocksize,
+        n_threads = 1
+      )
+    }
+
     # Use safe thread count to call C++ function
     cor_matrix <- tryCatch(
       {
@@ -643,19 +738,24 @@
         )
       },
       error = function(e) {
-        # If error, try single thread
-        .log_backend("computeCorrelation", "S04", "native",
-          "pearson_cor threads=1 thread_source=fallback",
-          reason = "fallback_single_thread", verbose = verbose
-        )
-        .log_info("computeCorrelation", "S04",
-          paste0("!!! Warning: Multithreaded computation failed, trying single thread: ", e$message, " !!!"),
-          verbose
-        )
-        .pearson_cor(
-          X = expr_centered,
-          bs = blocksize,
-          n_threads = 1
+        tryCatch(
+          run_native_single_thread(e),
+          error = function(e2) {
+            if (!grepl("disabled on Darwin", conditionMessage(e2), fixed = TRUE)) {
+              warning(
+                "Native Pearson correlation backend failed; Python correlation backend is not implemented, ",
+                "so falling back to the R Pearson backend: ",
+                conditionMessage(e2),
+                call. = FALSE,
+                immediate. = TRUE
+              )
+            }
+            .log_backend("computeCorrelation", "S04", "R",
+              "dense_pearson_r matrix=dense threads=1 thread_source=fallback",
+              reason = "native_failed_python_unavailable", verbose = verbose
+            )
+            .compute_correlation_dense_pearson_r(expr_centered)
+          }
         )
       }
     )

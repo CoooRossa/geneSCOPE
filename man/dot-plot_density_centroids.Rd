@@ -81,11 +81,11 @@ or "both". Default "none".}
 
 \item{alpha_seg}{Alpha for segmentation polygons. Default 0.2.}
 
-\item{grid_gap}{Spacing of background grid lines (µm). Default 100.}
+\item{grid_gap}{Spacing of background grid lines (umm). Default 100.}
 
 \item{scale_text_size}{Font size for scale-bar text. Default 2.4.}
 
-\item{bar_len}{Length of the scale bar (µm). Default 400.}
+\item{bar_len}{Length of the scale bar (umm). Default 400.}
 
 \item{bar_offset}{Vertical offset of the scale bar as a fraction of the y-range. Default 0.01.}
 

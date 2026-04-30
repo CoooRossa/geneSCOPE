@@ -1,0 +1,11 @@
+{
+  "primary_analytical_layers": {
+    "protein_events": "punctate or connected-component events",
+    "signal_supports": "diffuse or boundary support summaries"
+  },
+  "recommended_primary_views": {
+    "punctate": "event_layer",
+    "diffuse": "grid_field",
+    "boundary": "boundary_weighted_anchor"
+  }
+}

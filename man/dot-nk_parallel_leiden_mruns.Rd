@@ -5,9 +5,9 @@
 \title{Run NetworKit ParallelLeiden across multiple seeds (igraph fallback when absent).}
 \usage{
 .nk_parallel_leiden_mruns(
-  vertices,
-  edges_df,
-  weights,
+  vertex_names,
+  edge_table,
+  edge_weights,
   gamma = 1,
   iterations = 10L,
   randomize = TRUE,
@@ -16,11 +16,11 @@
 )
 }
 \arguments{
-\item{vertices}{Character vector of vertex identifiers.}
+\item{vertex_names}{Character vector of vertex identifiers.}
 
-\item{edges_df}{Data frame of edges with columns `from` and `to`.}
+\item{edge_table}{Data frame of edges with columns `from` and `to`.}
 
-\item{weights}{Numeric vector of edge weights aligned to `edges_df`.}
+\item{edge_weights}{Numeric vector of edge weights aligned to `edge_table`.}
 
 \item{gamma}{Resolution parameter.}
 

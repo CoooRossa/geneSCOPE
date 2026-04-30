@@ -13,7 +13,7 @@
   ncores = 1,
   mem_limit_GB = 16,
   chunk_size = 256L,
-  use_bigmemory = TRUE,
+  use_bigmemory = FALSE,
   backing_path = tempdir(),
   block_side = 8,
   cache_inputs = FALSE,

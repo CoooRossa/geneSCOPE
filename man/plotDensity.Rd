@@ -9,6 +9,8 @@ plotDensity(
   grid_name,
   density1_name,
   density2_name = NULL,
+  value_layer = "density",
+  value_scale_factor = 10000,
   palette1 = "#fc3d5d",
   palette2 = "#4753f8",
   alpha1 = 0.5,
@@ -37,6 +39,8 @@ plotDensity(
   bar_offset = 0.01,
   arrow_pt = 4,
   scale_legend_colour = "black",
+  min.cutoff1 = 0,
+  min.cutoff2 = 0,
   max.cutoff1 = 1,
   max.cutoff2 = 1,
   legend_digits = 1
@@ -47,9 +51,18 @@ plotDensity(
 
 \item{grid_name}{Grid layer name (or `NULL` to use the active layer).}
 
-\item{density1_name}{Parameter value.}
+\item{density1_name}{Parameter value. Can be a character vector of genes;
+when multiple genes are provided, their values are averaged.}
 
-\item{density2_name}{Parameter value.}
+\item{density2_name}{Parameter value. Can be a character vector of genes;
+when multiple genes are provided, their values are averaged.}
+
+\item{value_layer}{Source of values to plot. Use `"density"` (default) to
+read from `scope_obj@density`; otherwise this can be a grid expression
+matrix name (e.g., `"logCPM"`) or a normalization mode computed from grid
+counts (`"counts"`, `"per_grid"`, `"cpm"`, `"logcpm"`, `"global_gene"`).}
+
+\item{value_scale_factor}{Scale factor used for CPM/logCPM (default 1e4).}
 
 \item{palette1}{Parameter value.}
 
@@ -106,6 +119,10 @@ plotDensity(
 \item{arrow_pt}{Parameter value.}
 
 \item{scale_legend_colour}{Parameter value.}
+
+\item{min.cutoff1}{Parameter value.}
+
+\item{min.cutoff2}{Parameter value.}
 
 \item{max.cutoff1}{Parameter value.}
 

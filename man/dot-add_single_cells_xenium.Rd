@@ -39,7 +39,7 @@ Read the Xenium **cell-feature sparse matrix** (either HDF5 or
   \code{scope_obj@coord$centroids$cell}, preserve that order, and store the
   result in the new \code{@cells} slot.
   The function relies only on \strong{Matrix}, \strong{data.table}, and
-  \strong{rhdf5} (or \strong{hdf5r})—no Seurat, tidyverse, or other heavy
+  \strong{rhdf5} (or \strong{hdf5r})--no Seurat, tidyverse, or other heavy
   dependencies.
 }
 \keyword{internal}

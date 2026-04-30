@@ -23,7 +23,9 @@ overwrites if it exists).}
 
 \item{scale_factor}{Library size each cell is scaled to before `log1p`.}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
 The modified `scope_object` (invisibly).

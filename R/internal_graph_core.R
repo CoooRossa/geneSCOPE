@@ -348,6 +348,13 @@
 #' @keywords internal
 consensus_coo <- function(memb, thr = 0, n_threads = NULL) {
     if (is.null(n_threads)) n_threads <- .safe_thread_count()
+    # Round 4: Darwin native safety - check disable_native_all first
+    if (isTRUE(getOption("geneSCOPE.disable_native_consensus", FALSE)) ||
+        isTRUE(getOption("geneSCOPE.disable_native_all", FALSE))) {
+        stop("consensus_coo native backend disabled by option (Darwin safety); using R fallback. ",
+             "Set options(geneSCOPE.disable_native_all=FALSE, geneSCOPE.disable_native_consensus=FALSE) to enable.",
+             call. = FALSE)
+    }
     # Try package-registered symbol
     call_sym_ok <- FALSE
     res <- try({
@@ -388,4 +395,74 @@ consensus_sparse <- function(memb, thr = 0, n_threads = NULL) {
         }, silent = TRUE)
     }
     M
+}
+
+#' Compute consensus sparse matrix (pure R implementation)
+#' @description
+#'   Pure R fallback for consensus computation when native C++ backend is disabled.
+#'   Computes co-occurrence matrix from multiple clustering runs.
+#' @param memb Integer matrix (genes × runs), each column a run's cluster labels
+#' @param thr Numeric in [0,1]. Threshold on fraction across runs (default 0.5)
+#' @return A symmetric `dgCMatrix` with edge weights equal to co-occurrence fraction
+#' @keywords internal
+.compute_consensus_sparse_r <- function(memb, thr = 0.5) {
+    # Ensure memb is a matrix
+    if (!is.matrix(memb)) {
+        memb <- as.matrix(memb)
+    }
+    
+    n_genes <- nrow(memb)
+    n_runs <- ncol(memb)
+    
+    if (n_genes < 1L || n_runs < 1L) {
+        # Return empty sparse matrix
+        return(Matrix::sparseMatrix(
+            i = integer(0),
+            j = integer(0),
+            x = numeric(0),
+            dims = c(n_genes, n_genes),
+            symmetric = TRUE
+        ))
+    }
+    
+    # Compute co-occurrence counts for each pair of genes
+    # For efficiency, we iterate over runs and accumulate co-occurrences
+    cooccur <- matrix(0L, nrow = n_genes, ncol = n_genes)
+    
+    for (run_idx in seq_len(n_runs)) {
+        labels <- memb[, run_idx]
+        # For each unique cluster, add co-occurrence for all gene pairs in that cluster
+        unique_labels <- unique(labels)
+        for (lab in unique_labels) {
+            genes_in_cluster <- which(labels == lab)
+            if (length(genes_in_cluster) > 1L) {
+                # Add co-occurrence for all pairs in this cluster
+                for (i in seq_along(genes_in_cluster)) {
+                    for (j in seq_along(genes_in_cluster)) {
+                        if (i != j) {
+                            cooccur[genes_in_cluster[i], genes_in_cluster[j]] <-
+                                cooccur[genes_in_cluster[i], genes_in_cluster[j]] + 1L
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    # Convert to fraction
+    cooccur_frac <- cooccur / n_runs
+    
+    # Apply threshold - only keep edges above threshold
+    cooccur_frac[cooccur_frac < thr] <- 0
+    diag(cooccur_frac) <- 0  # Zero diagonal
+    
+    # Convert to sparse matrix
+    result <- Matrix::Matrix(cooccur_frac, sparse = TRUE)
+    
+    # Propagate dimnames if available
+    if (!is.null(rownames(memb))) {
+        dimnames(result) <- list(rownames(memb), rownames(memb))
+    }
+    
+    result
 }

@@ -61,7 +61,10 @@ clusterGenes(
   return_report = FALSE,
   verbose = TRUE,
   ncores = NULL,
-  mode = c("auto", "safe", "aggressive", "fast"),
+  mode = c("auto", "safe", "safe_sequential", "aggressive", "fast"),
+  backend = c("auto", "igraph", "networkit"),
+  q_guard_method = c("auto", "k_perms", "none"),
+  q_span_threshold = 0.1,
   large_n_threshold = 1000L,
   nk_condaenv = NULL,
   nk_conda_bin = NULL,
@@ -75,9 +78,11 @@ clusterGenes(
 )
 }
 \arguments{
-\item{scope_obj}{A `scope_object` containing graph/stat layers.}
+\item{scope_obj}{A \code{scope_object} containing graph/stat layers.}
 
-\item{grid_name}{Optional grid layer name; defaults to the active layer.}
+\item{grid_name}{Character; name of the grid layer to operate on. If \code{NULL}
+and only one grid layer exists, it is auto-selected. If multiple layers exist,
+the name must be specified.}
 
 \item{stats_layer}{Statistics layer name (e.g. `"LeeStats_Xz"`).}
 
@@ -107,7 +112,14 @@ clusterGenes(
 
 \item{stage2_algo}{Optional override of stage2 algorithm (defaults to `algo`).}
 
-\item{resolution}{Resolution parameter passed to Leiden/Louvain.}
+\item{resolution}{Resolution parameter passed to Leiden/Louvain. Must be a
+single finite numeric value greater than 0. **Default is 1**, but note that
+high resolution values (>= 0.5) combined with strict consensus thresholds
+(consensus_thr >= 0.9) may produce empty or near-empty clustering results
+in some datasets. For typical spatial gene clustering workflows, values
+in the range 0.05-0.1 often yield more robust results. A warning is emitted
+when the combination of resolution and consensus_thr appears likely to
+produce sparse outputs.}
 
 \item{gamma}{Gamma parameter used by some clustering backends.}
 
@@ -175,7 +187,8 @@ clusterGenes(
 
 \item{keep_cross_stable}{Whether to retain cross-stable edges/modules.}
 
-\item{min_cluster_size}{Minimum allowed final cluster size.}
+\item{min_cluster_size}{Minimum allowed final cluster size. Must be a single
+finite numeric value greater than or equal to 1.}
 
 \item{keep_stage1_backbone}{Whether to keep stage1 backbone edges.}
 
@@ -183,11 +196,28 @@ clusterGenes(
 
 \item{return_report}{When `TRUE`, returns both updated scope object and a report list.}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 
-\item{ncores}{Number of threads to use (clamped to available cores).}
+\item{ncores}{Integer; number of threads to use for parallel computation.}
 
-\item{mode}{Runtime mode (`auto`, `safe`, `aggressive`, `fast`).}
+\item{mode}{Runtime mode (`auto`, `safe`, `safe_sequential`, `aggressive`, `fast`).
+`safe_sequential` is the supported large-graph single-worker path for
+avoiding oversized future exports in Visium/CosMx runs.}
+
+\item{backend}{Graph backend contract. `auto` keeps the existing runtime
+heuristics, `igraph` forces the safe igraph path, and `networkit` forces
+the aggressive NetworKit path (erroring if NetworKit is unavailable).}
+
+\item{q_guard_method}{Q-distribution guardrail policy. `auto` (default)
+checks the similarity spread before clustering and switches to the
+compatibility `k_perms` fallback contract when the distribution is too
+narrow, `k_perms` forces the same fallback decision when triggered, and
+`none` disables the guard.}
+
+\item{q_span_threshold}{Minimum allowed q95-q05 similarity span before the
+q-distribution guard recommends the `k_perms` fallback contract.}
 
 \item{large_n_threshold}{Threshold controlling large-N heuristics.}
 

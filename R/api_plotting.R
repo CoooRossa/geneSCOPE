@@ -613,8 +613,10 @@ plotDendroNetworkWithBranches <- function(
 #' @param image_choice Which histology image to prefer (`"auto"`, `"hires"`, `"lowres"`).
 #' @param scope_obj A `scope_object`.
 #' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param density1_name Parameter value.
-#' @param density2_name Parameter value.
+#' @param density1_name Parameter value. Can be a character vector of genes;
+#'   when multiple genes are provided, their values are averaged.
+#' @param density2_name Parameter value. Can be a character vector of genes;
+#'   when multiple genes are provided, their values are averaged.
 #' @param palette1 Parameter value.
 #' @param palette2 Parameter value.
 #' @param alpha1 Parameter value.
@@ -639,9 +641,16 @@ plotDendroNetworkWithBranches <- function(
 #' @param bar_offset Parameter value.
 #' @param arrow_pt Parameter value.
 #' @param scale_legend_colour Parameter value.
+#' @param min.cutoff1 Parameter value.
+#' @param min.cutoff2 Parameter value.
 #' @param max.cutoff1 Parameter value.
 #' @param max.cutoff2 Parameter value.
 #' @param legend_digits Parameter value.
+#' @param value_layer Source of values to plot. Use `"density"` (default) to
+#'   read from `scope_obj@density`; otherwise this can be a grid expression
+#'   matrix name (e.g., `"logCPM"`) or a normalization mode computed from grid
+#'   counts (`"counts"`, `"per_grid"`, `"cpm"`, `"logcpm"`, `"global_gene"`).
+#' @param value_scale_factor Scale factor used for CPM/logCPM (default 1e4).
 #' @return A `ggplot` object.
 #' @examples
 #' \dontrun{
@@ -655,6 +664,8 @@ plotDensity <- function(
     grid_name,
     density1_name,
     density2_name = NULL,
+    value_layer = "density",
+    value_scale_factor = 1e4,
     palette1 = "#fc3d5d",
     palette2 = "#4753f8",
     alpha1 = 0.5,
@@ -683,6 +694,8 @@ plotDensity <- function(
     bar_offset = 0.01,
     arrow_pt = 4,
     scale_legend_colour = "black",
+    min.cutoff1 = 0,
+    min.cutoff2 = 0,
     max.cutoff1 = 1,
     max.cutoff2 = 1,
     legend_digits = 1) {
@@ -701,6 +714,8 @@ plotDensity <- function(
         grid_name = grid_name,
         density1_name = density1_name,
         density2_name = density2_name,
+        value_layer = value_layer,
+        value_scale_factor = value_scale_factor,
         palette1 = palette1,
         palette2 = palette2,
         alpha1 = alpha1,
@@ -729,6 +744,8 @@ plotDensity <- function(
         bar_offset = bar_offset,
         arrow_pt = arrow_pt,
         scale_legend_colour = scale_legend_colour,
+        min.cutoff1 = min.cutoff1,
+        min.cutoff2 = min.cutoff2,
         max.cutoff1 = max.cutoff1,
         max.cutoff2 = max.cutoff2,
         legend_digits = legend_digits

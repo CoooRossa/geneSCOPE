@@ -7,9 +7,11 @@
 #endif
 #include <RcppEigen.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <string>
 using namespace Rcpp;
 
 namespace {
@@ -17,12 +19,51 @@ namespace {
 inline bool enable_parallel_grid_nb() {
     const char* flag = std::getenv("GENESCOPE_ENABLE_OMP_GRID_NB");
     if (flag == nullptr) return false;
-    if (flag[0] == '1') return true;
-    if (flag[0] == 'T' || flag[0] == 't') return true;
-    if (flag[0] == 'Y' || flag[0] == 'y') return true;
-    if (flag[0] == 'F' || flag[0] == 'f') return true;
-    if (flag[0] == 'U' || flag[0] == 'u') return true;
+    std::string value(flag);
+    std::transform(
+        value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); }
+    );
+    return value == "1" ||
+           value == "true" ||
+           value == "yes" ||
+           value == "on" ||
+           value == "force" ||
+           value == "unsafe";
+}
+
+inline bool r_option_true(const char* name) {
+    Rcpp::Function getOption("getOption");
+    Rcpp::RObject value = getOption(name, false);
+    if (Rf_isLogical(value) && Rf_length(value) > 0) {
+        return Rcpp::as<bool>(value);
+    }
     return false;
+}
+
+inline void guard_darwin_native_spatial(const char* caller,
+                                        const char* disable_option) {
+#ifdef __APPLE__
+    // Check disable_darwin_native_spatial option (explicit disable)
+    if (r_option_true("geneSCOPE.disable_darwin_native_spatial")) {
+        Rcpp::stop("%s native backend disabled by option geneSCOPE.disable_darwin_native_spatial. Unset this option or set it to FALSE to use the native path.", caller);
+    }
+    // Check allow_darwin_native_spatial option (safe default: must be TRUE to enable)
+    // If not explicitly TRUE, block native spatial on Darwin
+    Rcpp::Function getOption("getOption");
+    Rcpp::RObject allow_val = getOption("geneSCOPE.allow_darwin_native_spatial", R_NilValue);
+    bool is_allowed = false;
+    if (Rf_isLogical(allow_val) && Rf_length(allow_val) > 0) {
+        int* ptr = LOGICAL(allow_val);
+        is_allowed = (ptr[0] == TRUE);
+    }
+    if (!is_allowed) {
+        Rcpp::stop("%s native backend disabled by Darwin spatial safe default. Set options(geneSCOPE.allow_darwin_native_spatial=TRUE) to enable.", caller);
+    }
+#endif
+    if (disable_option != nullptr && r_option_true(disable_option)) {
+        Rcpp::stop("%s native backend disabled by option %s.", caller, disable_option);
+    }
 }
 
 struct GridGuardContext {
@@ -103,6 +144,65 @@ inline void validate_rect_edge_bound(const GridGuardContext& ctx,
 
 inline void validate_hex_edge_bound(const GridGuardContext& ctx) {
     safe_positive_mul(ctx, ctx.n_cells, 6, "hex adjacency capacity");
+}
+
+// Fix04: Overflow-safe hex coordinate conversions using long long arithmetic
+// Prevents integer overflow in offset<->axial round-trips for large grids
+inline std::pair<long long, long long> offset_to_axial_oddr_safe(const long long row, const long long col) {
+    const long long q = col - (row - (row & 1LL)) / 2;
+    return {q, row};
+}
+
+inline std::pair<long long, long long> offset_to_axial_evenr_safe(const long long row, const long long col) {
+    const long long q = col - (row + (row & 1LL)) / 2;
+    return {q, row};
+}
+
+inline std::pair<long long, long long> axial_to_offset_oddr_safe(const long long q, const long long r) {
+    const long long col = q + (r - (r & 1LL)) / 2;
+    return {r, col};
+}
+
+inline std::pair<long long, long long> axial_to_offset_evenr_safe(const long long q, const long long r) {
+    const long long col = q + (r + (r & 1LL)) / 2;
+    return {r, col};
+}
+
+inline std::pair<long long, long long> offset_to_axial_oddq_safe(const long long row, const long long col) {
+    const long long q = col;
+    const long long r = row - (col - (col & 1LL)) / 2;
+    return {q, r};
+}
+
+inline std::pair<long long, long long> offset_to_axial_evenq_safe(const long long row, const long long col) {
+    const long long q = col;
+    const long long r = row - (col + (col & 1LL)) / 2;
+    return {q, r};
+}
+
+inline std::pair<long long, long long> axial_to_offset_oddq_safe(const long long q, const long long r) {
+    const long long col = q;
+    const long long row = r + (q - (q & 1LL)) / 2;
+    return {row, col};
+}
+
+inline std::pair<long long, long long> axial_to_offset_evenq_safe(const long long q, const long long r) {
+    const long long col = q;
+    const long long row = r + (q + (q & 1LL)) / 2;
+    return {row, col};
+}
+
+// Convert long long axial coords to int with bounds check
+inline bool axial_to_int_checked(const long long val, int& out,
+                                 const GridGuardContext& ctx,
+                                 const char* coord_name) {
+    if (val < 0 || val > std::numeric_limits<int>::max()) {
+        Rcpp::warning("[%s] Hex %s coordinate %lld exceeds int range; clamping. Grid %d x %d.",
+                      ctx.caller, coord_name, val, ctx.nrow, ctx.ncol);
+        return false;
+    }
+    out = static_cast<int>(val);
+    return true;
 }
 
 inline List build_rectangular_nb(const int nrow,
@@ -321,6 +421,7 @@ List grid_nb_omp(const int nrow,
                  const int ncol,
                  const bool queen = true)
 {
+    guard_darwin_native_spatial("grid_nb_omp", "geneSCOPE.disable_native_grid_nb");
     return build_rectangular_nb(nrow, ncol, queen, true);
 }
 
@@ -329,6 +430,7 @@ List grid_nb_serial(const int nrow,
                     const int ncol,
                     const bool queen = true)
 {
+    guard_darwin_native_spatial("grid_nb_serial", "geneSCOPE.disable_native_grid_nb");
     return build_rectangular_nb(nrow, ncol, queen, false);
 }
 
@@ -361,6 +463,7 @@ List grid_nb_hex_omp(const int nrow,
                      const int ncol,
                      const bool oddr = true)
 {
+    guard_darwin_native_spatial("grid_nb_hex_omp", "geneSCOPE.disable_native_grid_nb");
     return build_hex_r_nb(nrow, ncol, oddr, true);
 }
 
@@ -369,6 +472,7 @@ List grid_nb_hex(const int nrow,
                  const int ncol,
                  const bool oddr = true)
 {
+    guard_darwin_native_spatial("grid_nb_hex", "geneSCOPE.disable_native_grid_nb");
     return build_hex_r_nb(nrow, ncol, oddr, false);
 }
 
@@ -394,6 +498,7 @@ List grid_nb_hexq_omp(const int nrow,
                       const int ncol,
                       const bool oddq = true)
 {
+    guard_darwin_native_spatial("grid_nb_hexq_omp", "geneSCOPE.disable_native_grid_nb");
     return build_hex_q_nb(nrow, ncol, oddq, true);
 }
 
@@ -402,6 +507,7 @@ List grid_nb_hexq(const int nrow,
                   const int ncol,
                   const bool oddq = true)
 {
+    guard_darwin_native_spatial("grid_nb_hexq", "geneSCOPE.disable_native_grid_nb");
     return build_hex_q_nb(nrow, ncol, oddq, false);
 }
 
@@ -439,6 +545,7 @@ List grid_nb_hexq(const int nrow,
 // [[Rcpp::export]]
 SEXP listw_B_omp(const List nb)
 {
+    guard_darwin_native_spatial("listw_B_omp", "geneSCOPE.disable_native_listw_builder");
     const int n = nb.size();
 
     /* 2.1 Single-thread deep copy into C++ containers — fully isolate from R memory */
@@ -446,7 +553,23 @@ SEXP listw_B_omp(const List nb)
     for (int i = 0; i < n; ++i)
     {
         IntegerVector v = nb[i];
-        nb_cpp[i].assign(v.begin(), v.end());
+        nb_cpp[i].reserve(v.size());
+        for (int raw : v)
+        {
+            if (raw == NA_INTEGER) {
+                Rcpp::stop("[listw_B_omp] nb[[%d]] contains NA neighbour indices.", i + 1);
+            }
+            if (raw == 0) {
+                continue;
+            }
+            if (raw < 0) {
+                Rcpp::stop("[listw_B_omp] nb[[%d]] contains negative neighbour index %d.", i + 1, raw);
+            }
+            if (raw > n) {
+                Rcpp::stop("[listw_B_omp] nb[[%d]] contains out-of-bounds neighbour index %d (n=%d).", i + 1, raw, n);
+            }
+            nb_cpp[i].push_back(raw);
+        }
     }
 
     /* 2.2 Thread-private triplet buffers */
@@ -616,6 +739,7 @@ SEXP grid_weights_kernel_rect_omp(
     const std::string kernel = "gaussian", // "gaussian" | "flat"
     const double sigma = 1.0
 ) {
+    guard_darwin_native_spatial("grid_weights_kernel_rect_omp", "geneSCOPE.disable_native_kernel_weights");
     const int n_active = gx.size();
     if (gy.size() != n_active) {
         stop("gx and gy must have the same length.");
@@ -725,16 +849,19 @@ SEXP grid_weights_kernel_hexr_omp(
     const std::string kernel = "gaussian",
     const double sigma = 1.0
 ) {
+    guard_darwin_native_spatial("grid_weights_kernel_hexr_omp", "geneSCOPE.disable_native_kernel_weights");
     const int n_active = gx.size();
     if (gy.size() != n_active) stop("gx and gy must have the same length.");
-    if (nrow <= 0 || ncol <= 0) stop("nrow and ncol must be positive.");
+    // Fix04: Use GridGuardContext for overflow-safe hex kernel
+    const GridGuardContext ctx = make_grid_context(nrow, ncol, "grid_weights_kernel_hexr_omp");
+    validate_hex_edge_bound(ctx);
     const int rad = radius;
     if (rad < 1) stop("radius must be >= 1.");
-    const bool flat = (kernel == "flat");
-    if (!flat && kernel != "gaussian") stop("kernel must be 'gaussian' or 'flat'.");
+    const bool flat = (kernel == "gaussian");
+    if (!flat && kernel != "flat") stop("kernel must be 'gaussian' or 'flat'.");
     const double sigma_use = (sigma > 0.0) ? sigma : 1.0;
 
-    const int n_full = nrow * ncol;
+    const int n_full = static_cast<int>(ctx.n_cells);
     std::vector<int> idx_map(n_full, -1);
     std::vector<int> active_row(n_active);
     std::vector<int> active_col(n_active);
@@ -839,6 +966,7 @@ SEXP grid_weights_kernel_hexq_omp(
     const std::string kernel = "gaussian",
     const double sigma = 1.0
 ) {
+    guard_darwin_native_spatial("grid_weights_kernel_hexq_omp", "geneSCOPE.disable_native_kernel_weights");
     const int n_active = gx.size();
     if (gy.size() != n_active) stop("gx and gy must have the same length.");
     if (nrow <= 0 || ncol <= 0) stop("nrow and ncol must be positive.");
@@ -948,11 +1076,13 @@ SEXP grid_nb(const int nrow,
              const int ncol,
              const bool queen = true)
 {
+    guard_darwin_native_spatial("grid_nb", "geneSCOPE.disable_native_grid_nb");
     return grid_nb_serial(nrow, ncol, queen);
 }
 
 // [[Rcpp::export]]
 SEXP nb2mat(SEXP nb)
 {
+    guard_darwin_native_spatial("nb2mat", "geneSCOPE.disable_native_listw_builder");
     return listw_B_omp(nb);
 }

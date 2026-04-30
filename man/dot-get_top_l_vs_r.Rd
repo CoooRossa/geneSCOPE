@@ -24,6 +24,8 @@
   mem_limit_GB = 2,
   pval_mode = c("beta", "mid", "uniform"),
   curve_layer = NULL,
+  support_pct_scale = c("auto", "0-1", "0-100"),
+  backend = "cpp",
   CI_rule = c("remove_within", "remove_outside", "none"),
   verbose = TRUE
 )

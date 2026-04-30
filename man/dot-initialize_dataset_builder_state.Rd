@@ -16,13 +16,20 @@
   coord_file,
   ncores,
   chunk_pts,
+  parallel_backend = NULL,
   min_gene_types,
   max_gene_types,
   min_seg_points,
+  grid_keep_mode = c("segmentation_hybrid", "molecule_driven", "vertex_only",
+    "centroid_only"),
+  grid_center_min_molecules = "q80",
   keep_partial_grid,
   verbose,
   flip_y,
-  data_type = "xenium"
+  data_type = "xenium",
+  exclude_qc_unsuitable = FALSE,
+  qc_out_dir = NULL,
+  qc_flag = NULL
 )
 }
 \arguments{

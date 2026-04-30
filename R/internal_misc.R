@@ -155,8 +155,8 @@
 #' Summarize how often each edge co-clusters across runs.
 #' @description
 #' Internal helper for `.consensus_on_edges`.
-#' Computes consensus weights on the provided edge list without allocating a dense N×N matrix.
-#' @param memb_mat Integer matrix (genes × runs), each column is a community assignment.
+#' Computes consensus weights on the provided edge list without allocating a dense NxN matrix.
+#' @param memb_mat Integer matrix (genes x runs), each column is a community assignment.
 #' @param edge_i Integer vector (1-based) indices of edge endpoints (length m).
 #' @param edge_j Integer vector (1-based) indices of edge endpoints (length m).
 #' @param n_threads Number of threads to use.
@@ -707,7 +707,9 @@
     ), Sys.getenv, unset = NA_character_)
   )
 
-  assign(".original_thread_settings", original_settings, envir = .GlobalEnv)
+  # Store in package namespace instead of .GlobalEnv to avoid R CMD check WARNING
+  ns <- topenv()
+  assign(".original_thread_settings", original_settings, envir = ns)
   .set_conservative_threads()
 }
 
@@ -819,11 +821,11 @@
 .parse_q <- function(qstr) {
     if (!is.character(qstr) || length(qstr) != 1 ||
         !grepl("^[qQ][0-9]+\\.?[0-9]*$", qstr)) {
-        stop("pct string must look like 'q90' / 'q99.5' …")
+        stop("pct string must look like 'q90' / 'q99.5' ...")
     }
     val <- as.numeric(sub("^[qQ]", "", qstr)) / 100
     if (is.na(val) || val < 0 || val > 1) {
-        stop("pct out of range 0–100")
+        stop("pct out of range 0-100")
     }
     val
 }
@@ -1028,7 +1030,7 @@
   .log_info("addSingleCells", "S01", paste0("Expression matrix: ", basename(expr_mat)), verbose)
 
   # 3) Read header to determine gene columns
-  suppressPackageStartupMessages({ library(data.table); library(Matrix) })
+  # Packages loaded via Imports in DESCRIPTION; no library() needed here
   # Prefer fread to fetch header; fall back to base::readLines(gzfile(...), n=1)
   header_dt <- NULL
   cols <- NULL
@@ -1224,7 +1226,7 @@
 #'   \code{scope_obj@coord$centroids$cell}, preserve that order, and store the
 #'   result in the new \code{@cells} slot.
 #'   The function relies only on \strong{Matrix}, \strong{data.table}, and
-#'   \strong{rhdf5} (or \strong{hdf5r})—no Seurat, tidyverse, or other heavy
+#'   \strong{rhdf5} (or \strong{hdf5r})--no Seurat, tidyverse, or other heavy
 #'   dependencies.
 #' @param scope_obj A valid \code{scope_object} whose \code{@coord$centroids} slot
 #'        is already filled (e.g. via \code{\link{.create_scope}}). Cells
@@ -1250,18 +1252,14 @@
 
   .log_info("addSingleCells", "S01", "Loading cell-feature matrix from HDF5", verbose)
 
-  suppressPackageStartupMessages({
-    library(Matrix)
-    library(data.table)
-  })
 
   # Cross-platform HDF5 library detection and loading
   hdf5_available <- FALSE
   if (requireNamespace("rhdf5", quietly = TRUE)) {
-    library(rhdf5)
+    # rhdf5 loaded via requireNamespace above
     hdf5_available <- TRUE
   } else if (requireNamespace("hdf5r", quietly = TRUE)) {
-    library(hdf5r)
+    # hdf5r loaded via requireNamespace above
     hdf5_available <- TRUE
   }
 
@@ -1337,7 +1335,7 @@
       "addSingleCells",
       "S01",
       paste0(
-          "Matrix: ", nrow_h5, "×", ncol_h5,
+          "Matrix: ", nrow_h5, "x", ncol_h5,
           " (", length(genes_nm), " genes, ", length(barcodes), " cells)"
       ),
       verbose
@@ -1349,7 +1347,7 @@
   p <- as.integer(indptr)
 
   if (col_is_cell) {
-    ## →  columns = cells, rows = genes   (most common)
+    ## ->  columns = cells, rows = genes   (most common)
     counts_raw <- new("dgCMatrix",
       Dim      = c(length(genes_nm), length(barcodes)),
       x        = x,
@@ -1358,7 +1356,7 @@
       Dimnames = list(make.unique(genes_nm), barcodes)
     )
   } else {
-    ## →  columns = genes, rows = cells   (rare case: need transpose)
+    ## ->  columns = genes, rows = cells   (rare case: need transpose)
     .log_info("addSingleCells", "S01", "Transposing matrix layout", verbose)
     tmp <- new("dgCMatrix",
       Dim      = c(length(barcodes), length(genes_nm)),
@@ -1677,6 +1675,8 @@
 #' @param y_max Numeric threshold.
 #' @param keep_ids Logical flag.
 #' @param workers Parameter value.
+#' @param cell_key_mode Parameter value.
+#' @param fov_column Parameter value.
 #' @return A list with configuration/metadata used internally.
 #' @keywords internal
 .build_segmentation_geometries <- function(path,
@@ -1684,26 +1684,136 @@
                                           flip = FALSE,
                                           y_max = NULL,
                                           keep_ids = NULL,
-                                          workers = 1L) {
+                                          workers = 1L,
+                                          cell_key_mode = c("auto", "cell_id", "cell_id_fov"),
+                                          fov_column = NULL) {
     if (!file.exists(path)) {
         stop("Segmentation file not found: ", path)
     }
-    raw_dt <- as.data.table(arrow::read_parquet(path))
-    if ("fov" %in% names(raw_dt)) {
-        seg_dt <- raw_dt[, .(
-            cell = paste0(as.character(cell_id), "_", as.character(fov)),
-            x = vertex_x,
-            y = vertex_y,
-            label_id = paste0(as.character(cell_id), "_", as.character(fov))
-        )]
-    } else {
-        seg_dt <- raw_dt[, .(
-            cell = as.character(cell_id),
-            x = vertex_x,
-            y = vertex_y,
-            label_id = as.character(label_id)
-        )]
+    cell_key_mode <- match.arg(cell_key_mode)
+    size_gb <- tryCatch({
+        info <- file.info(path)
+        if (is.finite(info$size)) info$size / 1024^3 else NA_real_
+    }, error = function(e) NA_real_)
+    cpu_target <- as.integer(getOption("arrow.num_threads", 1L))
+    cpu_target <- ifelse(is.finite(cpu_target) && cpu_target > 0L, cpu_target, 1L)
+    cpu_use <- cpu_target
+    if (is.finite(size_gb) && size_gb >= 40 && cpu_use > 1L) {
+        cpu_use <- 1L
+    } else if (is.finite(size_gb) && size_gb >= 20 && cpu_use > 2L) {
+        cpu_use <- 2L
+    } else if (is.finite(size_gb) && size_gb >= 5 && cpu_use > 4L) {
+        cpu_use <- 4L
     }
+    if (requireNamespace("arrow", quietly = TRUE) && cpu_use < cpu_target) {
+        old_opt <- getOption("arrow.num_threads")
+        old_cpu <- if (exists("cpu_count", where = asNamespace("arrow"), inherits = FALSE)) {
+            tryCatch(arrow::cpu_count(), error = function(e) NA_integer_)
+        } else {
+            NA_integer_
+        }
+        old_io <- if (exists("io_thread_count", where = asNamespace("arrow"), inherits = FALSE)) {
+            tryCatch(arrow::io_thread_count(), error = function(e) NA_integer_)
+        } else {
+            NA_integer_
+        }
+        on.exit({
+            try(options(arrow.num_threads = old_opt), silent = TRUE)
+            if (exists("set_cpu_count", where = asNamespace("arrow"), inherits = FALSE) && is.finite(old_cpu)) {
+                try(arrow::set_cpu_count(old_cpu), silent = TRUE)
+            }
+            if (exists("set_io_thread_count", where = asNamespace("arrow"), inherits = FALSE) && is.finite(old_io)) {
+                try(arrow::set_io_thread_count(old_io), silent = TRUE)
+            }
+        }, add = TRUE)
+
+        io_use <- max(2L, cpu_use)
+        try(options(arrow.num_threads = cpu_use), silent = TRUE)
+        if (exists("set_cpu_count", where = asNamespace("arrow"), inherits = FALSE)) {
+            try(arrow::set_cpu_count(cpu_use), silent = TRUE)
+        }
+        if (exists("set_io_thread_count", where = asNamespace("arrow"), inherits = FALSE)) {
+            try(arrow::set_io_thread_count(io_use), silent = TRUE)
+        }
+    }
+
+    seg_cols <- c("cell_id", "vertex_x", "vertex_y", "fov", "fov_name", "label_id")
+    if (!is.null(fov_column)) {
+        fov_column <- as.character(fov_column)[1]
+        if (!is.na(fov_column) && nzchar(fov_column)) seg_cols <- unique(c(seg_cols, fov_column))
+    }
+    ds <- tryCatch(arrow::open_dataset(path), error = function(e) NULL)
+    available_cols <- if (!is.null(ds)) {
+        tryCatch(names(ds$schema), error = function(e) seg_cols)
+    } else {
+        seg_cols
+    }
+    col_select <- intersect(seg_cols, available_cols)
+    if (!all(c("cell_id", "vertex_x", "vertex_y") %in% col_select)) {
+        col_select <- character()
+    }
+
+    raw_dt <- tryCatch({
+        if (length(col_select)) {
+            if ("col_select" %in% names(formals(arrow::read_parquet))) {
+                as.data.table(arrow::read_parquet(path, col_select = col_select))
+            } else if (!is.null(ds)) {
+                scan_builder <- ds$NewScan()
+                scan_builder$Project(col_select)
+                scan_builder$UseThreads(TRUE)
+                as.data.table(as.data.frame(scan_builder$Finish()$ToTable()))
+            } else {
+                as.data.table(arrow::read_parquet(path))
+            }
+        } else {
+            as.data.table(arrow::read_parquet(path))
+        }
+    }, error = function(e) {
+        as.data.table(arrow::read_parquet(path))
+    })
+    missing_req <- setdiff(c("cell_id", "vertex_x", "vertex_y"), names(raw_dt))
+    if (length(missing_req)) {
+        stop("Segmentation file missing required column(s): ", paste(missing_req, collapse = ", "), "\nFile: ", path)
+    }
+
+    fov_col <- NULL
+    if (!is.null(fov_column)) {
+        fov_column <- as.character(fov_column)[1]
+        if (!is.na(fov_column) && nzchar(fov_column) && fov_column %in% names(raw_dt)) {
+            fov_col <- fov_column
+        }
+    }
+    if (is.null(fov_col)) {
+        if ("fov" %in% names(raw_dt)) fov_col <- "fov"
+        else if ("fov_name" %in% names(raw_dt)) fov_col <- "fov_name"
+    }
+
+    use_fov <- FALSE
+    if (identical(cell_key_mode, "cell_id_fov")) {
+        use_fov <- !is.null(fov_col)
+    } else if (identical(cell_key_mode, "auto")) {
+        use_fov <- !is.null(fov_col)
+    }
+
+    cell_id_val <- as.character(raw_dt[["cell_id"]])
+    cell_key <- cell_id_val
+    if (isTRUE(use_fov)) {
+        fov_val <- as.character(raw_dt[[fov_col]])
+        fov_val[is.na(fov_val) | !nzchar(fov_val)] <- "NA"
+        cell_key <- paste0(cell_id_val, "_", fov_val)
+    }
+
+    label_key <- cell_key
+    if (!isTRUE(use_fov) && "label_id" %in% names(raw_dt)) {
+        label_key <- as.character(raw_dt[["label_id"]])
+    }
+
+    seg_dt <- raw_dt[, .(
+        cell = cell_key,
+        x = vertex_x,
+        y = vertex_y,
+        label_id = label_key
+    )]
 
     if (flip) {
         if (is.null(y_max)) stop("`y_max` must be supplied when `flip = TRUE`.")
@@ -2211,7 +2321,7 @@
   if (inherits(genes, "try-error") || is.null(genes)) genes <- igraph::V(g)$name
   M <- .cmh_igraph_to_matrix(g, genes = genes)
   scope_obj@stats[[grid_name]][[lee_stats_layer]][[dst_matrix_slot]] <- M
-  if (verbose) .log_info("computeMH", "S07", paste0("Wrote ", dst_matrix_slot, " (", nrow(M), "×", ncol(M), "; nnz=", nnzero(M), ")"), verbose)
+  if (verbose) .log_info("computeMH", "S07", paste0("Wrote ", dst_matrix_slot, " (", nrow(M), "x", ncol(M), "; nnz=", nnzero(M), ")"), verbose)
   scope_obj
 }
 
@@ -2273,17 +2383,6 @@
         coords$y <- y_max - coords$y
         coords
     }
-}
-
-#' Plot Dendro Network Multi
-#' @description
-#' Internal helper for `.plot_dendro_network_multi`.
-#' @param ... Additional arguments (currently unused).
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_dendro_network_multi <- function(...) {
-    .Deprecated(".plot_dendro_network_multi")
-    .plot_dendro_network_multi(...)
 }
 
 #' Plot Density Multi
@@ -2540,7 +2639,7 @@
         )
     })
 
-    library(ggplot2)
+    # ggplot2 loaded via Imports in DESCRIPTION
     p <- ggplot()
 
     ## ------------------------------------------------------------------ 3.0
@@ -2865,7 +2964,7 @@
 #' Run per-gene within vs between Jaccard workflow on a SCOPE object
 #' @description
 #' Internal helper for `.run_within_between_test`.
-#' Wrapper that computes the gene–gene Jaccard matrix on a given grid/layer and
+#' Wrapper that computes the gene-gene Jaccard matrix on a given grid/layer and
 #' then runs the per-gene within vs between test. No files are written.
 #' @param scope_obj geneSCOPE object.
 #' @param dataset_name Label used in messages.
@@ -2924,7 +3023,7 @@
       "computeGeneModuleWithinBetweenTest",
       "S03",
       paste0(
-          "✓ ", dataset_name, " within>between test (", method, ", ", alternative, ") p=",
+          "[OK] ", dataset_name, " within>between test (", method, ", ", alternative, ") p=",
           if (!is.null(test_res$test$p.value)) signif(test_res$test$p.value, 3) else NA
       ),
       TRUE
@@ -5370,9 +5469,9 @@
     igraph::E(g)$linetype <- if (show_sign) igraph::E(g)$sign else "solid"
 
     ## ===== 6. ggraph rendering =====
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
     layout_data <- create_layout(g, layout = "fr", niter = layout_niter)
     layout_data$basecol <- basecol[layout_data$name]
@@ -5399,103 +5498,6 @@
 
     return(plot_obj)
 }
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_network_output`.
-#' @param plot_obj Internal parameter
-#' @param prep Internal parameter
-#' @return Internal helper result
-#' @keywords internal
-.plot_network_output <- function(plot_obj, prep) plot_obj
-
-#' Plot Network
-#' @description
-#' Internal helper for `.plot_network`.
-#' @param scope_obj A `scope_object`.
-#' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param g_slot Slot name.
-#' @param cluster_name Parameter value.
-#' @param legend_title Parameter value.
-#' @param node_size Parameter value.
-#' @param edge_width Parameter value.
-#' @param label_size Parameter value.
-#' @param seed Random seed.
-#' @param label_nodes Parameter value.
-#' @param hub_border_col Parameter value.
-#' @param hub_border_size Parameter value.
-#' @param min_degree_hub Numeric threshold.
-#' @param max.overlaps Parameter value.
-#' @param cluster_vec Parameter value.
-#' @param cluster_palette Parameter value.
-#' @param tree_mode Parameter value.
-#' @param k_top Parameter value.
-#' @param edge_thresh Parameter value.
-#' @param prune_mode Parameter value.
-#' @param attach_I_delta Parameter value.
-#' @param I_delta_name Parameter value.
-#' @param I_delta_palette Parameter value.
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_network <- function(
-    scope_obj,
-    grid_name = NULL,
-    g_slot = "g_consensus",
-    cluster_name,
-    legend_title = NULL,
-    node_size = 5,
-    edge_width = 1,
-    label_size = 2,
-    seed = 1,
-    label_nodes = TRUE,
-    hub_border_col = "black",
-    hub_border_size = 0.5,
-    min_degree_hub = 3,
-    max.overlaps = Inf,
-    cluster_vec = NULL,
-    cluster_palette = NULL,
-    tree_mode = NULL,
-    k_top = 5,
-    edge_thresh = 0.05,
-    prune_mode = c("none", "mst", "triangulation"),
-    attach_I_delta = FALSE,
-    I_delta_name = "iDelta",
-    I_delta_palette = scales::hue_pal()) {
-    .plot_network_core(
-        scope_obj = scope_obj,
-        grid_name = grid_name,
-        g_slot = g_slot,
-        cluster_name = cluster_name,
-        legend_title = legend_title,
-        node_size = node_size,
-        edge_width = edge_width,
-        label_size = label_size,
-        seed = seed,
-        label_nodes = label_nodes,
-        hub_border_col = hub_border_col,
-        hub_border_size = hub_border_size,
-        min_degree_hub = min_degree_hub,
-        max.overlaps = max.overlaps,
-        cluster_vec = cluster_vec,
-        cluster_palette = cluster_palette,
-        tree_mode = tree_mode,
-        k_top = k_top,
-        edge_thresh = edge_thresh,
-        prune_mode = prune_mode,
-        attach_I_delta = attach_I_delta,
-        I_delta_name = I_delta_name,
-        I_delta_palette = I_delta_palette
-    )
-}
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_network_theme`.
-#' @param plot_obj Internal parameter
-#' @param prep Internal parameter
-#' @return Internal helper result
-#' @keywords internal
-.plot_network_theme <- function(plot_obj, prep) plot_obj
 
 # Baseline plotting overrides (verbatim).
 #' Visualise the Lee's-L gene-gene network
@@ -5740,10 +5742,10 @@
   )
 
   ## ---- 3. Total & combine gene pairs ---------------------------------------------
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(grid)
+  # dplyr loaded via Imports in DESCRIPTION
+  # tidyr loaded via Imports in DESCRIPTION
+  # ggplot2 loaded via Imports in DESCRIPTION
+  # grid loaded via Imports in DESCRIPTION
 
   gene_totals <- counts_df |>
     group_by(gene) |>
@@ -5840,8 +5842,8 @@
     title <- if (use_abs) "Absolute Lee's L Distribution" else "Lee's L Distribution"
   }
 
-  library(ggplot2)
-  library(grid)
+  # ggplot2 loaded via Imports in DESCRIPTION
+  # grid loaded via Imports in DESCRIPTION
 
   p <- ggplot(df, aes(x = LeeL)) +
     {
@@ -6033,7 +6035,7 @@
     }
 
     ## --- 2. Build plot ----------------------------------------------------
-    library(ggplot2)
+    # ggplot2 loaded via Imports in DESCRIPTION
     p <- ggplot(grid_info) +
         geom_rect(
             aes(
@@ -6156,10 +6158,10 @@
     )[sc2 > 0, ]
 
     ## ---- 1. points --------------------------------------------------------
-    library(ggplot2)
-    library(ggnewscale)
-    library(ggforce)
-    library(data.table)
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # ggnewscale loaded via Imports in DESCRIPTION
+    # ggforce loaded via Imports in DESCRIPTION
+    # data.table loaded via Imports in DESCRIPTION
 
     p <- ggplot() +
         geom_point(
@@ -8101,9 +8103,9 @@
     igraph::E(combined_graph)$linetype <- "solid"
 
     # ----- layout & plot (reuse tree_mode styling) -----
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
 
     tree_mode <- if (is.null(tree_mode) || length(tree_mode) == 0) {
@@ -8582,9 +8584,9 @@
     igraph::E(g)$linetype <- "solid"
 
     ## ===== 9. ggraph rendering =====
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
 
     ## Default to radial when argument is missing/empty; otherwise validate
@@ -8626,339 +8628,6 @@
         cross_edges = cross_edges,
         plot        = p
     ))
-}
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_dendro_network_output`.
-#' @param plot_obj Internal parameter
-#' @param prep Internal parameter
-#' @return Internal helper result
-#' @keywords internal
-.plot_dendro_network_output <- function(plot_obj, prep) plot_obj
-
-#' Plot Dendro Network
-#' @description
-#' Internal helper for `.plot_dendro_network`.
-#' @param scope_obj A `scope_object`.
-#' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param g_slot Slot name.
-#' @param cluster_name Parameter value.
-#' @param legend_title Parameter value.
-#' @param node_size Parameter value.
-#' @param edge_width Parameter value.
-#' @param label_size Parameter value.
-#' @param seed Random seed.
-#' @param label_nodes Parameter value.
-#' @param hub_border_col Parameter value.
-#' @param hub_border_size Parameter value.
-#' @param min_degree_hub Numeric threshold.
-#' @param max.overlaps Parameter value.
-#' @param cluster_vec Parameter value.
-#' @param cluster_palette Parameter value.
-#' @param tree_mode Parameter value.
-#' @param k_top Parameter value.
-#' @param edge_thresh Parameter value.
-#' @param prune_mode Parameter value.
-#' @param attach_I_delta Parameter value.
-#' @param I_delta_name Parameter value.
-#' @param I_delta_palette Parameter value.
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_dendro_network <- function(
-    scope_obj,
-    grid_name = NULL,
-    g_slot = "g_consensus",
-    cluster_name,
-    legend_title = NULL,
-    node_size = 5,
-    edge_width = 1,
-    label_size = 2,
-    seed = 1,
-    label_nodes = TRUE,
-    hub_border_col = "black",
-    hub_border_size = 0.5,
-    min_degree_hub = 3,
-    max.overlaps = Inf,
-    cluster_vec = NULL,
-    cluster_palette = NULL,
-    tree_mode = NULL,
-    k_top = 5,
-    edge_thresh = 0.05,
-    prune_mode = c("none", "mst", "triangulation"),
-    attach_I_delta = FALSE,
-    I_delta_name = "iDelta",
-    I_delta_palette = scales::hue_pal()) {
-    .plot_dendro_network_core(
-        scope_obj = scope_obj,
-        grid_name = grid_name,
-        g_slot = g_slot,
-        cluster_name = cluster_name,
-        legend_title = legend_title,
-        node_size = node_size,
-        edge_width = edge_width,
-        label_size = label_size,
-        seed = seed,
-        label_nodes = label_nodes,
-        hub_border_col = hub_border_col,
-        hub_border_size = hub_border_size,
-        min_degree_hub = min_degree_hub,
-        max.overlaps = max.overlaps,
-        cluster_vec = cluster_vec,
-        cluster_palette = cluster_palette,
-        tree_mode = tree_mode,
-        k_top = k_top,
-        edge_thresh = edge_thresh,
-        prune_mode = prune_mode,
-        attach_I_delta = attach_I_delta,
-        I_delta_name = I_delta_name,
-        I_delta_palette = I_delta_palette
-    )
-}
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_dendro_network_theme`.
-#' @param plot_obj Internal parameter
-#' @param prep Internal parameter
-#' @return Internal helper result
-#' @keywords internal
-.plot_dendro_network_theme <- function(plot_obj, prep) plot_obj
-
-#' Plot Dendro Network Multi
-#' @description
-#' Internal helper for `.plot_dendro_network_multi`.
-#' @param scope_obj A `scope_object`.
-#' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param lee_stats_layer Layer name.
-#' @param gene_subset Parameter value.
-#' @param L_min Numeric threshold.
-#' @param use_consensus_graph Logical flag.
-#' @param graph_slot_name Slot name.
-#' @param cluster_vec Parameter value.
-#' @param IDelta_col_name Parameter value.
-#' @param IDelta_invert Parameter value.
-#' @param damping Parameter value.
-#' @param weight_low_cut Parameter value.
-#' @param cluster_palette Parameter value.
-#' @param node_size Parameter value.
-#' @param edge_width Parameter value.
-#' @param label_size Parameter value.
-#' @param seed Random seed.
-#' @param length_scale Parameter value.
-#' @param max.overlaps Parameter value.
-#' @param hub_border_col Parameter value.
-#' @param hub_border_size Parameter value.
-#' @param title Parameter value.
-#' @param k_top Parameter value.
-#' @param tree_mode Parameter value.
-#' @param n_runs Parameter value.
-#' @param noise_sd Parameter value.
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_dendro_network_multi <- function(
-    scope_obj,
-    grid_name = NULL,
-    lee_stats_layer = "LeeStats_Xz",
-    gene_subset = NULL,
-    L_min = 0,
-    use_consensus_graph = TRUE,
-    graph_slot_name = NULL,
-    cluster_vec = NULL,
-    IDelta_col_name = NULL,
-    IDelta_invert = FALSE,
-    damping = 0.85,
-    weight_low_cut = 0,
-    cluster_palette = c(
-        "#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#FFFF33",
-        "#A65628", "#984EA3", "#66C2A5", "#FC8D62", "#8DA0CB",
-        "#E78AC3", "#A6D854", "#FFD92F", "#E5C494"
-    ),
-    node_size = 4,
-    edge_width = 3,
-    label_size = 4,
-    seed = 1,
-    length_scale = 1,
-    max.overlaps = 10,
-    hub_border_col = "#4B4B4B",
-    hub_border_size = 0.8,
-    title = NULL,
-    k_top = 1,
-    tree_mode = c("radial", "rooted"),
-    n_runs = 10,
-    noise_sd = 0.01) {
-    .plot_dendro_network_multi_core(
-        scope_obj = scope_obj,
-        grid_name = grid_name,
-        lee_stats_layer = lee_stats_layer,
-        gene_subset = gene_subset,
-        L_min = L_min,
-        use_consensus_graph = use_consensus_graph,
-        graph_slot_name = graph_slot_name,
-        cluster_vec = cluster_vec,
-        IDelta_col_name = IDelta_col_name,
-        IDelta_invert = IDelta_invert,
-        damping = damping,
-        weight_low_cut = weight_low_cut,
-        cluster_palette = cluster_palette,
-        node_size = node_size,
-        edge_width = edge_width,
-        label_size = label_size,
-        seed = seed,
-        length_scale = length_scale,
-        max.overlaps = max.overlaps,
-        hub_border_col = hub_border_col,
-        hub_border_size = hub_border_size,
-        title = title,
-        k_top = k_top,
-        tree_mode = tree_mode,
-        n_runs = n_runs,
-        noise_sd = noise_sd
-    )
-}
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_dendro_network_build`.
-#' @param prep Internal parameter
-#' @return Internal helper result
-#' @keywords internal
-.plot_dendro_network_build <- function(prep) do.call(.plot_dendro_network_core_v2, prep$args)
-
-#' Plot Dendro Network With Branches
-#' @description
-#' Internal helper for `.plot_dendro_network_with_branches`.
-#' @param scope_obj A `scope_object`.
-#' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param g_slot Slot name.
-#' @param cluster_name Parameter value.
-#' @param legend_title Parameter value.
-#' @param node_size Parameter value.
-#' @param edge_width Parameter value.
-#' @param label_size Parameter value.
-#' @param seed Random seed.
-#' @param label_nodes Parameter value.
-#' @param hub_border_col Parameter value.
-#' @param hub_border_size Parameter value.
-#' @param min_degree_hub Numeric threshold.
-#' @param max.overlaps Parameter value.
-#' @param cluster_vec Parameter value.
-#' @param cluster_palette Parameter value.
-#' @param tree_mode Parameter value.
-#' @param k_top Parameter value.
-#' @param edge_thresh Parameter value.
-#' @param prune_mode Parameter value.
-#' @param attach_I_delta Parameter value.
-#' @param I_delta_name Parameter value.
-#' @param I_delta_palette Parameter value.
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_dendro_network_with_branches <- function(
-    scope_obj,
-    grid_name = NULL,
-    g_slot = "g_consensus",
-    cluster_name,
-    legend_title = NULL,
-    node_size = 5,
-    edge_width = 1,
-    label_size = 2,
-    seed = 1,
-    label_nodes = TRUE,
-    hub_border_col = "black",
-    hub_border_size = 0.5,
-    min_degree_hub = 3,
-    max.overlaps = Inf,
-    cluster_vec = NULL,
-    cluster_palette = NULL,
-    tree_mode = NULL,
-    k_top = 5,
-    edge_thresh = 0.05,
-    prune_mode = c("none", "mst", "triangulation"),
-    attach_I_delta = FALSE,
-    I_delta_name = "iDelta",
-    I_delta_palette = scales::hue_pal()) {
-    annotation_payload <- .plot_dendro_network_branches_prepare(
-        scope_obj = scope_obj,
-        grid_name = grid_name,
-        g_slot = g_slot,
-        cluster_name = cluster_name,
-        legend_title = legend_title,
-        node_size = node_size,
-        edge_width = edge_width,
-        label_size = label_size,
-        seed = seed,
-        label_nodes = label_nodes,
-        hub_border_col = hub_border_col,
-        hub_border_size = hub_border_size,
-        min_degree_hub = min_degree_hub,
-        max.overlaps = max.overlaps,
-        cluster_vec = cluster_vec,
-        cluster_palette = cluster_palette,
-        tree_mode = tree_mode,
-        k_top = k_top,
-        edge_thresh = edge_thresh,
-        prune_mode = prune_mode,
-        attach_I_delta = attach_I_delta,
-        I_delta_name = I_delta_name,
-        I_delta_palette = I_delta_palette
-    )
-    branch_plot_obj <- .plot_dendro_network_branches_build(annotation_payload)
-    branch_plot_obj <- .plot_dendro_network_branches_theme(branch_plot_obj, annotation_payload)
-    .plot_dendro_network_branches_output(branch_plot_obj, annotation_payload)
-}
-
-#' Internal helper for plotting workflows
-#' @description
-#' Internal helper for `.plot_dendro_network_prepare`.
-#' @param ... Additional arguments (currently unused).
-#' @return Internal helper result
-#' @keywords internal
-.plot_dendro_network_prepare <- function(...) list(args = list(...))
-
-#' Plot Idelta
-#' @description
-#' Internal helper for `.plot_idelta`.
-#' @param scope_obj A `scope_object`.
-#' @param grid_name Grid layer name (or `NULL` to use the active layer).
-#' @param cluster_col Parameter value.
-#' @param top_n Parameter value.
-#' @param min_genes Numeric threshold.
-#' @param nrow Parameter value.
-#' @param point_size Parameter value.
-#' @param line_size Parameter value.
-#' @param label_size Parameter value.
-#' @param fill_col Parameter value.
-#' @param outline_col Parameter value.
-#' @param seed Random seed.
-#' @return A `ggplot` object (or a list of plot components) used internally.
-#' @keywords internal
-.plot_idelta <- function(
-    scope_obj,
-    grid_name,
-    cluster_col,
-    top_n = NULL,
-    min_genes = 1,
-    nrow = 1,
-    point_size = 3,
-    line_size = 0.5,
-    label_size = 2.5,
-    fill_col = "steelblue",
-    outline_col = "black",
-    seed = NULL) {
-    .plot_i_delta_core(
-        scope_obj = scope_obj,
-        grid_name = grid_name,
-        cluster_col = cluster_col,
-        top_n = top_n,
-        min_genes = min_genes,
-        nrow = nrow,
-        point_size = point_size,
-        line_size = line_size,
-        label_size = label_size,
-        fill_col = fill_col,
-        outline_col = outline_col,
-        seed = seed
-    )
 }
 
 #' Internal helper for plotting workflows
@@ -10536,7 +10205,7 @@
                                        image_path,
                                        image_alpha,
                                        image_choice) {
-    library(ggplot2)
+    # ggplot2 loaded via Imports in DESCRIPTION
     p <- ggplot()
 
     if (prep$histology_available) {
@@ -10646,9 +10315,9 @@
         )
 
     if (!is.null(prep$heat2)) {
-        library(ggnewscale)
+        # ggnewscale loaded via Imports in DESCRIPTION
         shape_layers2 <- .plot_density_build_shape_geom(.plot_density_tile_df(prep$heat2), alpha2, prep$tile_shape, prep$hex_orientation)
-        p <- p + new_scale_fill()
+        p <- p + ggnewscale::new_scale_fill()
         p <- Reduce(`+`, shape_layers2, init = p)
         p <- p +
             scale_fill_gradient(

@@ -16,9 +16,11 @@ normalizeMoleculesInGrid(
 )
 }
 \arguments{
-\item{scope_obj}{A `scope_object` that already contains a grid layer.}
+\item{scope_obj}{A \code{scope_object} that already contains a grid layer.}
 
-\item{grid_name}{Target grid sub-layer; if `NULL`, the sole sub-layer is used.}
+\item{grid_name}{Character; name of the grid layer to operate on. If \code{NULL}
+and only one grid layer exists, it is auto-selected. If multiple layers exist,
+the name must be specified.}
 
 \item{keep_zero_grids}{Whether to keep grids whose counts are all zero.}
 
@@ -31,7 +33,9 @@ normalizeMoleculesInGrid(
 \item{mem_dense_limit}{Threshold for `nrow * ncol`; values above this still
 coerce to dense with a warning (default `2e11`, roughly 16 GB for doubles).}
 
-\item{verbose}{Emit progress messages when TRUE.}
+\item{verbose}{Logical; whether to emit compact public progress messages.
+Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
+\code{options(geneSCOPE.verbose = FALSE)} for global control.}
 }
 \value{
 The modified `scope_object` (invisibly) containing a new `Xz` layer.

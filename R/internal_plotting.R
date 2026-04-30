@@ -310,6 +310,39 @@
   )
 }
 
+.coord_fixed_safe <- function(lay, min_span_frac = 0.02) {
+    if (is.null(lay) || !all(c("x", "y") %in% names(lay))) {
+        return(ggplot2::coord_fixed())
+    }
+
+    xr <- range(lay$x, finite = TRUE)
+    yr <- range(lay$y, finite = TRUE)
+    if (any(!is.finite(xr)) || length(xr) != 2L || xr[1] > xr[2]) xr <- c(-1, 1)
+    if (any(!is.finite(yr)) || length(yr) != 2L || yr[1] > yr[2]) yr <- c(-1, 1)
+
+    span_x <- diff(xr)
+    span_y <- diff(yr)
+    base_span <- max(span_x, span_y)
+    if (!is.finite(base_span) || base_span <= 0) base_span <- 1
+
+    eps <- base_span * min_span_frac
+    needs_fix <- (!is.finite(span_x) || span_x < eps) || (!is.finite(span_y) || span_y < eps)
+    if (!needs_fix) {
+        return(ggplot2::coord_fixed())
+    }
+
+    if (!is.finite(span_x) || span_x < eps) {
+        mid <- mean(xr)
+        xr <- c(mid - eps, mid + eps)
+    }
+    if (!is.finite(span_y) || span_y < eps) {
+        mid <- mean(yr)
+        yr <- c(mid - eps, mid + eps)
+    }
+
+    ggplot2::coord_fixed(xlim = xr, ylim = yr)
+}
+
 #' Plot a gene network using Lee's L statistics.
 #' @description
 #' Internal helper for `.plot_network`.
@@ -320,6 +353,7 @@
 #' @param L_min Minimum positive / negative |L| thresholds.
 #' @param L_min_neg Minimum positive / negative |L| thresholds.
 #' @param p_cut p-value or FDR cut-offs when the corresponding
+#' @param use_FDR Logical flag.
 #' @param FDR_max p-value or FDR cut-offs when the corresponding
 #'                        matrices are available.
 #' @param pct_min Quantile string such as \code{"q80"} passed to the
@@ -333,6 +367,7 @@
 #' @param use_consensus_graph Logical. Use pre-computed consensus graph stored
 #'                        in \code{graph_slot_name}.
 #' @param graph_slot_name Name under which the consensus graph is stored.
+#' @param fdr_source Parameter value.
 #' @param cluster_vec Either a named vector of cluster assignments or the
 #'                        name of a column in \code{meta.data}.
 #' @param cluster_palette Character vector of colours (named or unnamed).
@@ -346,18 +381,15 @@
 #' @param seed Random seed for layout reproducibility.
 #' @param hub_factor Degree multiplier defining "hub" nodes.
 #' @param length_scale Global edge-length multiplier.
-#' @param show_sign Draw negative edges with distinct linetype.
-#' @param neg_linetype Linetype for negative edges.
-#' @param title Optional plot title.
-#' @param scope_obj A `scope_object`.
-#' @param use_FDR Logical flag.
-#' @param fdr_source Parameter value.
 #' @param max.overlaps Parameter value.
 #' @param L_max Numeric threshold.
 #' @param hub_border_col Parameter value.
 #' @param hub_border_size Parameter value.
+#' @param show_sign Draw negative edges with distinct linetype.
+#' @param neg_linetype Linetype for negative edges.
 #' @param neg_legend_lab Parameter value.
 #' @param pos_legend_lab Parameter value.
+#' @param title Optional plot title.
 #' @return A \code{ggplot} object.
 #' @importFrom ggraph ggraph create_layout geom_edge_link geom_node_point geom_node_text scale_edge_width scale_edge_colour_identity scale_edge_linetype_manual
 #' @importFrom ggplot2 aes labs guides guide_legend coord_fixed theme_void theme element_text unit margin
@@ -496,7 +528,7 @@
         stop("`gene_subset` must be a character vector or list(cluster_col, cluster_num)")
     }
     if (length(keep_genes) < 2) {
-        stop("Less than two genes remain after sub‑setting.")
+        stop("Less than two genes remain after sub-setting.")
     }
 
     ## ===== 3. Retrieve consensus graph or rebuild =====
@@ -562,7 +594,7 @@
             A[mask] <- 0
         }
 
-        ## (v) p‑value & FDR
+        ## (v) p-value & FDR
         if (!is.null(p_cut) && !is.null(leeStat$P)) {
             Pmat <- leeStat$P[idx, idx, drop = FALSE]
             A[Pmat >= p_cut | is.na(Pmat)] <- 0
@@ -668,10 +700,10 @@
     is_factor_input <- FALSE
     factor_levels <- NULL
 
-    ## helper – extract column from meta.data
+    ## helper - extract column from meta.data
     get_meta_cluster <- function(col) {
         if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
-            stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
+            stop("Column '", col, "' not found in scope_obj@meta.data.")
         }
         tmp <- scope_obj@meta.data[[col]]
         names(tmp) <- rownames(scope_obj@meta.data)
@@ -775,14 +807,15 @@
     igraph::E(g)$linetype <- if (show_sign) igraph::E(g)$sign else "solid"
 
     ## ===== 6. ggraph rendering =====
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
     lay <- create_layout(g, layout = "fr", niter = layout_niter)
     lay$basecol <- basecol[lay$name]
     lay$deg <- deg_vec[lay$name]
     lay$hub <- lay$deg > hub_factor * median(lay$deg)
+    coord_obj <- .coord_fixed_safe(lay)
 
     ## ---- edge width / colour / linetype layers ----
     p <- ggraph(lay) +
@@ -839,7 +872,7 @@
             breaks = unname(palette_vals),
             labels = names(palette_vals)
         ) +
-        coord_fixed() + theme_void(base_size = 12) +
+        coord_obj + theme_void(base_size = 12) +
         theme(
             legend.text = element_text(size = 12),
             legend.title = element_text(size = 15),
@@ -859,7 +892,6 @@
     ## Optional legend order adjustment
     p <- p +
         guides(
-            fill = guide_legend(order = 1),
             size = "none",
             edge_width = "none",
             linetype = "none",
@@ -1048,7 +1080,7 @@
         igraph::E(g)$weight[is.na(igraph::E(g)$weight) | !is.finite(igraph::E(g)$weight)] <- 0
     }
 
-    ## ---------- 2. Iδ-PageRank reweighting (same as .plot_dendro_network) ----------
+    ## ---------- 2. Idelta-PageRank reweighting (same as .plot_dendro_network) ----------
     pr <- NULL
     if (!is.null(IDelta_col_name)) {
         delta <- scope_obj@meta.data[igraph::V(g)$name, IDelta_col_name, drop = TRUE]
@@ -1525,17 +1557,7 @@
 #' @description
 #'   Creates a tree-like visualization of a gene network using minimum spanning
 #'   tree algorithms within and between clusters, optionally weighted by
-#'   personalized PageRank scores derived from Morisita's Iδ values.
-#' @param IDelta_col_name Character. Column name in \code{meta.data} containing
-#'                        Morisita's Iδ values for PageRank weighting. If \code{NULL},
-#'                        uniform PageRank weighting is used.
-#'                        personalisation (highest Iδ receives lowest weight).
-#' @param damping Numeric. Damping factor for PageRank algorithm (default 0.85).
-#' @param weight_low_cut Numeric. Minimum edge weight threshold after PageRank
-#'                        weighting (default 0).
-#' @param k_top Integer. Maximum number of high-weight non-tree edges
-#'                        to retain between clusters (default 1).
-#' @param tree_mode Character. Tree layout style: \code{"rooted"},
+#'   personalized PageRank scores derived from Morisita's Idelta values.
 #' @param scope_obj A `scope_object`.
 #' @param grid_name Grid layer name (or `NULL` to use the active layer).
 #' @param lee_stats_layer Layer name.
@@ -1544,7 +1566,14 @@
 #' @param use_consensus_graph Logical flag.
 #' @param graph_slot_name Slot name.
 #' @param cluster_vec Parameter value.
+#' @param IDelta_col_name Character. Column name in \code{meta.data} containing
+#'                        Morisita's Idelta values for PageRank weighting. If \code{NULL},
+#'                        uniform PageRank weighting is used.
+#'                        personalisation (highest Idelta receives lowest weight).
 #' @param IDelta_invert Parameter value.
+#' @param damping Numeric. Damping factor for PageRank algorithm (default 0.85).
+#' @param weight_low_cut Numeric. Minimum edge weight threshold after PageRank
+#'                        weighting (default 0).
 #' @param cluster_palette Parameter value.
 #' @param node_size Parameter value.
 #' @param edge_width Parameter value.
@@ -1555,6 +1584,9 @@
 #' @param hub_border_col Parameter value.
 #' @param hub_border_size Parameter value.
 #' @param title Parameter value.
+#' @param k_top Integer. Maximum number of high-weight non-tree edges
+#'                        to retain between clusters (default 1).
+#' @param tree_mode Character. Tree layout style: \code{"rooted"},
 #'                        \code{"radial"}, or \code{"forest"} (default "rooted").
 #' @return Invisibly returns a list with components:
 #'   \describe{
@@ -1578,7 +1610,7 @@
     graph_slot_name = NULL,
     ## ---------- Cluster labels ----------
     cluster_vec = NULL,
-    ## ---------- Iδ-PageRank options ----------
+    ## ---------- Idelta-PageRank options ----------
     IDelta_col_name = NULL, # When NULL, use uniform PageRank (simple random walk)
     IDelta_invert = FALSE,
     damping = 0.85,
@@ -1651,8 +1683,8 @@
     g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
     if (igraph::vcount(g) < 2) stop("Subgraph contains fewer than two vertices.")
 
-    ## ========= 2. Iδ-PageRank reweighting / random walk =========
-    ## Always run a random-walk weighting step. When Iδ is provided, use it to
+    ## ========= 2. Idelta-PageRank reweighting / random walk =========
+    ## Always run a random-walk weighting step. When Idelta is provided, use it to
     ## personalise PageRank (with optional reversal); otherwise, use uniform
     ## personalization for a simple random walk.
     delta <- NULL
@@ -1662,7 +1694,7 @@
         q <- quantile(delta, c(.1, .9))
         delta <- pmax(pmin(delta, q[2]), q[1]) # align with dendroRW behaviour
         if (isTRUE(IDelta_invert)) {
-            # flip preference: higher Iδ gets lower personalization weight
+            # flip preference: higher Idelta gets lower personalization weight
             delta <- max(delta, na.rm = TRUE) - delta
         }
     }
@@ -1696,6 +1728,7 @@
         keep_e <- which(igraph::E(g)$weight >= L_min)
         g <- igraph::subgraph.edges(g, keep_e, delete.vertices = TRUE)
     }
+    g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
 
     ## ========= 4. Retrieve cluster labels =========
     Vnames <- V(g)$name
@@ -1714,7 +1747,7 @@
     clu <- clu[Vnames]
 
     ## ========= 5. Build cluster MST backbone =========
-    ## —— 5.1 Intra-cluster MST ——
+    ## ---- 5.1 Intra-cluster MST ----
     all_edges <- igraph::as_data_frame(g, "edges")
     all_edges$key <- with(
         all_edges,
@@ -1740,7 +1773,7 @@
         keep_key <- c(keep_key, ks$key)
     }
 
-    ## —— 5.2 Inter-cluster MST ——
+    ## ---- 5.2 Inter-cluster MST ----
     if (length(unique(clu)) > 1) {
         ed <- all_edges
         ed$cl1 <- clu[ed$from]
@@ -1779,7 +1812,7 @@
         }
     }
 
-    ## —— 5.3 Filter edges based on keep_key ——
+    ## ---- 5.3 Filter edges based on keep_key ----
     keep_eid <- which(all_edges$key %in% unique(keep_key))
     g <- igraph::subgraph.edges(g, keep_eid, delete.vertices = TRUE)
     g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
@@ -1862,7 +1895,7 @@
     ## Remove isolated vertices that remain
     g <- igraph::delete_vertices(g, which(igraph::degree(g) == 0))
     ## ============ Tree layout complete ==============
-    ## —— 6.3  Derive inter-cluster edges for plotting ——
+    ## ---- 6.3  Derive inter-cluster edges for plotting ----
     # Convert the current graph into a data.frame of edges
     edf_final <- igraph::as_data_frame(g, what = "edges")
     # Keep only edges whose endpoints belong to different clusters
@@ -1875,10 +1908,10 @@
     is_factor_input <- FALSE
     factor_levels <- NULL
 
-    ## helper – extract column from meta.data
+    ## helper - extract column from meta.data
     get_meta_cluster <- function(col) {
         if (is.null(scope_obj@meta.data) || !(col %in% colnames(scope_obj@meta.data))) {
-            stop("Column ‘", col, "’ not found in scope_obj@meta.data.")
+            stop("Column '", col, "' not found in scope_obj@meta.data.")
         }
         tmp <- scope_obj@meta.data[[col]]
         names(tmp) <- rownames(scope_obj@meta.data)
@@ -1969,9 +2002,9 @@
     igraph::E(g)$linetype <- "solid"
 
     ## ===== 9. ggraph rendering =====
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
 
     ## Default to radial when argument is missing/empty; otherwise validate
@@ -1991,6 +2024,7 @@
     lay$deg <- deg_vec[lay$name]
     hub_factor <- 2
     lay$hub <- lay$deg > hub_factor * median(lay$deg)
+    coord_obj <- .coord_fixed_safe(lay)
 
     qc_txt <- NULL
 
@@ -2031,7 +2065,7 @@
             breaks = unname(palette_vals),
             labels = names(palette_vals)
         ) +
-        coord_fixed() + theme_void(base_size = 12) +
+        coord_obj + theme_void(base_size = 12) +
         theme(
             legend.text = element_text(size = 12),
             legend.title = element_text(size = 15),
@@ -2048,7 +2082,6 @@
         ) +
         labs(title = title, caption = qc_txt) +
         guides(
-            fill = guide_legend(order = 1),
             size = "none",
             edge_width = "none",
             linetype = "none",
@@ -2069,8 +2102,6 @@
 #'   with small random perturbations, unions the resulting tree backbones, and
 #'   renders a graph that can include multiple plausible inter/ intra-cluster
 #'   paths instead of a single deterministic tree.
-#' @param n_runs Integer. Number of stochastic repeats to perform (default 10).
-#' @param noise_sd Numeric. Standard deviation of multiplicative Gaussian noise
 #' @param scope_obj A `scope_object`.
 #' @param grid_name Grid layer name (or `NULL` to use the active layer).
 #' @param lee_stats_layer Layer name.
@@ -2095,6 +2126,8 @@
 #' @param title Parameter value.
 #' @param k_top Parameter value.
 #' @param tree_mode Parameter value.
+#' @param n_runs Integer. Number of stochastic repeats to perform (default 10).
+#' @param noise_sd Numeric. Standard deviation of multiplicative Gaussian noise
 #'                 applied to edge weights before MST selection (default 0.01).
 #'                 Set to 0 to recover deterministic behaviour.
 #' @return Invisibly returns a list with components:
@@ -2420,9 +2453,9 @@
     igraph::E(g_union)$linetype <- "solid"
 
     # ----- layout & plot (reuse tree_mode styling) -----
-    library(ggraph)
-    library(ggplot2)
-    library(dplyr)
+    # ggraph loaded via Imports in DESCRIPTION
+    # ggplot2 loaded via Imports in DESCRIPTION
+    # dplyr loaded via Imports in DESCRIPTION
     set.seed(seed)
 
     tree_mode <- if (is.null(tree_mode) || length(tree_mode) == 0) {
@@ -2441,6 +2474,7 @@
     lay$deg <- deg_vec[lay$name]
     hub_factor <- 2
     lay$hub <- lay$deg > hub_factor * median(lay$deg)
+    coord_obj <- .coord_fixed_safe(lay)
 
     p <- ggraph(lay) +
         geom_edge_link(aes(width = weight, colour = edge_col, linetype = linetype),
@@ -2479,7 +2513,7 @@
             breaks = unname(palette_vals),
             labels = names(palette_vals)
         ) +
-        coord_fixed() + theme_void(base_size = 12) +
+        coord_obj + theme_void(base_size = 12) +
         theme(
             legend.text = element_text(size = 12),
             legend.title = element_text(size = 15),
@@ -2496,7 +2530,6 @@
        ) +
        labs(title = title) +
        guides(
-            fill = guide_legend(order = 1),
             size = "none",
             edge_width = "none",
             linetype = "none",
@@ -2523,21 +2556,6 @@
 #' "articulation point branching" subclustering refinement on specified clusters (or all clusters);
 #' if no candidates and \code{fallback_community=TRUE} is set,
 #' falls back to Louvain/Leiden community splitting. Outputs new network plot with subcluster coloring.
-#' @param enable_subbranch Whether to enable branch subclustering refinement (default TRUE)
-#' @param cluster_id Optional character vector: clusters to subcluster split only; NULL=all
-#' @param include_root Whether articulation point method includes articulation points in each branch
-#' @param max_subclusters Maximum number of subclusters to retain per cluster (greedy deduplication by size)
-#' @param fallback_community Whether to fall back to community detection when articulation points yield no results
-#' @param min_sub_size Minimum size threshold for subclusters in community fallback mode
-#' @param community_method Priority order of community detection algorithms
-#' @param subbranch_palette Subcluster color palette: 1st color = remaining/unrefined, others cycle for subclusters
-#' @param downstream_min_size Downstream subtree size threshold (NULL = adaptive)
-#' @param force_split Whether to attempt relaxed acceptance conditions when original community split fails
-#' @param main_fraction_cap Maximum community proportion threshold (allows retention of smaller communities even when exceeded)
-#' @param core_periph Allow core-periphery splitting
-#' @param core_degree_quantile Core degree threshold quantile
-#' @param core_min_fraction Minimum core fraction
-#' @param degree_gini_threshold Degree Gini threshold that triggers core-periphery splitting
 #' @param scope_obj A `scope_object`.
 #' @param grid_name Grid layer name (or `NULL` to use the active layer).
 #' @param lee_stats_layer Layer name.
@@ -2568,6 +2586,21 @@
 #' @param title Parameter value.
 #' @param k_top Parameter value.
 #' @param tree_mode Parameter value.
+#' @param enable_subbranch Whether to enable branch subclustering refinement (default TRUE)
+#' @param cluster_id Optional character vector: clusters to subcluster split only; NULL=all
+#' @param include_root Whether articulation point method includes articulation points in each branch
+#' @param max_subclusters Maximum number of subclusters to retain per cluster (greedy deduplication by size)
+#' @param fallback_community Whether to fall back to community detection when articulation points yield no results
+#' @param min_sub_size Minimum size threshold for subclusters in community fallback mode
+#' @param community_method Priority order of community detection algorithms
+#' @param subbranch_palette Subcluster color palette: 1st color = remaining/unrefined, others cycle for subclusters
+#' @param downstream_min_size Downstream subtree size threshold (NULL = adaptive)
+#' @param force_split Whether to attempt relaxed acceptance conditions when original community split fails
+#' @param main_fraction_cap Maximum community proportion threshold (allows retention of smaller communities even when exceeded)
+#' @param core_periph Allow core-periphery splitting
+#' @param core_degree_quantile Core degree threshold quantile
+#' @param core_min_fraction Minimum core fraction
+#' @param degree_gini_threshold Degree Gini threshold that triggers core-periphery splitting
 #' @param verbose Logical; whether to emit progress messages.
 #' @return list(plot, graph, subclusters, subcluster_df, cluster_df, method_subcluster,
 #'              base_network, branch_network, params)
@@ -2670,6 +2703,17 @@
         k_top = k_top,
         tree_mode = tree_mode
     )
+    base_formals <- names(formals(.plot_dendro_network))
+    if ("node_size" %in% base_formals && !("vertex_size" %in% base_formals)) {
+        base_args$node_size <- vertex_size
+    }
+    if ("edge_width" %in% base_formals && !("base_edge_mult" %in% base_formals)) {
+        base_args$edge_width <- base_edge_mult
+    }
+    if ("label_size" %in% base_formals && !("label_cex" %in% base_formals)) {
+        base_args$label_size <- label_cex
+    }
+    base_args <- base_args[intersect(names(base_args), base_formals)]
     base_network <- do.call(.plot_dendro_network, base_args)
     g <- base_network$graph
     if (is.null(g) || !inherits(g, "igraph")) {
@@ -3184,8 +3228,15 @@
 #' @title .plot_density - visualise grid-level density stored in @density
 #' @param scope_obj A \code{scope_object}.
 #' @param grid_name Name of the grid layer to plot (e.g. "grid50").
-#' @param density1_name Column names to plot.
-#' @param density2_name Column names to plot.
+#' @param density1_name Column names to plot. Can be a character vector of
+#'        genes; when multiple genes are provided, their values are averaged.
+#' @param density2_name Column names to plot. Can be a character vector of
+#'        genes; when multiple genes are provided, their values are averaged.
+#' @param value_layer Source of values to plot. Use `"density"` (default) to
+#'        read from `scope_obj@density`; otherwise this can be a grid expression
+#'        matrix name (e.g., `"logCPM"`) or a normalization mode computed from
+#'        grid counts (`"counts"`, `"per_grid"`, `"cpm"`, `"logcpm"`, `"global_gene"`).
+#' @param value_scale_factor Scale factor used for CPM/logCPM (default 1e4).
 #' @param palette1 Color palettes for density1 and density2.
 #' @param palette2 Color palettes for density1 and density2.
 #' @param alpha1 Alpha transparency for density layers.
@@ -3213,6 +3264,10 @@
 #' @param bar_offset Vertical offset of scale bar as fraction of y-range.
 #' @param arrow_pt Arrow point size for scale bar.
 #' @param scale_legend_colour Color of scale bar and text.
+#' @param min.cutoff1 Minimum cutoff fractions for density values. Spots below
+#'        this fraction of the layer maximum are hidden.
+#' @param min.cutoff2 Minimum cutoff fractions for density values. Spots below
+#'        this fraction of the layer maximum are hidden.
 #' @param max.cutoff1 Maximum cutoff fractions for density values.
 #' @param max.cutoff2 Maximum cutoff fractions for density values.
 #' @param legend_digits Number of decimal places in legend.
@@ -3231,6 +3286,8 @@
                         grid_name,
                         density1_name,
                         density2_name = NULL,
+                        value_layer = "density",
+                        value_scale_factor = 1e4,
                         palette1 = "#fc3d5d",
                         palette2 = "#4753f8",
                         alpha1 = 0.5,
@@ -3259,6 +3316,8 @@
                         bar_offset = 0.01,
                         arrow_pt = 4,
                         scale_legend_colour = "black",
+                        min.cutoff1 = 0,
+                        min.cutoff2 = 0,
                         max.cutoff1 = 1,
                         max.cutoff2 = 1,
                         legend_digits = 1) {
@@ -3275,6 +3334,20 @@
             target_aspect_ratio <- NULL
         }
     }
+    resolve_cutoff <- function(value, default = 0) {
+        if (is.null(value) || !length(value)) {
+            return(default)
+        }
+        value_num <- suppressWarnings(as.numeric(value[1]))
+        if (!is.finite(value_num)) {
+            return(default)
+        }
+        max(0, value_num)
+    }
+    min.cutoff1 <- resolve_cutoff(min.cutoff1, default = 0)
+    min.cutoff2 <- resolve_cutoff(min.cutoff2, default = 0)
+    max.cutoff1 <- resolve_cutoff(max.cutoff1, default = 1)
+    max.cutoff2 <- resolve_cutoff(max.cutoff2, default = 1)
     accuracy_val <- 1 / (10^legend_digits)
 
     ## ------------------------------------------------------------------ 1
@@ -3386,46 +3459,166 @@
     }
 
     ## ------------------------------------------------------------------ 2
-    ## locate density data frame (new slot first, old slot as fallback)
-    densityDF <- scope_obj@density[[grid_layer_name]]
-    if (is.null(densityDF)) {
-        densityDF <- g_layer$densityDF
-    } # legacy
-    if (is.null(densityDF)) {
-        stop("No density table found for grid '", grid_layer_name, "'.")
-    }
+    ## locate value data frame (density table or expression-derived values)
+    value_layer <- as.character(value_layer[1])
+    value_mode <- tolower(value_layer)
+    value_df <- NULL
 
-    ## make sure rownames are grid IDs
-    if (is.null(rownames(densityDF)) && "grid_id" %in% names(densityDF)) {
-        rownames(densityDF) <- densityDF$grid_id
-    }
+    if (identical(value_mode, "density")) {
+        value_df <- scope_obj@density[[grid_layer_name]]
+        if (is.null(value_df)) {
+            value_df <- g_layer$densityDF
+        } # legacy
+        if (is.null(value_df)) {
+            stop("No density table found for grid '", grid_layer_name, "'.")
+        }
+        if (is.null(rownames(value_df)) && "grid_id" %in% names(value_df)) {
+            rownames(value_df) <- value_df$grid_id
+        }
+        for (dcol in c(density1_name, density2_name)) {
+            if (!is.null(dcol) && !(dcol %in% colnames(value_df))) {
+                stop(
+                    "Density column '", dcol, "' not found in table for grid '",
+                    grid_layer_name, "'."
+                )
+            }
+        }
+    } else {
+        sel_genes <- unique(c(density1_name, density2_name))
+        sel_genes <- sel_genes[!is.na(sel_genes) & nzchar(sel_genes)]
+        if (!length(sel_genes)) {
+            stop("No genes supplied for plotDensity.")
+        }
 
-    for (dcol in c(density1_name, density2_name)) {
-        if (!is.null(dcol) && !(dcol %in% colnames(densityDF))) {
-            stop(
-                "Density column '", dcol, "' not found in table for grid '",
-                grid_layer_name, "'."
-            )
+        # --- 2.1 try grid expression matrix (case-insensitive) --------------
+        value_mat <- g_layer[[value_layer]]
+        if (is.null(value_mat)) {
+            nm_match <- names(g_layer)[tolower(names(g_layer)) == tolower(value_layer)]
+            if (length(nm_match)) value_mat <- g_layer[[nm_match[1]]]
+        }
+
+        if (!is.null(value_mat)) {
+            if (!is.matrix(value_mat)) value_mat <- as.matrix(value_mat)
+            if (is.null(rownames(value_mat)) &&
+                !is.null(grid_info$grid_id) &&
+                nrow(value_mat) == nrow(grid_info)) {
+                rownames(value_mat) <- grid_info$grid_id
+            }
+            if (!is.null(rownames(value_mat)) && !is.null(grid_info$grid_id)) {
+                ord <- match(grid_info$grid_id, rownames(value_mat))
+                if (!any(is.na(ord))) value_mat <- value_mat[ord, , drop = FALSE]
+            }
+            missing_genes <- setdiff(sel_genes, colnames(value_mat))
+            if (length(missing_genes)) {
+                stop(
+                    "Value layer '", value_layer, "' is missing gene(s): ",
+                    paste(missing_genes, collapse = ", ")
+                )
+            }
+            value_df <- as.data.frame(value_mat[, sel_genes, drop = FALSE])
+            if (is.null(rownames(value_df)) && !is.null(grid_info$grid_id)) {
+                rownames(value_df) <- grid_info$grid_id
+            }
+        } else {
+            # --- 2.2 compute from grid counts (counts / CPM / logCPM etc) ----
+            counts_dt <- g_layer$counts
+            if (is.null(counts_dt)) {
+                stop(
+                    "Grid layer '", grid_layer_name,
+                    "' lacks counts; cannot compute value_layer='", value_layer, "'."
+                )
+            }
+            counts_dt <- as.data.table(counts_dt)
+            if (!all(c("grid_id", "gene", "count") %in% colnames(counts_dt))) {
+                stop("Grid counts must contain columns grid_id, gene, count.")
+            }
+            genes_present <- unique(counts_dt$gene)
+            missing_genes <- setdiff(sel_genes, genes_present)
+            if (length(missing_genes)) {
+                stop(
+                    "Gene(s) not found in grid counts: ",
+                    paste(missing_genes, collapse = ", ")
+                )
+            }
+
+            sel_counts <- counts_dt[gene %in% sel_genes,
+                .(count = sum(count)),
+                by = .(grid_id, gene)
+            ]
+
+            if (value_mode %in% c("per_grid", "cpm", "logcpm")) {
+                lib_dt <- counts_dt[, .(lib = sum(count)), by = grid_id]
+                lib_dt[lib == 0, lib := 1]
+                sel_counts <- sel_counts[lib_dt, on = "grid_id"]
+                if (identical(value_mode, "per_grid")) {
+                    sel_counts[, value := count / lib]
+                } else if (identical(value_mode, "cpm")) {
+                    sel_counts[, value := count / lib * value_scale_factor]
+                } else {
+                    sel_counts[, value := log1p(count / lib * value_scale_factor)]
+                }
+                sel_counts[, lib := NULL]
+            } else if (identical(value_mode, "global_gene")) {
+                g_tot <- counts_dt[, .(g_tot = sum(count)), by = gene]
+                g_tot[g_tot == 0, g_tot := 1]
+                sel_counts <- sel_counts[g_tot, on = "gene"]
+                sel_counts[, value := count / g_tot][, g_tot := NULL]
+            } else if (identical(value_mode, "counts")) {
+                sel_counts[, value := count]
+            } else {
+                stop(
+                    "Unsupported value_layer='", value_layer,
+                    "'. Use 'density' or one of: counts, per_grid, cpm, logcpm, global_gene, or a grid matrix name."
+                )
+            }
+
+            wide <- data.table::dcast(sel_counts, grid_id ~ gene, value.var = "value", fill = 0)
+            value_df <- as.data.frame(wide)
+            rownames(value_df) <- value_df$grid_id
+            value_df$grid_id <- NULL
         }
     }
 
+    make_label <- function(col_spec) {
+        if (is.null(col_spec)) return(NULL)
+        cols <- as.character(col_spec)
+        if (length(cols) == 1L) return(cols)
+        paste0("mean(", paste(cols, collapse = ","), ")")
+    }
+
+    resolve_values <- function(col_spec) {
+        cols <- as.character(col_spec)
+        if (length(cols) == 1L) return(value_df[[cols]])
+        missing_cols <- setdiff(cols, colnames(value_df))
+        if (length(missing_cols)) {
+            stop("Value columns missing: ", paste(missing_cols, collapse = ", "))
+        }
+        rowMeans(value_df[, cols, drop = FALSE], na.rm = TRUE)
+    }
+
     ## helper to assemble heatmap data.frame
-    build_heat <- function(d_col, cutoff_frac) {
+    build_heat <- function(col_spec, min_cutoff_frac, max_cutoff_frac) {
         df <- data.frame(
-            grid_id = rownames(densityDF),
-            d = densityDF[[d_col]],
+            grid_id = rownames(value_df),
+            d = resolve_values(col_spec),
             stringsAsFactors = FALSE
         )
         heat <- merge(grid_info, df, by = "grid_id", all.x = TRUE)
         heat$d[is.na(heat$d)] <- 0
         maxv <- max(heat$d, na.rm = TRUE)
-        heat$cut <- maxv * cutoff_frac
+        if (!is.finite(maxv)) maxv <- 0
+        heat$floor <- maxv * min_cutoff_frac
+        heat$cut <- maxv * max_cutoff_frac
+        heat$d[heat$d < heat$floor] <- NA_real_
         heat$d <- pmin(heat$d, heat$cut)
         heat
     }
 
-    heat1 <- build_heat(density1_name, max.cutoff1)
-    heat2 <- if (!is.null(density2_name)) build_heat(density2_name, max.cutoff2)
+    density1_label <- make_label(density1_name)
+    density2_label <- make_label(density2_name)
+
+    heat1 <- build_heat(density1_name, min.cutoff1, max.cutoff1)
+    heat2 <- if (!is.null(density2_name)) build_heat(density2_name, min.cutoff2, max.cutoff2)
     if (use_image_coords) {
         roi <- histology_roi
         width_px <- histology_slot$width
@@ -3474,16 +3667,16 @@
     build_shape_geom <- function(df, alpha_val) {
         if (!nrow(df)) return(list())
         if (identical(tile_shape, "square")) {
-            list(geom_tile(
+            list(ggplot2::geom_tile(
                 data = df,
-                aes(x = x, y = y, width = w, height = h, fill = d),
+                ggplot2::aes(x = x, y = y, width = w, height = h, fill = d),
                 colour = NA, alpha = alpha_val
             ))
         } else if (identical(tile_shape, "circle")) {
             circ_df <- transform(df, radius = pmax(pmin(w, h), .Machine$double.eps) / 2)
-            list(geom_circle(
+            list(ggforce::geom_circle(
                 data = circ_df,
-                aes(x0 = x, y0 = y, r = radius, fill = d),
+                ggplot2::aes(x0 = x, y0 = y, r = radius, fill = d),
                 colour = NA,
                 alpha = alpha_val,
                 inherit.aes = FALSE
@@ -3494,9 +3687,9 @@
                 sides = 6L,
                 angle = if (identical(hex_orientation, "pointy")) pi / 6 else 0
             )
-            list(geom_regon(
+            list(ggforce::geom_regon(
                 data = hex_df,
-                aes(x0 = x, y0 = y, r = radius, sides = sides, angle = angle, fill = d),
+                ggplot2::aes(x0 = x, y0 = y, r = radius, sides = sides, angle = angle, fill = d),
                 colour = NA,
                 alpha = alpha_val,
                 inherit.aes = FALSE
@@ -3546,7 +3739,7 @@
         out
     }
 
-    library(ggplot2)
+    # ggplot2 loaded via Imports in DESCRIPTION
     p <- ggplot()
 
     ## ------------------------------------------------------------------ 3.0
@@ -3647,7 +3840,7 @@
     p <- Reduce(`+`, shape_layers1, init = p)
     p <- p +
         scale_fill_gradient(
-            name = density1_name,
+            name = density1_label,
             low = "transparent",
             high = palette1,
             limits = c(0, unique(heat1$cut)),
@@ -3659,13 +3852,15 @@
 
     ## second density with new fill scale
     if (!is.null(heat2)) {
-        library(ggnewscale)
+        if (!requireNamespace("ggnewscale", quietly = TRUE)) {
+            stop("Package 'ggnewscale' is required for dual-density plots. Please install it.")
+        }
         shape_layers2 <- build_shape_geom(tile_df(heat2), alpha2)
-        p <- p + new_scale_fill()
+        p <- p + ggnewscale::new_scale_fill()
         p <- Reduce(`+`, shape_layers2, init = p)
         p <- p +
             scale_fill_gradient(
-                name = density2_name,
+                name = density2_label,
                 low = "transparent",
                 high = palette2,
                 limits = c(0, unique(heat2$cut)),
@@ -3678,17 +3873,37 @@
 
     ## ------------------------------------------------------------------ 4
     ## segmentation overlay
-    seg_layers <- switch(seg_type,
-        cell    = "segmentation_cell",
-        nucleus = "segmentation_nucleus",
-        both    = c("segmentation_cell", "segmentation_nucleus")
-    )
-    seg_layers <- seg_layers[seg_layers %in% names(scope_obj@coord)]
-
-    if (length(seg_layers)) {
-        seg_dt <- rbindlist(scope_obj@coord[seg_layers],
-            use.names = TRUE, fill = TRUE
+    seg_layer_specs <- switch(seg_type,
+        cell = list(list(role = "cell", candidates = c("segmentation_cell", "phenocycler_segmentation_cell"))),
+        nucleus = list(list(role = "nucleus", candidates = c("segmentation_nucleus", "phenocycler_segmentation_nucleus"))),
+        both = list(
+            list(role = "cell", candidates = c("segmentation_cell", "phenocycler_segmentation_cell")),
+            list(role = "nucleus", candidates = c("segmentation_nucleus", "phenocycler_segmentation_nucleus"))
         )
+    )
+
+    seg_parts <- list()
+    for (spec in seg_layer_specs) {
+        hit <- spec$candidates[spec$candidates %in% names(scope_obj@coord)]
+        if (!length(hit)) next
+        seg_part <- as.data.table(scope_obj@coord[[hit[[1]]]])
+        if (!nrow(seg_part)) next
+        if (!"x" %in% names(seg_part) && "vertex_x" %in% names(seg_part)) {
+            seg_part[, x := as.numeric(vertex_x)]
+        }
+        if (!"y" %in% names(seg_part) && "vertex_y" %in% names(seg_part)) {
+            seg_part[, y := as.numeric(vertex_y)]
+        }
+        if (!"cell" %in% names(seg_part) && "cell_id" %in% names(seg_part)) {
+            seg_part[, cell := as.character(cell_id)]
+        }
+        if (!all(c("x", "y", "cell") %in% names(seg_part))) next
+        seg_part[, segClass := spec$role]
+        seg_parts[[length(seg_parts) + 1L]] <- seg_part
+    }
+
+    if (length(seg_parts)) {
+        seg_dt <- rbindlist(seg_parts, use.names = TRUE, fill = TRUE)
         if (use_image_coords) {
             seg_df <- .coords_physical_to_level(as.data.frame(seg_dt),
                 x_col = "x", y_col = "y", histo = histology_slot
@@ -3698,18 +3913,21 @@
             set(seg_dt, j = "y", value = seg_dt$y_img)
             seg_dt[, c("x_img", "y_img") := NULL]
         }
+        if (!"vertex_index" %in% names(seg_dt)) {
+            seg_dt[, vertex_index := seq_len(.N), by = .(segClass, cell)]
+        }
+        seg_dt[, vertex_index := as.integer(vertex_index)]
+        data.table::setorderv(seg_dt, c("segClass", "cell", "vertex_index"))
         if (seg_type == "both") {
-            is_cell <- seg_dt$cell %in% scope_obj@coord$segmentation_cell$cell
-            seg_dt[, segClass := ifelse(is_cell, "cell", "nucleus")]
             p <- p +
-                geom_shape(
+                ggplot2::geom_polygon(
                     data = seg_dt[segClass == "cell"],
                     aes(x = x, y = y, group = cell),
                     colour = scales::alpha(colour_cell, alpha_seg),
                     fill = NA,
                     linewidth = 0.05
                 ) +
-                geom_shape(
+                ggplot2::geom_polygon(
                     data = seg_dt[segClass == "nucleus"],
                     aes(x = x, y = y, group = cell),
                     colour = scales::alpha(colour_nucleus, alpha_seg),
@@ -3720,7 +3938,7 @@
             ## Single type overlay (stroke transparency baked into colour)
             col_use <- if (seg_type == "cell") colour_cell else colour_nucleus
             p <- p +
-                geom_shape(
+                ggplot2::geom_polygon(
                     data = seg_dt,
                     aes(x = x, y = y, group = cell),
                     colour = scales::alpha(col_use, alpha_seg),
@@ -3731,7 +3949,7 @@
     }
 
     ## ------------------------------------------------------------------ 5
-    ## aesthetics: square, gridlines, scale‑bar
+    ## aesthetics: square, gridlines, scale-bar
     if (!use_image_coords) {
         ensure_extent <- function(rng) {
             if (any(!is.finite(rng))) return(c(0, 1))
@@ -3820,7 +4038,7 @@
         ) +
         theme(panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.8))
 
-    ## scale‑bar
+    ## scale-bar
     draw_scale_bar <- isTRUE(scale_bar_show)
     scale_pos <- resolve_scale_bar_pos(scale_bar_pos, scale_bar_corner)
     bar_len_um <- suppressWarnings(as.numeric(bar_len[1]))
@@ -3916,9 +4134,9 @@
 #' @param colour_cell Line colour for cell segmentation. Default "black".
 #' @param colour_nucleus Line colour for nucleus segmentation. Default "#3182bd".
 #' @param alpha_seg Alpha for segmentation polygons. Default 0.2.
-#' @param grid_gap Spacing of background grid lines (µm). Default 100.
+#' @param grid_gap Spacing of background grid lines (umm). Default 100.
 #' @param scale_text_size Font size for scale-bar text. Default 2.4.
-#' @param bar_len Length of the scale bar (µm). Default 400.
+#' @param bar_len Length of the scale bar (umm). Default 400.
 #' @param bar_offset Vertical offset of the scale bar as a fraction of the y-range. Default 0.01.
 #' @param arrow_pt Arrow-head size of the scale bar. Default 4.
 #' @param scale_legend_colour Colour of the scale-bar text and line. Default "black".
@@ -3989,12 +4207,10 @@
     )[sc2 > 0, ]
 
     ## ---- 1. points --------------------------------------------------------
-    library(ggplot2)
-    library(ggnewscale)
-    library(ggforce)
-    library(data.table)
-
-    p <- ggplot() +
+    if (!requireNamespace("ggnewscale", quietly = TRUE)) {
+        stop("Package 'ggnewscale' is required for dual-density plots. Please install it.")
+    }
+    p <- ggplot2::ggplot() +
         geom_point(
             data = df1,
             aes(x = x, y = y, alpha = e),
@@ -4007,7 +4223,8 @@
             aes(x = x, y = y, alpha = e),
             colour = palette2, size = size2, shape = 16
         ) +
-        scale_alpha_continuous(range = c(0, alpha2), guide = "none")
+        scale_alpha_continuous(range = c(0, alpha2), guide = "none") +
+        ggnewscale::new_scale("alpha")
 
     ## ---- 2. segmentation overlay -----------------------------------------
     if (seg_type != "none") {
@@ -4023,20 +4240,24 @@
                 use.names = TRUE, fill = TRUE
             )
             seg_dt$cell <- as.character(seg_dt$cell)
-
             if (seg_type == "both") {
                 seg_dt[, type := ifelse(cell %in% scope_obj@coord$segmentation_cell$cell,
                     "cell", "nucleus"
                 )]
+                if (!"vertex_index" %in% names(seg_dt)) {
+                    seg_dt[, vertex_index := seq_len(.N), by = .(type, cell)]
+                }
+                seg_dt[, vertex_index := as.integer(vertex_index)]
+                data.table::setorderv(seg_dt, c("type", "cell", "vertex_index"))
                 p <- p +
-                    geom_shape(
+                    ggplot2::geom_polygon(
                         data = seg_dt[type == "cell"],
                         aes(x = x, y = y, group = cell),
                         fill = NA,
                         colour = scales::alpha(colour_cell, alpha_seg),
                         linewidth = .05
                     ) +
-                    geom_shape(
+                    ggplot2::geom_polygon(
                         data = seg_dt[type == "nucleus"],
                         aes(x = x, y = y, group = cell),
                         fill = NA,
@@ -4045,8 +4266,13 @@
                     )
             } else {
                 col_use <- if (seg_type == "cell") colour_cell else colour_nucleus
+                if (!"vertex_index" %in% names(seg_dt)) {
+                    seg_dt[, vertex_index := seq_len(.N), by = .(cell)]
+                }
+                seg_dt[, vertex_index := as.integer(vertex_index)]
+                data.table::setorderv(seg_dt, c("cell", "vertex_index"))
                 p <- p +
-                    geom_shape(
+                    ggplot2::geom_polygon(
                         data = seg_dt,
                         aes(x = x, y = y, group = cell),
                         fill = NA,
@@ -4096,7 +4322,7 @@
             plot.margin = margin(20, 40, 40, 40, "pt")
         )
 
-    # scale‑bar
+    # scale-bar
     x0 <- x_rng[1] + 0.001 * diff(x_rng)
     y_bar <- y_rng[1] + bar_offset * diff(y_rng)
     p <- p +
@@ -4164,8 +4390,7 @@
     }
 
     ## --- 2. Build plot ----------------------------------------------------
-    library(ggplot2)
-    p <- ggplot(grid_info) +
+    p <- ggplot2::ggplot(grid_info) +
         geom_rect(
             aes(
                 xmin = xmin, xmax = xmax,
@@ -4203,9 +4428,9 @@
     p
 }
 
-#' Plot Morisita Iδ peRr cluster
+#' Plot Morisita Idelta peRr cluster
 #' @description
-#'   Creates a faceted scatter-line plot showing Morisita's Iδ values for the
+#'   Creates a faceted scatter-line plot showing Morisita's Idelta values for the
 #'   top genes in each cluster of a chosen grid layer.  Clusters can be
 #'   down-sampled, re-ordered to balance facet rows, and coloured by a custom
 #'   palette.
@@ -4215,14 +4440,14 @@
 #'                        only one layer exists, that layer is used.
 #' @param cluster_col Column name in \code{meta.data} that assigns each
 #'                        gene to a cluster.
-#'                        raw or normalised Iδ.
+#'                        raw or normalised Idelta.
 #' @param top_n Optional integer. Keep the top \code{n} genes
-#'                        (highest Iδ) per cluster.
-#' @param nrow Integer. Number of facet rows to aim for.
+#'                        (highest Idelta) per cluster.
 #' @param min_genes Integer. Minimum number of genes a cluster must keep
 #'                        after filtering (default 1).
 #'                        unnamed the order is taken as-is; otherwise names
 #'                        are matched to cluster labels.
+#' @param nrow Integer. Number of facet rows to aim for.
 #' @param point_size Numeric. Aesthetics for the plot.
 #' @param line_size Numeric. Aesthetics for the plot.
 #' @param label_size Numeric. Aesthetics for the plot.
@@ -4246,7 +4471,7 @@
     subCluster = NULL) {
     meta_col <- paste0(grid_name, "_iDelta")
     if (!meta_col %in% colnames(scope_obj@meta.data)) {
-        stop("Cannot find Iδ values: meta.data column '", meta_col, "' is missing.")
+        stop("Cannot find Idelta values: meta.data column '", meta_col, "' is missing.")
     }
 
     meta <- scope_obj@meta.data
@@ -4273,7 +4498,7 @@
         filter(n() >= min_genes) %>%
         ungroup()
     if (nrow(df) == 0) {
-        stop("No cluster meets min_genes ≥ ", min_genes, ".")
+        stop("No cluster meets min_genes >= ", min_genes, ".")
     }
     df <- df %>%
         group_by(cluster) %>%
@@ -4299,7 +4524,7 @@
         labs(
             x     = NULL, # remove x-axis label as well
             y     = expression(I[delta]),
-            title = paste0("Iδ by Cluster (", grid_name, ")")
+            title = paste0("Idelta by Cluster (", grid_name, ")")
         ) +
         theme_minimal() +
         theme(
@@ -4364,10 +4589,7 @@
     title <- if (use_abs) "Absolute Lee's L Distribution" else "Lee's L Distribution"
   }
 
-  library(ggplot2)
-  library(grid)
-
-  p <- ggplot(df, aes(x = LeeL)) +
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = LeeL)) +
     {
       if (length(bins) == 1L) {
         geom_histogram(
@@ -4420,7 +4642,7 @@
 #'   Summarize each gene's total count across all grid cells from
 #'   `scope_obj@grid[[grid_name]]$counts`. For every gene pair (i, j) with i < j,
 #'   compute Lee's L and the fold change of their total counts
-#'   (fold change = max(total_i, total_j) / min(total_i, total_j), ≥ 1).
+#'   (fold change = max(total_i, total_j) / min(total_i, total_j), >= 1).
 #'   Finally, plot a scatterplot with Lee's L on the x-axis and fold change on
 #'   the y-axis, using a 25% gray background and publication-quality aesthetics.
 #' @param scope_obj An object containing
@@ -4467,11 +4689,6 @@
   )
 
   ## ---- 3. Total & combine gene pairs ---------------------------------------------
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(grid)
-
   gene_totals <- counts_df |>
     group_by(gene) |>
     summarise(total = sum(count), .groups = "drop")
@@ -4513,7 +4730,7 @@
     labs(
       title = title,
       x = expression("Lee's L"),
-      y = "Fold Change (≥1)"
+      y = "Fold Change (>=1)"
     ) +
     theme_bw(base_size = 8) +
     theme(
@@ -4539,7 +4756,7 @@
 #'   Builds a scatter plot comparing Lee's spatial correlation statistic
 #'   (L) with the conventional Pearson \(r\) for every gene pair in a
 #'   selected grid layer or at the cell level.  Optionally flips axes and
-#'   annotates the largest positive and negative L–rplotLvsR differences
+#'   annotates the largest positive and negative L-rplotLvsR differences
 #'   (\code{Delta}).
 #' @param scope_obj A \code{scope_object} containing both Lee's L matrices
 #'                    (in \code{LeeStats_Xz}) and Pearson correlation
@@ -4598,7 +4815,7 @@
     slice_min(df_long, Delta, n = delta_top_n, with_ties = FALSE)
   ) |>
     distinct(gene1, gene2, .keep_all = TRUE) |>
-    mutate(label = sprintf("%s–%s\nL=%.3f", gene1, gene2, LeesL))
+    mutate(label = sprintf("%s-%s\nL=%.3f", gene1, gene2, LeesL))
 
   ## ---- 4. Plot ----------------------------------------------------------------
   if (!flip) {
@@ -4606,10 +4823,10 @@
       df_long,
       aes(x = LeesL, y = Pear)
     )
-    xlab <- "Lee’s L"
+    xlab <- "Lee's L"
     ylab <- "Pearson correlation"
     ttl <- sprintf(
-      "Lee’s L vs Pearson  (%s, %s)",
+      "Lee's L vs Pearson  (%s, %s)",
       sub("grid", "Grid ", grid_name),
       ifelse(pear_level == "cell", "cell level", "grid level")
     )
@@ -4619,9 +4836,9 @@
       aes(x = Pear, y = LeesL)
     )
     xlab <- "Pearson correlation"
-    ylab <- "Lee’s L"
+    ylab <- "Lee's L"
     ttl <- sprintf(
-      "Pearson vs Lee’s L  (%s, %s)",
+      "Pearson vs Lee's L  (%s, %s)",
       sub("grid", "Grid ", grid_name),
       ifelse(pear_level == "cell", "cell level", "grid level")
     )

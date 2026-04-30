@@ -8,7 +8,8 @@
   scope_obj,
   xenium_dir = NULL,
   cosmx_root = NULL,
-  platform = c("auto", "Xenium", "CosMx"),
+  platform = NULL,
+  prefer = c("auto", "xenium", "cosmx"),
   verbose = TRUE,
   ...
 )
@@ -20,7 +21,9 @@
 
 \item{cosmx_root}{Optional CosMx project root.}
 
-\item{platform}{Platform hint (`auto`, `Xenium`, or `CosMx`).}
+\item{platform}{Deprecated platform hint (`auto`, `Xenium`, or `CosMx`).}
+
+\item{prefer}{Preferred single-cell loader (`auto`, `xenium`, or `cosmx`).}
 
 \item{verbose}{Emit progress messages when TRUE.}
 

@@ -1,0 +1,15 @@
+{
+  "grid_lengths": [20, 40],
+  "region_shape": "square_proxy",
+  "overlap_mode": "area_overlap",
+  "anchor_target_area_um2": 2500,
+  "max_anchors_per_support": 9,
+  "boundary_segment_vertices": 7,
+  "boundary_anchor_count": 5,
+  "feature_route_overrides": [],
+  "compare_markers": ["AQP4", "TMEM119", "F4/80", "TUBB3", "p-MYPT"],
+  "min_weight": 0,
+  "family_primary_routes": ["event", "D3_grid_field_overlap", "D4_boundary_segment_support"],
+  "candidate_routes": ["support_region_proxy", "multi_anchor_weighted_support", "grid_field_overlap", "boundary_segment_support", "family_specific_hybrid"],
+  "version": "phenocycler_diffuse_redesign_config_v1"
+}

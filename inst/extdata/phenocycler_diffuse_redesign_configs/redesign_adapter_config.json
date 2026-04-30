@@ -1,0 +1,11 @@
+{
+  "grid_lengths": [20, 40],
+  "promote": "hybrid",
+  "field_layer_prefix": "pcdr_field",
+  "boundary_layer_prefix": "pcdr_boundary",
+  "hybrid_layer_prefix": "pcdr_hybrid",
+  "punctate_layer_prefix": "pcdr_punctate",
+  "namespace_hybrid_features": true,
+  "attach_density_tables": true,
+  "version": "phenocycler_redesign_adapter_config_v1"
+}

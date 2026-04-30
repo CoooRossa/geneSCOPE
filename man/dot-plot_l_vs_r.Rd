@@ -52,7 +52,7 @@ Internal helper for `.plot_l_vs_r`.
 Builds a scatter plot comparing Lee's spatial correlation statistic
   (L) with the conventional Pearson \(r\) for every gene pair in a
   selected grid layer or at the cell level.  Optionally flips axes and
-  annotates the largest positive and negative L–rplotLvsR differences
+  annotates the largest positive and negative L-rplotLvsR differences
   (\code{Delta}).
 }
 \seealso{
