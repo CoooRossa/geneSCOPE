@@ -116,6 +116,17 @@ python3 -m pip install pyarrow
 The examples below follow the same exposed, script-like style as the paper
 trial P5 workflow. Replace placeholder paths with your own directories.
 
+### Native C++ Backends on macOS
+
+On Darwin/macOS, geneSCOPE starts with native C++ backends turned off and uses
+R fallback paths to avoid platform-specific crashes. To run the C++ paths for
+spatial weights, Lee's L, permutations, correlation, and related native
+helpers, set the global option below:
+
+```r
+options(geneSCOPE.disable_native_all = FALSE)
+```
+
 ### Xenium
 
 ```r
