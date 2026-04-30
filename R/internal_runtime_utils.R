@@ -794,10 +794,9 @@
     stack[[length(stack)]]
 }
 
-#' Begin Buffered Log Session
+#' Begin Runtime Log Session
 #' @description
-#' Starts a buffered log session so runtime messages flush only after wrapper
-#' completion.
+#' Starts a log session used to track wrapper nesting.
 #' @param parent Parent function label.
 #' @return Session environment.
 #' @keywords internal
@@ -810,21 +809,15 @@
     session
 }
 
-#' Emit Buffered Runtime Log Line
+#' Emit Runtime Log Line
 #' @description
-#' Appends a formatted runtime log line to the active session, or emits it
-#' immediately when no buffered session exists.
+#' Emits a formatted runtime log line immediately.
 #' @param line Pre-formatted log line.
 #' @return Invisible NULL.
 #' @keywords internal
 .emit_log_line <- function(line) {
     line <- .sanitize_log_message(line)
-    session <- .active_log_session()
-    if (is.null(session)) {
-        message(line)
-    } else {
-        session$lines <- c(session$lines, line)
-    }
+    message(line)
     invisible(NULL)
 }
 
@@ -872,9 +865,9 @@
     invisible(NULL)
 }
 
-#' Run Expression Within Buffered Log Session
+#' Run Expression Within Runtime Log Session
 #' @description
-#' Buffers runtime logs until the wrapped expression completes or errors.
+#' Tracks log session nesting while emitting runtime logs immediately.
 #' @param parent Parent function label.
 #' @param verbose Logical flag carried for interface symmetry.
 #' @param expr Expression to evaluate.
