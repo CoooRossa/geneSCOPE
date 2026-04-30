@@ -5,12 +5,23 @@
     isTRUE(getOption("geneSCOPE.disable_native_all", FALSE))
 }
 
+.native_all_explicitly_enabled <- function() {
+    identical(getOption("geneSCOPE.disable_native_all", NULL), FALSE)
+}
+
+.native_backend_disabled <- function(option) {
+    if (.native_all_explicitly_enabled()) {
+        return(FALSE)
+    }
+    isTRUE(getOption(option, FALSE)) || .native_all_disabled()
+}
+
 .native_permutation_disabled <- function() {
-    isTRUE(getOption("geneSCOPE.disable_native_permutation", FALSE)) || .native_all_disabled()
+    .native_backend_disabled("geneSCOPE.disable_native_permutation")
 }
 
 .lee_l_native_disabled <- function() {
-    isTRUE(getOption("geneSCOPE.disable_native_lee_l_backend", FALSE)) || .native_all_disabled()
+    .native_backend_disabled("geneSCOPE.disable_native_lee_l_backend")
 }
 
 .validate_native_thread_count <- function(n_threads, caller) {
@@ -182,7 +193,7 @@ lee_perm_block <- function(Xz, W, idx_mat, block_ids, L_ref, n_threads = 1L) {
 .idelta_sparse_cpp <- function(...) idelta_sparse_cpp(...)
 
 .pearson_native_disabled <- function() {
-    isTRUE(getOption("geneSCOPE.disable_native_correlation_backend", FALSE))
+    .native_backend_disabled("geneSCOPE.disable_native_correlation_backend")
 }
 
 .native_pearson_block_cpp_call <- function(X, bs = 2000L, n_threads = 1L) {

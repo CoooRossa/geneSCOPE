@@ -55,19 +55,19 @@
 }
 .grid_nb_hexq <- function(nrow, ncol, oddq = TRUE) grid_nb_hexq(nrow, ncol, oddq)
 .grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
-  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_kernel_weights")) {
     stop("grid_weights_kernel_rect_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
   }
   grid_weights_kernel_rect_omp(nrow, ncol, gx, gy, queen, radius, kernel, sigma)
 }
 .grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
-  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_kernel_weights")) {
     stop("grid_weights_kernel_hexr_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
   }
   grid_weights_kernel_hexr_omp(nrow, ncol, gx, gy, oddr, radius, kernel, sigma)
 }
 .grid_weights_kernel_hexq_omp <- function(nrow, ncol, gx, gy, oddq = TRUE, radius = 2L, kernel = "gaussian", sigma = 1.0) {
-  if (isTRUE(getOption("geneSCOPE.disable_native_kernel_weights", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_kernel_weights")) {
     stop("grid_weights_kernel_hexq_omp native backend disabled by option; using R kernel builder.", call. = FALSE)
   }
   grid_weights_kernel_hexq_omp(nrow, ncol, gx, gy, oddq, radius, kernel, sigma)
@@ -370,7 +370,7 @@
     warning("listw_B_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     return(.listw_b_r(nb))
   }
-  if (isTRUE(getOption("geneSCOPE.disable_native_listw_builder", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_listw_builder")) {
     stop("listw_B_omp native backend disabled by option; using R sparse builder.", call. = FALSE)
   }
   listw_B_omp(nb)
@@ -1114,7 +1114,7 @@
   if (.spw_darwin_native_spatial_disabled()) {
     fallback_reason <- fallback_reason %||% .spw_darwin_native_spatial_reason()
   }
-  if (isTRUE(getOption("geneSCOPE.disable_native_grid_nb", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_grid_nb")) {
     fallback_reason <- fallback_reason %||% "geneSCOPE.disable_native_grid_nb=TRUE"
   }
 

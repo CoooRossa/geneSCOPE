@@ -6,7 +6,11 @@
     sysname <- Sys.info()[["sysname"]]
     if (is.null(sysname) || !length(sysname) || is.na(sysname)) sysname <- ""
     sysname <- tolower(sysname)
-    if (identical(sysname, "darwin") && isTRUE(getOption("geneSCOPE.disable_darwin_native_spatial", FALSE))) {
+    native_all_enabled <- exists(".native_all_explicitly_enabled", mode = "function") &&
+        .native_all_explicitly_enabled()
+    if (identical(sysname, "darwin") &&
+        !native_all_enabled &&
+        isTRUE(getOption("geneSCOPE.disable_darwin_native_spatial", FALSE))) {
         stop(
             entrypoint,
             " native backend disabled by option geneSCOPE.disable_darwin_native_spatial. ",
@@ -14,7 +18,9 @@
             call. = FALSE
         )
     }
-    if (!is.null(disable_option) && isTRUE(getOption(disable_option, FALSE))) {
+    if (!is.null(disable_option) &&
+        exists(".native_backend_disabled", mode = "function") &&
+        .native_backend_disabled(disable_option)) {
         stop(entrypoint, " native backend disabled by option ", disable_option, ".", call. = FALSE)
     }
     invisible(TRUE)
@@ -479,4 +485,3 @@ consensus_coo_cpp <- function(memb, thr = 0.0, n_threads = 1L) {
 test_64bit_support <- function() {
     .Call(`_geneSCOPE_test_64bit_support`)
 }
-

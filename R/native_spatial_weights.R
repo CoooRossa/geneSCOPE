@@ -8,6 +8,8 @@
 .spw_darwin_native_spatial_disabled <- function() {
   sysname <- tolower(Sys.info()[["sysname"]] %||% "")
   if (!identical(sysname, "darwin")) return(FALSE)
+  if (exists(".native_all_explicitly_enabled", mode = "function") &&
+      .native_all_explicitly_enabled()) return(FALSE)
   if (isTRUE(getOption("geneSCOPE.allow_darwin_native_spatial", FALSE))) return(FALSE)
   env_val <- tolower(Sys.getenv("GENESCOPE_ALLOW_DARWIN_NATIVE_SPATIAL", ""))
   !(env_val %in% c("1", "true", "yes", "on", "force", "unsafe"))
@@ -34,7 +36,7 @@
     }
     return(FALSE)
   }
-  if (isTRUE(getOption("geneSCOPE.disable_native_grid_nb", FALSE))) {
+  if (.native_backend_disabled("geneSCOPE.disable_native_grid_nb")) {
     if (verbose) {
       .log_info(parent, step, "Native OpenMP grid builder disabled by option; using serial/R fallback path.", verbose)
     }
@@ -257,6 +259,9 @@
 #' grid_nb_omp - R fallback
 #' @keywords internal
 grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_omp`, nrow, ncol, queen))
+    }
     if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) {
         warning("grid_nb_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     }
@@ -266,36 +271,54 @@ grid_nb_omp <- function(nrow, ncol, queen = TRUE) {
 #' grid_nb_serial - R fallback
 #' @keywords internal
 grid_nb_serial <- function(nrow, ncol, queen = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_serial`, nrow, ncol, queen))
+    }
     .grid_nb_r(nrow, ncol, queen)
 }
 
 #' grid_nb - R fallback
 #' @keywords internal
 grid_nb <- function(nrow, ncol, queen = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb`, nrow, ncol, queen))
+    }
     .grid_nb_r(nrow, ncol, queen)
 }
 
 #' grid_nb_hex - R fallback
 #' @keywords internal
 grid_nb_hex <- function(nrow, ncol, oddr = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_hex`, nrow, ncol, oddr))
+    }
     .grid_nb_hex_r(nrow, ncol, oddr)
 }
 
 #' grid_nb_hex_omp - R fallback
 #' @keywords internal
 grid_nb_hex_omp <- function(nrow, ncol, oddr = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_hex_omp`, nrow, ncol, oddr))
+    }
     .grid_nb_hex_r(nrow, ncol, oddr)
 }
 
 #' grid_nb_hexq - R fallback
 #' @keywords internal
 grid_nb_hexq <- function(nrow, ncol, oddq = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_hexq`, nrow, ncol, oddq))
+    }
     .grid_nb_hexq_r(nrow, ncol, oddq)
 }
 
 #' grid_nb_hexq_omp - R fallback
 #' @keywords internal
 grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_nb_hexq_omp`, nrow, ncol, oddq))
+    }
     .grid_nb_hexq_r(nrow, ncol, oddq)
 }
 
@@ -378,6 +401,9 @@ grid_nb_hexq_omp <- function(nrow, ncol, oddq = TRUE) {
 #' listw_B_omp - R fallback
 #' @keywords internal
 listw_B_omp <- function(nb) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_listw_B_omp`, nb))
+    }
     if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) {
         warning("listw_B_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     }
@@ -398,12 +424,18 @@ listw_B_omp <- function(nb) {
 #' nb2mat - R implementation
 #' @keywords internal
 nb2mat <- function(nb) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_nb2mat`, nb))
+    }
     as.matrix(.listw_b_r(nb))
 }
 
 #' grid_weights_kernel_rect_omp - R fallback
 #' @keywords internal
 grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen=TRUE, radius=2L, kernel="gaussian", sigma=1.0) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_weights_kernel_rect_omp`, nrow, ncol, gx, gy, queen, radius, kernel, sigma))
+    }
     if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) {
         warning("grid_weights_kernel_rect_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     }
@@ -413,6 +445,9 @@ grid_weights_kernel_rect_omp <- function(nrow, ncol, gx, gy, queen=TRUE, radius=
 #' grid_weights_kernel_hexr_omp - R fallback
 #' @keywords internal
 grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr=TRUE, radius=2L, kernel="gaussian", sigma=1.0) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_weights_kernel_hexr_omp`, nrow, ncol, gx, gy, oddr, radius, kernel, sigma))
+    }
     if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) {
         warning("grid_weights_kernel_hexr_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     }
@@ -422,6 +457,9 @@ grid_weights_kernel_hexr_omp <- function(nrow, ncol, gx, gy, oddr=TRUE, radius=2
 #' grid_weights_kernel_hexq_omp - R fallback
 #' @keywords internal
 grid_weights_kernel_hexq_omp <- function(nrow, ncol, gx, gy, oddq=TRUE, radius=2L, kernel="gaussian", sigma=1.0) {
+    if (.native_all_explicitly_enabled()) {
+        return(.Call(`_geneSCOPE_grid_weights_kernel_hexq_omp`, nrow, ncol, gx, gy, oddq, radius, kernel, sigma))
+    }
     if (identical(tolower(Sys.info()[["sysname"]]), "darwin")) {
         warning("grid_weights_kernel_hexq_omp: Darwin spatial safe default; using R fallback.", call. = FALSE)
     }

@@ -65,6 +65,11 @@
   # New option names under geneSCOPE.*
   # Round 4 Fix: On Darwin, disable all native C++ paths by default to prevent crashes
   # Users can override by setting options(geneSCOPE.disable_native_all=FALSE) before loading
+  native_all_default <- if (!is.null(getOption("geneSCOPE.disable_native_all", NULL))) {
+    isTRUE(getOption("geneSCOPE.disable_native_all"))
+  } else {
+    is_darwin
+  }
   op_gs <- list(
     geneSCOPE.use_64bit = TRUE,
     geneSCOPE.max_matrix_size = 2^31 - 1,
@@ -73,14 +78,14 @@
     geneSCOPE.blas_threads = 1,
     geneSCOPE.enable_64bit_check = FALSE,
     geneSCOPE.lee_l.backend = if (is_darwin) "R" else "cpp",  # Darwin default to R backend
-    geneSCOPE.disable_native_all = is_darwin,  # Darwin default TRUE, others FALSE
-    geneSCOPE.disable_native_grid_nb = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_listw_builder = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_kernel_weights = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_lee_l_backend = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_correlation_backend = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_consensus = if (is_darwin) TRUE else FALSE,
-    geneSCOPE.disable_native_permutation = if (is_darwin) TRUE else FALSE,  # New: prevent lee_perm_block crash
+    geneSCOPE.disable_native_all = native_all_default,  # Darwin default TRUE, others FALSE
+    geneSCOPE.disable_native_grid_nb = native_all_default,
+    geneSCOPE.disable_native_listw_builder = native_all_default,
+    geneSCOPE.disable_native_kernel_weights = native_all_default,
+    geneSCOPE.disable_native_lee_l_backend = native_all_default,
+    geneSCOPE.disable_native_correlation_backend = native_all_default,
+    geneSCOPE.disable_native_consensus = native_all_default,
+    geneSCOPE.disable_native_permutation = native_all_default,  # New: prevent lee_perm_block crash
     geneSCOPE.disable_native_openmp_diagnostics = FALSE,
     geneSCOPE.allow_darwin_native_openmp_diagnostics = FALSE,
     geneSCOPE.allow_darwin_native_spatial = FALSE

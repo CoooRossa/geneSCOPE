@@ -17,14 +17,20 @@ static bool genescope_rcpp_exports_option_true(const char* name) {
     return TYPEOF(value) == LGLSXP && Rf_length(value) > 0 && LOGICAL(value)[0] == TRUE;
 }
 
+static bool genescope_rcpp_exports_option_false(const char* name) {
+    SEXP value = Rf_GetOption1(Rf_install(name));
+    return TYPEOF(value) == LGLSXP && Rf_length(value) > 0 && LOGICAL(value)[0] == FALSE;
+}
+
 static void genescope_rcpp_exports_darwin_spatial_guard(const char* entrypoint,
                                                         const char* disable_option) {
+    bool native_all_enabled = genescope_rcpp_exports_option_false("geneSCOPE.disable_native_all");
 #ifdef __APPLE__
-    if (genescope_rcpp_exports_option_true("geneSCOPE.disable_darwin_native_spatial")) {
+    if (!native_all_enabled && genescope_rcpp_exports_option_true("geneSCOPE.disable_darwin_native_spatial")) {
         Rf_error("%s native backend disabled by option geneSCOPE.disable_darwin_native_spatial. Unset this option or set it to FALSE to use the native path.", entrypoint);
     }
 #endif
-    if (disable_option != nullptr && genescope_rcpp_exports_option_true(disable_option)) {
+    if (!native_all_enabled && disable_option != nullptr && genescope_rcpp_exports_option_true(disable_option)) {
         Rf_error("%s native backend disabled by option %s.", entrypoint, disable_option);
     }
 }

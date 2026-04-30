@@ -41,11 +41,22 @@ inline bool r_option_true(const char* name) {
     return false;
 }
 
+inline bool r_option_false(const char* name) {
+    Rcpp::Function getOption("getOption");
+    Rcpp::RObject value = getOption(name, R_NilValue);
+    if (Rf_isLogical(value) && Rf_length(value) > 0) {
+        int* ptr = LOGICAL(value);
+        return ptr[0] == FALSE;
+    }
+    return false;
+}
+
 inline void guard_darwin_native_spatial(const char* caller,
                                         const char* disable_option) {
+    bool native_all_enabled = r_option_false("geneSCOPE.disable_native_all");
 #ifdef __APPLE__
     // Check disable_darwin_native_spatial option (explicit disable)
-    if (r_option_true("geneSCOPE.disable_darwin_native_spatial")) {
+    if (!native_all_enabled && r_option_true("geneSCOPE.disable_darwin_native_spatial")) {
         Rcpp::stop("%s native backend disabled by option geneSCOPE.disable_darwin_native_spatial. Unset this option or set it to FALSE to use the native path.", caller);
     }
     // Check allow_darwin_native_spatial option (safe default: must be TRUE to enable)
@@ -57,11 +68,11 @@ inline void guard_darwin_native_spatial(const char* caller,
         int* ptr = LOGICAL(allow_val);
         is_allowed = (ptr[0] == TRUE);
     }
-    if (!is_allowed) {
+    if (!native_all_enabled && !is_allowed) {
         Rcpp::stop("%s native backend disabled by Darwin spatial safe default. Set options(geneSCOPE.allow_darwin_native_spatial=TRUE) to enable.", caller);
     }
 #endif
-    if (disable_option != nullptr && r_option_true(disable_option)) {
+    if (!native_all_enabled && disable_option != nullptr && r_option_true(disable_option)) {
         Rcpp::stop("%s native backend disabled by option %s.", caller, disable_option);
     }
 }

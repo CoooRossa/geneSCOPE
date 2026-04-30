@@ -349,8 +349,7 @@
 consensus_coo <- function(memb, thr = 0, n_threads = NULL) {
     if (is.null(n_threads)) n_threads <- .safe_thread_count()
     # Round 4: Darwin native safety - check disable_native_all first
-    if (isTRUE(getOption("geneSCOPE.disable_native_consensus", FALSE)) ||
-        isTRUE(getOption("geneSCOPE.disable_native_all", FALSE))) {
+    if (.native_backend_disabled("geneSCOPE.disable_native_consensus")) {
         stop("consensus_coo native backend disabled by option (Darwin safety); using R fallback. ",
              "Set options(geneSCOPE.disable_native_all=FALSE, geneSCOPE.disable_native_consensus=FALSE) to enable.",
              call. = FALSE)
