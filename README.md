@@ -434,29 +434,6 @@ visium <- computeCorrelation(
 )
 ```
 
-## Grid Selection
-
-For Xenium data, the companion grid-selection workflow evaluates a grid-length
-sweep and uses iDelta curves to choose a stable scale:
-
-```r
-scope.coord <- createSCOPE(
-    data_dir = scope.path,
-    grid_length = seq(5, 150, 1),
-    seg_type = "cell",
-    coord_file = scope.coord_file,
-    ncores = 128,
-    flip_y = TRUE
-)
-
-for (i in seq(5, 120, 1)) {
-    scope.coord <- computeIDelta(
-        scope_obj = scope.coord,
-        grid_name = paste0("grid", i)
-    )
-}
-```
-
 For the P5-style Xenium workflow, `grid_length = 30` is the standard starting
 point.
 
