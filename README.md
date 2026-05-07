@@ -111,6 +111,19 @@ Install them only as needed.
 python3 -m pip install pyarrow
 ```
 
+## Version Note
+
+> **If you are reproducing results from the paper**: the paper uses **v1.0.0**.
+> However, v1.0.0 contains a bug in `.Rbuildignore` that prevents installation
+> via `devtools::install_github()` (the overly broad rule `^.*_test.*\.R$`
+> incorrectly excludes `api_metrics_tests.R` and `internal_metrics_tests.R`
+> from the built tarball). **v1.0.1** fixes this bug (and nothing else); it is
+> functionally identical to v1.0.0. To install the paper version with the fix:
+>
+> ```r
+> devtools::install_github("CoooRossa/geneSCOPE", ref = "v1.0.1")
+> ```
+
 ## Data-Type Workflows
 
 The examples below follow the same exposed, script-like style as the paper
