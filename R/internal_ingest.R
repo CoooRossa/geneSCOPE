@@ -375,6 +375,63 @@
     return(data)
 }
 
+.cosmx_polygon_tables <- function(pol, pixel_size_um) {
+    cn <- tolower(names(pol))
+    names(pol) <- cn
+    headerless <- all(grepl("^v[0-9]+$", cn))
+    if (headerless) {
+        if (ncol(pol) < 7L) stop("headerless polygons has insufficient columns (<7)")
+        fov <- pol[[1L]]
+        cid <- pol[[2L]]
+        xg <- pol[[6L]]
+        yg <- pol[[7L]]
+    } else {
+        fov <- if ("fov" %in% cn) pol[["fov"]] else pol[[1L]]
+        cid <- if ("cellid" %in% cn) {
+            pol[["cellid"]]
+        } else if ("cell_id" %in% cn) {
+            pol[["cell_id"]]
+        } else if ("cell" %in% cn) {
+            pol[["cell"]]
+        } else {
+            pol[[2L]]
+        }
+        xg <- if ("x_global_px" %in% cn) {
+            pol[["x_global_px"]]
+        } else if ("x" %in% cn) {
+            pol[["x"]]
+        } else {
+            stop("polygons file missing x_global_px/x column")
+        }
+        yg <- if ("y_global_px" %in% cn) {
+            pol[["y_global_px"]]
+        } else if ("y" %in% cn) {
+            pol[["y"]]
+        } else {
+            stop("polygons file missing y_global_px/y column")
+        }
+    }
+
+    dt <- data.table(
+        fov = as.integer(fov),
+        cell_id = as.character(cid),
+        x = as.numeric(xg) * pixel_size_um,
+        y = as.numeric(yg) * pixel_size_um
+    )
+    cent <- dt[, .(
+        x_centroid = mean(x, na.rm = TRUE),
+        y_centroid = mean(y, na.rm = TRUE)
+    ), by = .(cell_id, fov)]
+    seg <- dt[, .(
+        cell_id = cell_id,
+        fov = fov,
+        vertex_x = x,
+        vertex_y = y
+    )]
+    seg[, vertex_index := seq_len(.N), by = .(cell_id, fov)]
+    list(points = dt, centroids = cent, boundaries = seg)
+}
+
 #' Process Segmentation
 #' @description
 #' Internal helper for `.process_segmentation`.
@@ -7333,7 +7390,37 @@ build_scope_from_cosmx <- function(input_dir,
         .log_info(parent, "S04", "using existing transcripts.parquet", verbose)
     }
 
-    have_cell_seg <- file.exists(seg_cell) || file.exists(seg_any)
+    if (!file.exists(cell_parq) && build_from_flatfiles && build_cells_from_polygons) {
+        poly_path <- NULL
+        ff_dir <- file.path(input_dir, "flatFiles")
+        cand <- c(Sys.glob(file.path(ff_dir, "*/*-polygons.csv.gz")), Sys.glob(file.path(ff_dir, "*/*_polygons.csv.gz")))
+        if (length(cand)) poly_path <- cand[[1]]
+        if (!is.null(poly_path)) {
+            .log_info(parent, "S04", paste0("cells.parquet not found; deriving centroids from polygons: ", basename(poly_path)), verbose)
+            pol <- fread(poly_path)
+            poly_tables <- .cosmx_polygon_tables(pol, pixel_size_um)
+            cent <- poly_tables$centroids
+            if (!need_temp) {
+                work_dir <- file.path(tempdir(), paste0("cosmx_scope_", as.integer(Sys.time())))
+                dir.create(work_dir, recursive = TRUE)
+                need_temp <- TRUE
+            }
+            cell_parq <- file.path(work_dir, "cells.parquet")
+            .log_info(parent, "S04", paste0("writing ", cell_parq), verbose)
+            arrow::write_parquet(cent, cell_parq)
+            if (!file.exists(file.path(work_dir, "segmentation_boundaries.parquet")) &&
+                !file.exists(seg_cell) && !file.exists(seg_any)) {
+                seg_any <- file.path(work_dir, "segmentation_boundaries.parquet")
+                .log_info(parent, "S04", paste0("writing ", seg_any), verbose)
+                arrow::write_parquet(poly_tables$boundaries, seg_any)
+            }
+        } else if (verbose) {
+            .log_info(parent, "S04", "polygons not found; cannot derive cells.parquet", verbose)
+        }
+    }
+
+    have_cell_seg <- file.exists(seg_cell) || file.exists(seg_any) ||
+        file.exists(file.path(work_dir, "segmentation_boundaries.parquet"))
     have_nuc_seg <- file.exists(nuc_parq)
 
     if (seg_type %in% c("cell", "both") && !have_cell_seg) {
@@ -7343,44 +7430,6 @@ build_scope_from_cosmx <- function(input_dir,
     if (seg_type %in% c("nucleus", "both") && !have_nuc_seg) {
         .log_info(parent, "S11", "nucleus segmentation parquet not found; downgrade segmentation strategy", verbose)
         seg_type <- if (have_cell_seg) "cell" else "none"
-    }
-
-    if (!file.exists(cell_parq) && build_from_flatfiles && build_cells_from_polygons) {
-        poly_path <- NULL
-        ff_dir <- file.path(input_dir, "flatFiles")
-        cand <- c(Sys.glob(file.path(ff_dir, "*/*-polygons.csv.gz")), Sys.glob(file.path(ff_dir, "*/*_polygons.csv.gz")))
-        if (length(cand)) poly_path <- cand[[1]]
-        if (!is.null(poly_path)) {
-            .log_info(parent, "S04", paste0("cells.parquet not found; deriving centroids from polygons: ", basename(poly_path)), verbose)
-            pol <- fread(poly_path)
-            cn <- tolower(names(pol)); names(pol) <- cn
-            headerless <- all(grepl("^v[0-9]+$", cn))
-            if (headerless) {
-                if (ncol(pol) < 7L) stop("headerless polygons has insufficient columns (<7)")
-                fov <- pol[[1]]; cid <- pol[[2]]; xg <- pol[[6]]; yg <- pol[[7]]
-            } else {
-                fx <- if ("fov" %in% cn) pol[["fov"]] else pol[[1]]
-                cx <- if ("cellid" %in% cn) pol[["cellid"]] else if ("cell_id" %in% cn) pol[["cell_id"]] else pol[[2]]
-                xg <- if ("x_global_px" %in% cn) pol[["x_global_px"]] else pol[[which.max(cn == "x")]]
-                yg <- if ("y_global_px" %in% cn) pol[["y_global_px"]] else pol[[which.max(cn == "y")]]
-                fov <- fx; cid <- cx
-            }
-            dt <- data.table(fov = as.integer(fov), cell_id = as.character(cid),
-                x = as.numeric(xg) * pixel_size_um,
-                y = as.numeric(yg) * pixel_size_um)
-            cent <- dt[, .(x_centroid = mean(x, na.rm = TRUE),
-                y_centroid = mean(y, na.rm = TRUE)), by = .(cell_id, fov)]
-            if (!need_temp) {
-                work_dir <- file.path(tempdir(), paste0("cosmx_scope_", as.integer(Sys.time())))
-                dir.create(work_dir, recursive = TRUE)
-                need_temp <- TRUE
-            }
-            cell_parq <- file.path(work_dir, "cells.parquet")
-            .log_info(parent, "S04", paste0("writing ", cell_parq), verbose)
-            arrow::write_parquet(cent, cell_parq)
-        } else if (verbose) {
-            .log_info(parent, "S04", "polygons not found; cannot derive cells.parquet", verbose)
-        }
     }
 
     if (need_temp) {
