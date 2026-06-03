@@ -301,32 +301,8 @@
         )
       }
       pol <- fread(selected_poly)
-      cn <- tolower(names(pol))
-      names(pol) <- cn
-      headerless <- all(grepl("^v[0-9]+$", cn))
-      if (headerless) {
-        if (ncol(pol) < 7) stop("headerless polygons has insufficient columns (<7)")
-        fov <- pol[[1]]
-        cid <- pol[[2]]
-        xg <- pol[[6]]
-        yg <- pol[[7]]
-      } else {
-        fov_val <- if ("fov" %in% cn) pol[["fov"]] else pol[[1]]
-        cid_val <- if ("cellid" %in% cn) pol[["cellid"]] else if ("cell_id" %in% cn) pol[["cell_id"]] else pol[[2]]
-        xg <- if ("x_global_px" %in% cn) pol[["x_global_px"]] else pol[[which.max(cn == "x")]]
-        yg <- if ("y_global_px" %in% cn) pol[["y_global_px"]] else pol[[which.max(cn == "y")]]
-        fov <- fov_val
-        cid <- cid_val
-      }
-      dt <- data.table(
-        fov = as.integer(fov),
-        cell_id = as.character(cid),
-        x = as.numeric(xg) * validated_inputs$pixel_size_um,
-        y = as.numeric(yg) * validated_inputs$pixel_size_um
-      )
-      cent <- dt[, .(x_centroid = mean(x, na.rm = TRUE),
-                     y_centroid = mean(y, na.rm = TRUE)),
-                  by = .(cell_id, fov)]
+      poly_tables <- .cosmx_polygon_tables(pol, validated_inputs$pixel_size_um)
+      cent <- poly_tables$centroids
       if (!need_temp) {
         temp_dir <- file.path(tempdir(), paste0("cosmx_scope_", as.integer(Sys.time())))
         if (!dir.exists(temp_dir)) dir.create(temp_dir, recursive = TRUE)
@@ -345,6 +321,15 @@
       }
       arrow::write_parquet(cent, file.path(work_dir, "cells.parquet"))
       cells_path <- file.path(work_dir, "cells.parquet")
+      if (!file.exists(file.path(validated_inputs$input_dir, "cell_boundaries.parquet")) &&
+          !file.exists(file.path(validated_inputs$input_dir, "segmentation_boundaries.parquet")) &&
+          !file.exists(file.path(work_dir, "segmentation_boundaries.parquet"))) {
+        seg_path <- file.path(work_dir, "segmentation_boundaries.parquet")
+        if (validated_inputs$verbose) {
+          .log_info("createSCOPE", "S04", paste0("Writing ", seg_path), validated_inputs$verbose)
+        }
+        arrow::write_parquet(poly_tables$boundaries, seg_path)
+      }
       generated_cells <- TRUE
       cells_source <- "polygon"
       polygon_path_used <- basename(selected_poly)
@@ -352,7 +337,8 @@
   }
 
   have_cell_seg <- file.exists(file.path(validated_inputs$input_dir, "cell_boundaries.parquet")) ||
-    file.exists(file.path(validated_inputs$input_dir, "segmentation_boundaries.parquet"))
+    file.exists(file.path(validated_inputs$input_dir, "segmentation_boundaries.parquet")) ||
+    file.exists(file.path(work_dir, "segmentation_boundaries.parquet"))
   if (seg_type %in% c("cell", "both") && !have_cell_seg) {
     if (validated_inputs$verbose) {
       .log_info("createSCOPE", "S11", "Cell segmentation parquet not found; downgrade segmentation strategy", validated_inputs$verbose)
