@@ -81,15 +81,15 @@
 
 #' Resolve Cluster Q Guard
 #' @description
-#' Decides whether a narrow similarity distribution should trigger the
-#' compatibility fallback contract labelled as `k_perms`.
+#' Reports whether a narrow similarity distribution would have triggered the
+#' legacy compatibility fallback contract labelled as `k_perms`.
 #' @param similarity_matrix Similarity matrix.
 #' @param algo Requested stage-1 algorithm.
 #' @param stage2_algo Optional requested stage-2 algorithm.
 #' @param K Optional hotspot neighbourhood size.
 #' @param use_consensus Whether consensus graphing is enabled.
 #' @param n_restart Number of consensus restarts.
-#' @param q_guard_method Guardrail policy (`auto`, `k_perms`, `none`).
+#' @param q_guard_method Guardrail policy (`none`, `auto`, `k_perms`).
 #' @param q_span_threshold Minimum allowed q95-q05 spread.
 #' @return List containing effective runtime knobs and diagnostics.
 #' @keywords internal
@@ -99,14 +99,15 @@
                                      K = NULL,
                                      use_consensus = TRUE,
                                      n_restart = 100L,
-                                     q_guard_method = c("auto", "k_perms", "none"),
+                                     q_guard_method = c("none", "auto", "k_perms"),
                                      q_span_threshold = 0.1) {
     q_guard_method <- match.arg(q_guard_method)
     diag <- .cluster_q_distribution_summary(
         similarity_matrix,
         q_span_threshold = q_span_threshold
     )
-    triggered <- !identical(q_guard_method, "none") && !isTRUE(diag$ok)
+    would_trigger <- !identical(q_guard_method, "none") && !isTRUE(diag$ok)
+    triggered <- FALSE
     effective_algo <- algo
     effective_stage2_algo <- if (is.null(stage2_algo)) NULL else stage2_algo
     effective_K <- K
@@ -114,22 +115,9 @@
     effective_n_restart <- n_restart
     fallback_method <- "none"
 
-    if (isTRUE(triggered)) {
-        fallback_method <- "k_perms"
-        effective_algo <- "hotspot-like"
-        effective_stage2_algo <- "hotspot-like"
-        if (is.null(effective_K) || !is.finite(effective_K) || effective_K < 2) {
-            graph_size <- tryCatch(nrow(similarity_matrix), error = function(e) 10L)
-            effective_K <- max(2L, min(30L, as.integer(floor(sqrt(max(4L, graph_size))))))
-        } else {
-            effective_K <- as.integer(effective_K)
-        }
-        effective_use_consensus <- FALSE
-        effective_n_restart <- 1L
-    }
-
     diag$requested_method <- q_guard_method
     diag$triggered <- triggered
+    diag$would_trigger <- would_trigger
     diag$fallback_method <- fallback_method
     diag$effective_algo <- effective_algo
     diag$effective_stage2_algo <- if (is.null(effective_stage2_algo)) NA_character_ else effective_stage2_algo
@@ -292,7 +280,7 @@
     future_globals_min_bytes = 2 * 1024^3,
     profile_timing = FALSE,
     backend = c("auto", "igraph", "networkit"),
-    q_guard_method = c("auto", "k_perms", "none"),
+    q_guard_method = c("none", "auto", "k_perms"),
     q_span_threshold = 0.1) {
     step01 <- .log_step("clusterGenes", "S01", "normalize inputs and build config", verbose)
     step01$enter()
@@ -521,27 +509,6 @@
                 q_guard$diag$threshold
             ),
             verbose
-        )
-    }
-    if (isTRUE(q_guard$diag$triggered)) {
-        cfg$algo <- q_guard$algo
-        cfg$stage2_algo <- q_guard$stage2_algo
-        cfg$hotspot_k <- q_guard$K
-        cfg$use_consensus <- q_guard$use_consensus
-        cfg$n_restart <- q_guard$n_restart
-        .log_key(
-            "clusterGenes",
-            .ansi_red(
-                paste0(
-                    "q distribution span95_05=",
-                    sprintf("%.4f", q_guard$diag$span95_05),
-                    " < ",
-                    sprintf("%.4f", q_guard$diag$threshold),
-                    "; using k_perms fallback contract (mapped to hotspot-like runtime path). ",
-                    "Interpret cluster/modules cautiously."
-                )
-            ),
-            level = "WARN"
         )
     }
     step03$done()

@@ -11,7 +11,7 @@
   K = NULL,
   use_consensus = TRUE,
   n_restart = 100L,
-  q_guard_method = c("auto", "k_perms", "none"),
+  q_guard_method = c("none", "auto", "k_perms"),
   q_span_threshold = 0.1
 )
 }
@@ -28,7 +28,7 @@
 
 \item{n_restart}{Number of consensus restarts.}
 
-\item{q_guard_method}{Guardrail policy (`auto`, `k_perms`, `none`).}
+\item{q_guard_method}{Guardrail policy (`none`, `auto`, `k_perms`).}
 
 \item{q_span_threshold}{Minimum allowed q95-q05 spread.}
 }
@@ -36,7 +36,7 @@
 List containing effective runtime knobs and diagnostics.
 }
 \description{
-Decides whether a narrow similarity distribution should trigger the
-compatibility fallback contract labelled as `k_perms`.
+Reports whether a narrow similarity distribution would have triggered the
+legacy compatibility fallback contract labelled as `k_perms`.
 }
 \keyword{internal}

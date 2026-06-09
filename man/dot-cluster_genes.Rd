@@ -73,7 +73,7 @@
   future_globals_min_bytes = 2 * 1024^3,
   profile_timing = FALSE,
   backend = c("auto", "igraph", "networkit"),
-  q_guard_method = c("auto", "k_perms", "none"),
+  q_guard_method = c("none", "auto", "k_perms"),
   q_span_threshold = 0.1
 )
 }
@@ -214,9 +214,12 @@
 
 \item{backend}{Graph backend contract.}
 
-\item{q_guard_method}{Q-distribution guardrail policy.}
+\item{q_guard_method}{Q-distribution guardrail policy. `none` keeps the
+requested clustering backend unchanged; `auto` and `k_perms` are accepted
+for backward-compatible diagnostics only.}
 
-\item{q_span_threshold}{Minimum q95-q05 span allowed before fallback.}
+\item{q_span_threshold}{Minimum q95-q05 span used to report a narrow
+similarity distribution.}
 }
 \value{
 Return value used internally.

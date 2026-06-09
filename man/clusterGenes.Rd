@@ -63,7 +63,7 @@ clusterGenes(
   ncores = NULL,
   mode = c("auto", "safe", "safe_sequential", "aggressive", "fast"),
   backend = c("auto", "igraph", "networkit"),
-  q_guard_method = c("auto", "k_perms", "none"),
+  q_guard_method = c("none", "auto", "k_perms"),
   q_span_threshold = 0.1,
   large_n_threshold = 1000L,
   nk_condaenv = NULL,
@@ -210,14 +210,13 @@ avoiding oversized future exports in Visium/CosMx runs.}
 heuristics, `igraph` forces the safe igraph path, and `networkit` forces
 the aggressive NetworKit path (erroring if NetworKit is unavailable).}
 
-\item{q_guard_method}{Q-distribution guardrail policy. `auto` (default)
-checks the similarity spread before clustering and switches to the
-compatibility `k_perms` fallback contract when the distribution is too
-narrow, `k_perms` forces the same fallback decision when triggered, and
-`none` disables the guard.}
+\item{q_guard_method}{Q-distribution guardrail policy. `none` (default)
+keeps the requested clustering backend unchanged. `auto` and `k_perms`
+are accepted for backward-compatible diagnostics, but no longer switch
+Leiden/Louvain runs onto the hotspot-like runtime path.}
 
 \item{q_span_threshold}{Minimum allowed q95-q05 similarity span before the
-q-distribution guard recommends the `k_perms` fallback contract.}
+q-distribution guard reports a narrow similarity distribution.}
 
 \item{large_n_threshold}{Threshold controlling large-N heuristics.}
 
