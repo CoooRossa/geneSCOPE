@@ -58,10 +58,18 @@ normalizeMoleculesInGrid <- function(scope_obj,
   step_s02$enter()
   dt <- as.data.table(g$counts)
 
+  grid_order <- as.character(g$grid_info$grid_id)
+  count_grids <- unique(as.character(dt$grid_id))
+  if (!length(grid_order) || anyNA(grid_order) || any(!nzchar(grid_order)) || anyDuplicated(grid_order)) {
+    stop("grid_info$grid_id must be complete, non-empty, and unique.")
+  }
+  if (!all(count_grids %in% grid_order)) {
+    stop("counts contains grid_id values absent from grid_info.")
+  }
   grids <- if (keep_zero_grids) {
-    sort(unique(g$grid_info$grid_id))
+    grid_order
   } else {
-    sort(unique(dt$grid_id))
+    grid_order[grid_order %in% count_grids]
   }
   genes <- sort(unique(dt$gene))
 
@@ -131,7 +139,24 @@ normalizeMoleculesInGrid <- function(scope_obj,
     .log_info(parent, "S05", "zero_var_to_zero=FALSE; skipping.", verbose)
   }
 
-  ## ---- 5. Save & return ----------------------------------------------
+  ## ---- 5. Restore the authoritative full grid order ------------------
+  # keep_zero_grids controls the matrix used during normalization, but a
+  # stored expression layer must always align exactly to grid_info so that W
+  # and Xz have the same row universe. Missing count grids represent neutral
+  # standardized values and are restored as explicit zero rows.
+  if (!identical(rownames(Xd), grid_order)) {
+    Xd_full <- matrix(
+      0,
+      nrow = length(grid_order),
+      ncol = ncol(Xd),
+      dimnames = list(grid_order, colnames(Xd))
+    )
+    common_grids <- intersect(rownames(Xd), grid_order)
+    Xd_full[common_grids, ] <- Xd[common_grids, , drop = FALSE]
+    Xd <- Xd_full
+  }
+
+  ## ---- 6. Save & return ----------------------------------------------
   g$Xz <- Xd
   scope_obj@grid[[grid_layer_name]] <- g
 

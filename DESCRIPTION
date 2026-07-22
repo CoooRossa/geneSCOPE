@@ -27,6 +27,7 @@ Imports:
     Rcpp,
     methods,
     magrittr,
+    digest,
     dplyr,
     data.table,
     Matrix,
@@ -40,9 +41,9 @@ Imports:
     tibble,
     stats
 LinkingTo:
-    Rcpp,
+    RcppArmadillo,
     RcppEigen,
-    RcppArmadillo
+    Rcpp
 NeedsCompilation: yes
 SystemRequirements: C++17-compatible compiler
 Suggests:
@@ -52,7 +53,6 @@ Suggests:
     ComplexHeatmap,
     dendextend,
     dendsort,
-    digest,
     fastcluster,
     future.apply,
     gclus,
@@ -73,7 +73,11 @@ Suggests:
     spdep,
     tidyselect,
     reticulate,
-    rhdf5
+    rhdf5,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/geneSCOPE/Repair: lee-s2-independent-alignment-fixed-r-delta-graph-v2
+Config/geneSCOPE/Repair-Date: 2026-07-22
 Collate:
     'RcppExports.R'
     'api_clustering.R'

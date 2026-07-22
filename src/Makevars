@@ -39,19 +39,19 @@ else
                 $(error GENESCOPE_FORCE_OPENMP=1 but libomp was not found; install via 'brew install libomp' or set GENESCOPE_LIBOMP_PREFIX to a prefix containing include/omp.h and lib/libomp.dylib)
             endif
         else
-            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1 -DARMA_USE_OPENMP=1
             PKG_CXXFLAGS += -Xclang -fopenmp -I$(LIBOMP_PREFIX)/include
             PKG_LIBS += -L$(LIBOMP_PREFIX)/lib -lomp
         endif
     else ifeq ($(UNAME_S),Linux)
         # Linux: rely on toolchain OpenMP flags (gcc: libgomp, clang: libomp).
-        PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+        PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1 -DARMA_USE_OPENMP=1
         PKG_CXXFLAGS += -fopenmp
         PKG_LIBS += -fopenmp
     else
         # Other platforms: build without OpenMP unless user injects flags externally.
         ifeq ($(GENESCOPE_FORCE_OPENMP),1)
-            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1 -DARMA_USE_OPENMP=1
             PKG_CXXFLAGS += -fopenmp
             PKG_LIBS += -fopenmp
         endif

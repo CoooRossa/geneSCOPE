@@ -18,7 +18,7 @@ g × g dense matrix of Lee's L values.
 }
 \description{
 Computes the Lee's L statistic for all gene pairs using a zero-mean,
-  sample-size–scaled formulation and a canonical S0 term. Matrix multiplication
+  sample-size–scaled formulation and Lee's canonical S2 term. Matrix multiplication
   is threaded with OpenMP.
 }
 \examples{

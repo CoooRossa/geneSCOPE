@@ -518,6 +518,17 @@
       stop("Z_mat must be a matrix or big.matrix.")
     }
     dims <- list(nrow = nrow(Z_mat), ncol = ncol(Z_mat))
+    if (dims$nrow != dims$ncol) {
+      stop("Matrix-mode FDR requires a square pairwise matrix.")
+    }
+    if (!is.null(P)) {
+      if (!is.matrix(P) && !inherits(P, "big.matrix")) {
+        stop("P must be a matrix or big.matrix.")
+      }
+      if (!identical(dim(P), c(dims$nrow, dims$ncol))) {
+        stop("P dimensions must match Z_mat.")
+      }
+    }
   } else {
     if (!is.numeric(p_values)) stop("p_values must be numeric.")
     dims <- list(length = length(p_values))
@@ -568,11 +579,11 @@
 #' @keywords internal
 .fdr_runner_materialize <- function(spec, validated_inputs) {
   adjust_universe <- function(base_len, universe) {
-    if (!is.null(universe) && is.finite(universe) && universe > 0) {
-      universe
-    } else {
-      base_len
+    if (is.null(universe)) return(base_len)
+    if (length(universe) != 1L || !is.finite(universe) || universe < base_len) {
+      stop("total_universe must be a finite scalar no smaller than the p-value vector length.")
     }
+    as.numeric(universe)
   }
 
   adjust_mode_label <- function(mode) {
@@ -587,98 +598,121 @@
   }
 
   apply_adjustment <- function(values, mode, universe) {
+    adj_universe <- adjust_universe(length(values), universe)
     switch(mode,
-      "by" = p.adjust(values, "BY"),
-      "bh_universe" = p.adjust(values, "BH", n = adj_universe),
-      "by_universe" = p.adjust(values, "BY", n = adj_universe),
-      "bonferroni" = p.adjust(values, "bonferroni", n = adj_universe),
-      p.adjust(values, "BH")
+      "by" = stats::p.adjust(values, "BY"),
+      "bh_universe" = stats::p.adjust(values, "BH", n = adj_universe),
+      "by_universe" = stats::p.adjust(values, "BY", n = adj_universe),
+      "bonferroni" = stats::p.adjust(values, "bonferroni", n = adj_universe),
+      stats::p.adjust(values, "BH")
     )
+  }
+
+  # Multiple-testing correction for a symmetric pairwise matrix must use one
+  # value per unordered, off-diagonal pair.  Non-finite entries are not tests.
+  pairwise_adjust <- function(p_mat, method = "BH") {
+    p_mat <- as.matrix(p_mat)
+    if (nrow(p_mat) != ncol(p_mat)) {
+      stop("Pairwise p-value matrices must be square.")
+    }
+    out <- matrix(NA_real_, nrow(p_mat), ncol(p_mat), dimnames = dimnames(p_mat))
+    pair_idx <- upper.tri(p_mat, diag = FALSE)
+    pair_p <- p_mat[pair_idx]
+    finite <- is.finite(pair_p)
+    adjusted <- rep(NA_real_, length(pair_p))
+    if (any(finite)) {
+      if (any(pair_p[finite] < 0 | pair_p[finite] > 1)) {
+        stop("Finite p-values must lie in [0, 1].")
+      }
+      adjusted[finite] <- stats::p.adjust(pair_p[finite], method = method)
+    }
+    out[pair_idx] <- adjusted
+    out[lower.tri(out)] <- t(out)[lower.tri(out)]
+    diag(out) <- NA_real_
+    out
+  }
+
+  pairwise_storey <- function(p_mat) {
+    p_mat <- as.matrix(p_mat)
+    out <- matrix(NA_real_, nrow(p_mat), ncol(p_mat), dimnames = dimnames(p_mat))
+    pair_idx <- upper.tri(p_mat, diag = FALSE)
+    pair_p_all <- p_mat[pair_idx]
+    finite <- is.finite(pair_p_all)
+    pair_p <- pair_p_all[finite]
+    pi0_hat <- NA_real_
+    if (length(pair_p)) {
+      if (any(pair_p < 0 | pair_p > 1)) {
+        stop("Finite p-values must lie in [0, 1].")
+      }
+      lambdas <- seq(0.5, 0.95, by = 0.05)
+      pi0_values <- vapply(
+        lambdas,
+        function(lambda) mean(pair_p > lambda) / (1 - lambda),
+        numeric(1)
+      )
+      pi0_hat <- min(1, min(pi0_values, na.rm = TRUE))
+      if (!is.finite(pi0_hat) || pi0_hat <= 0) pi0_hat <- 1
+
+      ordering <- order(pair_p)
+      q_ordered <- pi0_hat * length(pair_p) * pair_p[ordering] / seq_along(ordering)
+      if (length(q_ordered) > 1L) {
+        for (idx in (length(q_ordered) - 1L):1L) {
+          q_ordered[idx] <- min(q_ordered[idx], q_ordered[idx + 1L])
+        }
+      }
+      q_finite <- numeric(length(pair_p))
+      q_finite[ordering] <- pmin(q_ordered, 1)
+      q_all <- rep(NA_real_, length(pair_p_all))
+      q_all[finite] <- q_finite
+      out[pair_idx] <- q_all
+      out[lower.tri(out)] <- t(out)[lower.tri(out)]
+    }
+    diag(out) <- NA_real_
+    list(q = out, pi0_hat = pi0_hat)
   }
 
   mode <- spec$mode
   perms <- validated_inputs$perms
   min_p_possible <- if (validated_inputs$permutation_exists) 1 / (perms + 1) else NA_real_
   if (mode == "matrix") {
-    Z_mat <- validated_inputs$Z_mat
-    P <- validated_inputs$P
-    chunk_size <- validated_inputs$chunk_size
-    verbose <- validated_inputs$verbose
-    is_big <- inherits(Z_mat, "big.matrix")
-    n_genes <- ncol(Z_mat)
-    idx_chunks <- seq(1, n_genes, by = chunk_size)
-    allocate <- function() {
-      bigmemory::big.matrix(
-        nrow = nrow(Z_mat),
-        ncol = n_genes,
-        type = "double",
-        init = NA_real_
-      )
+    Z_mat <- as.matrix(validated_inputs$Z_mat)
+    P <- if (is.null(validated_inputs$P)) NULL else as.matrix(validated_inputs$P)
+    p_disc <- if (!is.null(P)) P else 2 * stats::pnorm(-abs(Z_mat))
+    if (!identical(dim(p_disc), dim(Z_mat))) {
+      stop("The raw p-value matrix dimensions must match Z_mat.")
     }
-    if (is_big && !requireNamespace("bigmemory", quietly = TRUE)) {
-      stop("bigmemory is required for chunked matrix FDR smoothing")
+    dimnames(p_disc) <- dimnames(Z_mat)
+
+    if (!is.null(P)) {
+      k_est <- round(p_disc * (perms + 1) - 1)
+      k_est[k_est < 0] <- 0
+      k_est[k_est > perms] <- perms
+      p_beta <- (k_est + 1) / (perms + 2)
+      p_mid <- (k_est + 0.5) / (perms + 1)
+      p_uniform <- (k_est + matrix(stats::runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
+      dimnames(p_beta) <- dimnames(p_mid) <- dimnames(p_uniform) <- dimnames(p_disc)
+    } else {
+      p_beta <- p_mid <- p_uniform <- p_disc
     }
-    FDR_disc <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_beta <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_mid <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_uniform <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    for (start in idx_chunks) {
-      end <- min(start + chunk_size - 1L, n_genes)
-      if (!is.null(P)) {
-        p_disc <- P[, start:end, drop = FALSE]
-        k_est <- round(p_disc * (perms + 1) - 1)
-        k_est[k_est < 0] <- 0
-        k_est[k_est > perms] <- perms
-        p_beta <- (k_est + 1) / (perms + 2)
-        p_mid <- (k_est + 0.5) / (perms + 1)
-        p_uniform <- (k_est + matrix(runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
-      } else {
-        Z_chunk <- Z_mat[, start:end, drop = FALSE]
-        p_disc <- 2 * pnorm(-abs(Z_chunk))
-        p_beta <- p_mid <- p_uniform <- p_disc
-      }
-      flat <- function(x) matrix(p.adjust(c(x), "BH"), nrow = nrow(x))
-      if (is_big) {
-        FDR_disc[, start:end] <- flat(p_disc)
-        FDR_beta[, start:end] <- flat(p_beta)
-        FDR_mid[, start:end] <- flat(p_mid)
-        FDR_uniform[, start:end] <- flat(p_uniform)
-      } else {
-        FDR_disc[, start:end] <- flat(p_disc)
-        FDR_beta[, start:end] <- flat(p_beta)
-        FDR_mid[, start:end] <- flat(p_mid)
-        FDR_uniform[, start:end] <- flat(p_uniform)
-      }
+
+    # Each adjustment is global over the same finite upper-triangle family.
+    FDR_disc <- pairwise_adjust(p_disc, "BH")
+    FDR_beta <- pairwise_adjust(p_beta, "BH")
+    FDR_mid <- pairwise_adjust(p_mid, "BH")
+    FDR_uniform <- pairwise_adjust(p_uniform, "BH")
+    storey <- pairwise_storey(p_beta)
+    FDR_storey <- storey$q
+    pi0_hat <- storey$pi0_hat
+
+    # The exact empirical p-value BH result is authoritative.  Smoothed and
+    # Storey matrices are retained only as explicitly labelled diagnostics.
+    FDR_main <- FDR_disc
+    FDR_main_method <- if (!is.null(P)) {
+      "BH(exact empirical P; unique unordered finite off-diagonal pairs)"
+    } else {
+      "BH(analytical P; unique unordered finite off-diagonal pairs)"
     }
-    FDR_storey <- NULL
-    pi0_hat <- NA_real_
-    FDR_main_method <- if (is_big) "BH(beta p) (chunked, no q-value)" else "Storey q-value (beta p)"
-    if (!is_big) {
-      reference <- if (!is.null(P)) p.adjust(P, "BH") * NA_real_ else NA_real_
-      p_vec <- as.numeric(if (!is.null(P)) P else 2 * pnorm(-abs(Z_mat)))
-      m_tot <- length(p_vec)
-      if (m_tot > 0) {
-        lambdas <- seq(0.5, 0.95, by = 0.05)
-        pi0_vals <- sapply(lambdas, function(lam) {
-          mean(p_vec > lam) / (1 - lam)
-        })
-        pi0_hat <- min(1, min(pi0_vals, na.rm = TRUE))
-        if (!is.finite(pi0_hat) || pi0_hat <= 0) pi0_hat <- 1
-        o <- order(p_vec, na.last = NA)
-        ro <- integer(m_tot); ro[o] <- seq_along(o)
-        q_raw <- pi0_hat * m_tot * p_vec / pmax(ro, 1)
-        q_ord <- q_raw[o]
-        for (i in seq_len(length(q_ord) - 1)) {
-          idx <- length(q_ord) - i
-          if (q_ord[idx] > q_ord[idx + 1]) q_ord[idx] <- q_ord[idx + 1]
-        }
-        q_final <- numeric(m_tot)
-        q_final[o] <- pmin(q_ord, 1)
-        FDR_storey <- matrix(q_final, nrow = nrow(FDR_beta), dimnames = dimnames(FDR_beta))
-      }
-    }
-    FDR_main <- if (!is.null(FDR_storey)) FDR_storey else FDR_beta
-    n_sig_005 <- sum(FDR_main < 0.05, na.rm = TRUE)
+    n_sig_005 <- sum(FDR_main[upper.tri(FDR_main, diag = FALSE)] < 0.05, na.rm = TRUE)
     return(list(
       FDR_out_disc = FDR_disc,
       FDR_out_beta = FDR_beta,
@@ -690,7 +724,7 @@
       pi0_hat = pi0_hat,
       n_sig_005 = n_sig_005,
       min_p_possible = min_p_possible,
-      raw_p = if (!is.null(P)) P else 2 * pnorm(-abs(Z_mat))
+      raw_p = p_disc
     ))
   } else {
     p_values <- validated_inputs$p_values

@@ -1,32 +1,73 @@
+#' Adjust a pairwise p-value matrix over unique unordered gene pairs.
+#' @keywords internal
+.lee_pairwise_p_adjust <- function(p_mat, method = "BH") {
+    p_mat <- as.matrix(p_mat)
+    out <- matrix(NA_real_, nrow(p_mat), ncol(p_mat), dimnames = dimnames(p_mat))
+    if (nrow(p_mat) == ncol(p_mat)) {
+        ut <- upper.tri(p_mat, diag = FALSE)
+        vals <- p_mat[ut]
+        good <- is.finite(vals)
+        adj <- rep(NA_real_, length(vals))
+        if (any(good)) adj[good] <- p.adjust(vals[good], method = method)
+        out[ut] <- adj
+        out[lower.tri(out)] <- t(out)[lower.tri(out)]
+        diag(out) <- NA_real_
+    } else {
+        vals <- as.numeric(p_mat)
+        good <- is.finite(vals)
+        adj <- rep(NA_real_, length(vals))
+        if (any(good)) adj[good] <- p.adjust(vals[good], method = method)
+        out[] <- adj
+    }
+    out
+}
+
+#' Convert exact two-sided permutation p-values to signed normal scores.
+#' @keywords internal
+.lee_empirical_signed_z <- function(L, P) {
+    L <- as.matrix(L)
+    P <- as.matrix(P)
+    if (!identical(dim(L), dim(P))) stop("L and P dimensions must match.", call. = FALSE)
+    out <- sign(L) * stats::qnorm(pmax(P / 2, .Machine$double.xmin), lower.tail = FALSE)
+    out[!is.finite(P)] <- NA_real_
+    out[P >= 1] <- 0
+    dimnames(out) <- dimnames(L)
+    out
+}
+
 #' Add Lee's L statistics to a scope_object
 #' @description
-#'   High-level wrapper that computes Lee's L, analytical Z-scores, empirical
-#'   p-values via block permutations, FDR, spatial gradients, quality-control
-#'   metrics, and stores everything under a new layer in \code{@grid}.
+#'   High-level wrapper that computes Lee's L, empirical p-values and signed
+#'   Z-scores via block permutations, FDR, spatial gradients, and quality-control
+#'   metrics, and stores everything under a new layer in \code{@stats}.
 #' @param scope_obj A \code{scope_object} with at least one populated \code{@grid} slot.
 #' @param grid_name Character. Name of the grid sub-layer to process. If
 #'   \code{NULL} and only one sub-layer exists, it is selected automatically.
 #' @param genes Optional character vector of genes to include; if \code{NULL}
 #'   all genes are used.
-#' @param within Logical. If \code{TRUE} restrict analysis to the selected
+#' @param within A single logical value. If \code{TRUE} restrict analysis to the selected
 #'   gene set on both axes (default). Otherwise compute gene × all.
-#' @param ncores Integer. Number of cores for parallel processing (default 1).
-#' @param block_side Integer. Number of grid cells per side for block partitioning (default 8).
-#' @param perms Integer. Number of permutations for Monte-Carlo p-values (default 1000).
-#' @param block_size Integer. Number of permutations processed per batch (default 64).
+#' @param ncores Positive integer. Number of cores for parallel processing (default 1).
+#' @param block_side Positive integer. Number of grid cells per side for block partitioning (default 8).
+#' @param perms Non-negative integer. Number of permutations for Monte-Carlo p-values (default 1000).
+#' @param block_size Positive integer. Number of permutations processed per batch (default 64).
 #' @param L_min Numeric threshold used when building the QC similarity graph.
-#' @param norm_layer Character. Name of the normalised expression layer (default "Xz").
+#' @param norm_layer Character. Name of the normalized expression layer (default
+#'   "Xz"). Custom layers must be numeric, finite, and column-centred relative
+#'   to their RMS magnitude; unit variance is not required.
 #' @param lee_stats_layer_name Character. Name for the output statistics layer.
-#' @param legacy_formula Logical. Use legacy denominator for compatibility.
-#' @param mem_limit_GB Numeric. RAM threshold that triggers streaming mode (default 8).
-#' @param chunk_size Integer. Number of columns processed per chunk (default 128).
-#' @param use_bigmemory Logical. Use file-backed matrices for large computations (default TRUE).
+#' @param legacy_formula Must remain `FALSE`; the non-canonical legacy
+#'   denominator is disabled.
+#' @param mem_limit_GB Numeric. Maximum allowed dense Lee result size in GiB
+#'   (default 2); oversized results fail closed.
+#' @param chunk_size Retained for API compatibility; the unsafe chunk route is disabled.
+#' @param use_bigmemory Must remain `FALSE`; the former chunk route was
+#'   RAM-backed rather than file-backed and is disabled.
 #' @param backing_path Character. Directory for temporary files (default tempdir()).
 #' @param cache_inputs Logical. Cache preprocessed X/Z/W and block IDs for reuse across calls (default TRUE).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @param ncore Deprecated. Use \code{ncores} instead.
 #' @return The modified \code{scope_object}.
-#' @importFrom RhpcBLASctl blas_set_num_threads
 #' @importFrom stats sd pnorm p.adjust coef lm
 #' @importFrom igraph graph_from_adjacency_matrix simplify degree cluster_louvain cluster_leiden components modularity
 #' @keywords internal
@@ -44,7 +85,7 @@
                      legacy_formula = FALSE,
                      mem_limit_GB = 2,
                      chunk_size = 32L,
-                     use_bigmemory = TRUE,
+                     use_bigmemory = FALSE,
                      backing_path = tempdir(),
                      cache_inputs = TRUE,
                      verbose = TRUE,
@@ -60,14 +101,62 @@
         )
         ncores <- ncore
     }
-
-    user_set_bigmemory <- !missing(use_bigmemory)
-    user_set_chunk <- !missing(chunk_size)
+    within <- .lee_assert_flag(within, "within")
+    ncores <- .lee_assert_positive_integer(ncores, "ncores")
+    block_side <- .lee_assert_positive_integer(block_side, "block_side")
+    perms <- .lee_assert_nonnegative_integer(perms, "perms")
+    block_size <- .lee_assert_positive_integer(block_size, "block_size")
+    mem_limit_GB <- .lee_assert_positive_finite(mem_limit_GB, "mem_limit_GB")
+    chunk_size <- .lee_assert_positive_integer(chunk_size, "chunk_size")
+    legacy_formula <- .lee_assert_flag(legacy_formula, "legacy_formula")
+    use_bigmemory <- .lee_assert_flag(use_bigmemory, "use_bigmemory")
+    cache_inputs <- .lee_assert_flag(cache_inputs, "cache_inputs")
+    verbose <- .lee_assert_flag(verbose, "verbose")
+    norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
+    if (!is.null(grid_name)) grid_name <- .lee_assert_layer_name(grid_name, "grid_name")
+    if (!is.null(lee_stats_layer_name)) {
+        lee_stats_layer_name <- .lee_assert_layer_name(lee_stats_layer_name, "lee_stats_layer_name")
+    }
+    if (!is.numeric(L_min) || length(L_min) != 1L || is.na(L_min) || !is.finite(L_min)) {
+        stop("L_min must be a single finite number.", call. = FALSE)
+    }
+    if (!is.null(genes) && (!is.character(genes) || !length(genes) || anyNA(genes) ||
+        any(!nzchar(genes)) || anyDuplicated(genes))) {
+        stop("genes must be NULL or a non-empty vector of unique gene names.", call. = FALSE)
+    }
+    if (!is.character(backing_path) || length(backing_path) != 1L || is.na(backing_path) || !nzchar(backing_path)) {
+        stop("backing_path must be a single non-empty character string.", call. = FALSE)
+    }
+    if (isTRUE(legacy_formula)) {
+        stop(
+            "legacy_formula=TRUE is no longer supported because it selects a non-canonical Lee's L denominator. ",
+            "Use the canonical default (legacy_formula=FALSE).",
+            call. = FALSE
+        )
+    }
+    if (isTRUE(use_bigmemory)) {
+        stop(
+            "use_bigmemory=TRUE is disabled because the former Lee chunk route was RAM-backed, not file-backed.",
+            call. = FALSE
+        )
+    }
+    if (!within && !is.null(genes) && perms > 0L) {
+        stop(
+            "Permutation inference for within=FALSE with a gene subset is rectangular and is not supported. ",
+            "Use perms=0 for observed gene-by-all Lee's L, or use within=TRUE for permutation inference.",
+            call. = FALSE
+        )
+    }
 
     # Get system information and aggressive thread count (use all visible cores up to request)
     os_type <- .detect_os()
-    avail_cores <- max(1L, detectCores(logical = TRUE))
-    ncores <- max(1L, min(ncores, avail_cores))
+    avail_cores <- suppressWarnings(detectCores(logical = TRUE))
+    if (!is.numeric(avail_cores) || length(avail_cores) != 1L || is.na(avail_cores) ||
+        !is.finite(avail_cores) || avail_cores < 1L) {
+        avail_cores <- 1L
+    }
+    avail_cores <- as.integer(avail_cores)
+    ncores <- min(ncores, avail_cores)
     grid_label <- if (is.null(grid_name)) "auto" else as.character(grid_name)[1]
     step01 <- .log_step(parent, "S01", "resolve inputs and weights", verbose)
     step01$enter(paste0("grid_name=", grid_label, " ncores=", ncores))
@@ -127,12 +216,23 @@
         stop("Normalized layer '", norm_layer, "' not found")
     }
 
-    n_genes_use <- if (!is.null(genes)) length(genes) else all_genes
-    matrix_size_gb <- (n_genes_use^2 * 8) / (1024^3)
+    n_genes_use <- if (!is.null(genes) && isTRUE(within)) length(genes) else all_genes
+    matrix_size_gb <- (as.double(n_genes_use)^2 * 8) / (1024^3)
+    input_size_gb <- (as.double(nrow(g_layer[[norm_layer]])) * n_genes_use * 8) / (1024^3)
 
-    # Memory guard: estimate per-thread usage as single-core size × threads
+    # The observed Lee kernel shares X/WZ across workers.  The permutation
+    # kernel deliberately keeps one g x g counter per OpenMP worker so that
+    # updates are race-free and worker allocation failures can be reported
+    # without returning partial counts.  Include those buffers in the guard.
     sys_mem_gb <- .get_system_memory_gb()
-    est_total_gb <- matrix_size_gb * ncores
+    observed_est_gb <- matrix_size_gb + 2 * input_size_gb
+    permutation_est_gb <- if (perms > 0L) {
+        (2 + ncores_cpp) * matrix_size_gb +
+            (1 + 2 * ncores_cpp) * input_size_gb
+    } else {
+        0
+    }
+    est_total_gb <- max(observed_est_gb, permutation_est_gb)
     .log_info(parent, "S02", paste0(
         "matrix_size_gb=", round(matrix_size_gb, 1),
         " est_total_gb=", round(est_total_gb, 1),
@@ -146,61 +246,17 @@
         )
     }
 
-    mem_reason <- NULL
-    # Respect user bigmemory/chunk overrides while still hinting when streaming is advisable
+    mem_reason <- "within_limit"
     if (matrix_size_gb > mem_limit_GB) {
-        if (use_bigmemory) {
-            mem_reason <- "matrix_size_gb>mem_limit_gb"
-            if (verbose) {
-                .log_info(parent, "S02", paste0(
-                    "large matrix detected (", round(matrix_size_gb, 1),
-                    " GB); staying in bigmemory/streaming mode.",
-                    if (!user_set_chunk) " You may tune chunk_size to trade IO vs RAM." else ""
-                ), verbose)
-            }
-        } else if (user_set_bigmemory) {
-            mem_reason <- "user_forced_inmemory"
-            if (verbose) .log_info(parent, "S02", paste0(
-                "Warning: requested use_bigmemory=FALSE with large matrix (",
-                round(matrix_size_gb, 1), " GB); proceeding in-memory as requested."
-            ), verbose)
-        } else if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
-            mem_reason <- "bigmemory_unavailable"
-            if (verbose) .log_info(parent, "S02",
-                "!!! Warning: bigmemory not available on Windows; using regular matrices !!!",
-                verbose
-            )
-            use_bigmemory <- FALSE
-        } else {
-            mem_reason <- "auto_enable"
-            use_bigmemory <- TRUE
-            if (verbose) .log_info(parent, "S02", paste0(
-                "large matrix detected (", round(matrix_size_gb, 1),
-                " GB); enabling bigmemory/streaming."
-            ), verbose)
-        }
-    } else {
-        mem_reason <- "within_limit"
+        stop(
+            "Lee L output exceeds mem_limit_GB, and the former bigmemory route is disabled because it was RAM-backed. ",
+            "Reduce the gene set or raise mem_limit_GB only after confirming available RAM.",
+            call. = FALSE
+        )
     }
 
-    mem_mode <- if (use_bigmemory) "bigmemory" else "inmemory"
+    mem_mode <- "inmemory"
     .log_backend(parent, "S02", "mem_mode", mem_mode, reason = mem_reason, verbose = verbose)
-
-    # Cross-platform temporary directory
-    if (use_bigmemory) {
-        if (backing_path == tempdir()) {
-            # Use platform-specific temporary directory
-            backing_path <- switch(os_type,
-                windows = Sys.getenv("TEMP", tempdir()),
-                linux = Sys.getenv("TMPDIR", "/tmp"),
-                macos = Sys.getenv("TMPDIR", "/tmp")
-            )
-        }
-
-        if (!dir.exists(backing_path)) {
-            dir.create(backing_path, recursive = TRUE)
-        }
-    }
 
     step02$done(paste0("mem_mode=", mem_mode))
 
@@ -272,6 +328,13 @@
         if (success) {
             res <- result$object
         } else {
+            if (current_cores <= min_cores) {
+                stop(
+                    "Lee's L computation failed at one thread: ",
+                    conditionMessage(result$error),
+                    call. = FALSE
+                )
+            }
             attempt <- attempt + 1
             # Reduce thread count
             current_cores <- max(floor(current_cores / 2), min_cores)
@@ -303,45 +366,26 @@
     grid_inf <- res$grid_info
     gname <- res$grid_name
     n <- nrow(X_full)
-
-    ## --- 4. Analytical Z computation with memory optimization ---
-    step04 <- .log_step(parent, "S04", "compute Z-scores", verbose)
-    step04$enter(paste0("within=", within, " mem_mode=", mem_mode))
-    if (within || is.null(genes)) {
-        S0 <- sum(W)
-        EZ <- -1 / (n - 1)
-        Var <- (n^2 * (n - 2)) / ((n - 1)^2 * (n - 3) * S0)
-
-        # Handle large matrices more carefully
-        if (inherits(L, "big.matrix")) {
-            if (verbose) {
-                .log_info(parent, "S04", "computing Z-scores in chunks", verbose)
-            }
-            Z_mat <- L # Use the same backing store
-            # Process in chunks to avoid memory issues
-            n_genes <- ncol(L)
-            chunk_genes <- seq(1, n_genes, by = chunk_size)
-            for (start in chunk_genes) {
-                end <- min(start + chunk_size - 1, n_genes)
-                L_chunk <- L[, start:end]
-                Z_chunk <- (L_chunk - EZ) / sqrt(Var)
-                Z_mat[, start:end] <- Z_chunk
-            }
-        } else {
-            Z_mat <- (L - EZ) / sqrt(Var)
-        }
-    } else {
-        if (inherits(L, "big.matrix")) {
-            stop("Asymmetric Z-score computation not yet supported for big.matrix")
-        }
-        Z_mat <- t(apply(L, 1, function(v) {
-            sdv <- sd(v)
-            if (sdv == 0) rep(0, length(v)) else (v - mean(v)) / sdv
-        }))
-        dimnames(Z_mat) <- dimnames(L)
+    if (perms > 0L && inherits(L, "big.matrix")) {
+        stop(
+            "Permutation/FDR inference is not supported for a streaming big.matrix Lee result because ",
+            "global BH must be computed over all unique unordered pairs. Rerun with use_bigmemory=FALSE ",
+            "and sufficient memory, reduce the gene set, or use perms=0 for observed L only.",
+            call. = FALSE
+        )
     }
 
-    step04$done()
+    ## --- 4. Inference placeholder ---
+    ## Moran's-I moments are not the moments of Lee's L.  Z is therefore
+    ## derived from the exact two-sided permutation P matrix after Step 5.
+    step04 <- .log_step(parent, "S04", "prepare empirical inference", verbose)
+    step04$enter(paste0("within=", within, " mem_mode=", mem_mode))
+    Z_mat <- if (perms > 0L) {
+        matrix(NA_real_, nrow(L), ncol(L), dimnames = dimnames(L))
+    } else {
+        NULL
+    }
+    step04$done("analytic Moran moments disabled")
 
     block_id <- res$block_id
     input_cache <- res$input_cache
@@ -352,7 +396,7 @@
     P <- if (perms > 0) {
         # Temporarily disable BLAS threads for permutation tests
         if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-            RhpcBLASctl::blas_set_num_threads(1)
+            try(RhpcBLASctl::blas_set_num_threads(1), silent = TRUE)
         }
 
         if (inherits(L, "big.matrix")) {
@@ -419,6 +463,13 @@
                 perm_success <- TRUE
                 P <- perm_result$object
             } else {
+                if (perm_cores <= 1L) {
+                    stop(
+                        "Lee's L permutation test failed at one thread: ",
+                        conditionMessage(perm_result$error),
+                        call. = FALSE
+                    )
+                }
                 perm_attempt <- perm_attempt + 1
                 perm_cores <- max(floor(perm_cores / 2), 1)
                 if (verbose) {
@@ -434,140 +485,78 @@
             }
         }
 
-        if (!perm_success) {
-            if (verbose) .log_info(parent, "S05",
-                "!!! Warning: Permutation test failed; setting P = NULL !!!",
-                verbose
-            )
-            .log_backend(parent, "S05", "permutation", "skipped", reason = "failed", verbose = verbose)
-            NULL
-        } else {
-            P
-        }
+        if (!perm_success) stop("Lee's L permutation test failed.", call. = FALSE)
+        P
     } else {
         .log_backend(parent, "S05", "permutation", "skipped", reason = "perms<=0", verbose = verbose)
         NULL
     }
-    step05$done()
+    if (!is.null(P)) {
+        dimnames(P) <- dimnames(L_reg)
+        zero_var <- colSums(X_used^2) <= .Machine$double.eps
+        if (any(zero_var)) {
+            P[zero_var, ] <- NA_real_
+            P[, zero_var] <- NA_real_
+        }
+        Z_mat <- .lee_empirical_signed_z(L_reg, P)
+    }
+    step05$done(if (!is.null(P)) "empirical P and signed Z ready" else "no inference")
 
     ## --- 6. FDR: Three Monte Carlo smoothing strategies as in .get_top_l_vs_r ---
     step06 <- .log_step(parent, "S06", "FDR and q-values", verbose)
     step06$enter(paste0("mem_mode=", mem_mode, " perms=", perms))
-    # Explanation:
-    #   If P exists: P = (k+1)/(perms+1); infer k = round(P*(perms+1)-1)
-    #   p_beta    = (k+1)/(perms+2)        (Jeffreys, default more robust/slightly conservative)
-    #   p_mid     = (k+0.5)/(perms+1)      (mid-p, less conservative)
-    #   p_uniform = (k+U)/(perms+1)        (random jitter, expected equal to discrete grid, breaks staircase)
-    #   Main output FDR = BH(p_beta)
-    if (inherits(Z_mat, "big.matrix")) {
-        if (verbose) .log_info(parent, "S06", "computing FDR corrections", verbose)
-        n_genes <- ncol(Z_mat)
-        idx_chunks <- seq(1, n_genes, by = chunk_size)
-
-        FDR_disc <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
-            type = "double", init = NA_real_
-        )
-        FDR_beta <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
-            type = "double", init = NA_real_
-        )
-        FDR_mid <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
-            type = "double", init = NA_real_
-        )
-        FDR_uniform <- bigmemory::big.matrix(
-            nrow = nrow(Z_mat), ncol = n_genes,
-            type = "double", init = NA_real_
-        )
-
-        for (start in idx_chunks) {
-            end <- min(start + chunk_size - 1L, n_genes)
-            if (!is.null(P)) {
-                p_disc <- P[, start:end]
-                k_est <- round(p_disc * (perms + 1) - 1)
-                k_est[k_est < 0] <- 0
-                k_est[k_est > perms] <- perms
-                p_beta <- (k_est + 1) / (perms + 2)
-                p_mid <- (k_est + 0.5) / (perms + 1)
-                p_uniform <- (k_est + matrix(runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
-            } else {
-                # No permutation → analytical p
-                Z_chunk <- Z_mat[, start:end]
-                p_disc <- 2 * pnorm(-abs(Z_chunk))
-                p_beta <- p_mid <- p_uniform <- p_disc
-            }
-            FDR_disc[, start:end] <- matrix(p.adjust(c(p_disc), "BH"), nrow = nrow(p_disc))
-            FDR_beta[, start:end] <- matrix(p.adjust(c(p_beta), "BH"), nrow = nrow(p_beta))
-            FDR_mid[, start:end] <- matrix(p.adjust(c(p_mid), "BH"), nrow = nrow(p_mid))
-            FDR_uniform[, start:end] <- matrix(p.adjust(c(p_uniform), "BH"), nrow = nrow(p_uniform))
-        }
-        FDR_out_disc <- FDR_disc
-        FDR_out_beta <- FDR_beta
-        FDR_out_mid <- FDR_mid
-        FDR_out_uniform <- FDR_uniform
+    if (is.null(P)) {
+        FDR_out_disc <- FDR_out_beta <- FDR_out_mid <- FDR_out_uniform <- NULL
+        FDR_storey <- FDR_main <- NULL
+        pi0_hat <- NA_real_
+        n_sig_005 <- NA_integer_
+        min_p_possible <- NA_real_
+        FDR_main_method <- "unavailable (perms=0)"
     } else {
-        # In-memory mode: compute in one go (exact BH)
-        p_disc <- if (!is.null(P)) P else 2 * pnorm(-abs(Z_mat))
-        if (!is.null(P)) {
-            k_est <- round(p_disc * (perms + 1) - 1)
-            k_est[k_est < 0] <- 0
-            k_est[k_est > perms] <- perms
-            p_beta <- (k_est + 1) / (perms + 2)
-            p_mid <- (k_est + 0.5) / (perms + 1)
-            p_uniform <- (k_est + runif(length(k_est))) / (perms + 1)
-        } else {
-            p_beta <- p_mid <- p_uniform <- p_disc
-        }
-        # BH on flattened vectors, then reshape
-        shp <- dim(p_disc)
-        FDR_out_disc <- matrix(p.adjust(p_disc, "BH"), nrow = shp[1], dimnames = dimnames(p_disc))
-        FDR_out_beta <- matrix(p.adjust(p_beta, "BH"), nrow = shp[1], dimnames = dimnames(p_disc))
-        FDR_out_mid <- matrix(p.adjust(p_mid, "BH"), nrow = shp[1], dimnames = dimnames(p_disc))
-        FDR_out_uniform <- matrix(p.adjust(p_uniform, "BH"), nrow = shp[1], dimnames = dimnames(p_disc))
-    }
+        # All adjustments use the intended family: unique unordered,
+        # off-diagonal pairs.  No per-chunk or duplicated-triangle BH is allowed.
+        p_disc <- P
+        k_est <- round(p_disc * (perms + 1) - 1)
+        k_est[k_est < 0] <- 0
+        k_est[k_est > perms] <- perms
+        p_beta <- (k_est + 1) / (perms + 2)
+        p_mid <- (k_est + 0.5) / (perms + 1)
+        p_uniform <- (k_est + matrix(stats::runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
+        FDR_out_disc <- .lee_pairwise_p_adjust(p_disc, "BH")
+        FDR_out_beta <- .lee_pairwise_p_adjust(p_beta, "BH")
+        FDR_out_mid <- .lee_pairwise_p_adjust(p_mid, "BH")
+        FDR_out_uniform <- .lee_pairwise_p_adjust(p_uniform, "BH")
 
-    ## --- 5.x Extra: Storey q-value main FDR (in-memory mode only, big.matrix fallback) ---
-    FDR_storey <- NULL
-    pi0_hat <- NA_real_
-    FDR_main_method <- if (inherits(Z_mat, "big.matrix")) "BH(beta p) (chunked, no q-value)" else "Storey q-value (beta p)"
-    if (!inherits(Z_mat, "big.matrix")) {
-        # Flatten to vector
-        p_vec <- as.numeric(if (!is.null(P)) {
-            # p_beta already computed above
-            p_beta
-        } else {
-            p_disc
-        })
-        m_tot <- length(p_vec)
-        if (m_tot > 0) {
-            # 1) Estimate pi0
+        # Exploratory Storey q-values use that same unique-pair family.
+        FDR_storey <- matrix(NA_real_, nrow(P), ncol(P), dimnames = dimnames(P))
+        ut <- upper.tri(P, diag = FALSE)
+        p_vec_all <- p_beta[ut]
+        good <- is.finite(p_vec_all)
+        p_vec <- p_vec_all[good]
+        pi0_hat <- NA_real_
+        if (length(p_vec)) {
             lambdas <- seq(0.5, 0.95, by = 0.05)
-            pi0_vals <- sapply(lambdas, function(lam) {
-                mean(p_vec > lam) / (1 - lam)
-            })
+            pi0_vals <- vapply(lambdas, function(lam) mean(p_vec > lam) / (1 - lam), numeric(1))
             pi0_hat <- min(1, min(pi0_vals, na.rm = TRUE))
             if (!is.finite(pi0_hat) || pi0_hat <= 0) pi0_hat <- 1
-            # 2) Compute raw q
-            o <- order(p_vec, na.last = NA)
-            ro <- integer(m_tot)
-            ro[o] <- seq_along(o)
-            q_raw <- pi0_hat * m_tot * p_vec / pmax(ro, 1)
-            # 3) Monotonic decreasing adjustment (tail to head)
-            q_ord <- q_raw[o]
-            for (i in seq_along(q_ord)[(length(q_ord) - 1):1]) {
-                if (q_ord[i] > q_ord[i + 1]) q_ord[i] <- q_ord[i + 1]
+            o <- order(p_vec)
+            q_ord <- pi0_hat * length(p_vec) * p_vec[o] / seq_along(o)
+            if (length(q_ord) > 1L) {
+                for (i in (length(q_ord) - 1L):1L) q_ord[i] <- min(q_ord[i], q_ord[i + 1L])
             }
-            q_final <- numeric(m_tot)
-            q_final[o] <- pmin(q_ord, 1)
-            # 4) Restore matrix
-            FDR_storey <- matrix(q_final, nrow = nrow(FDR_out_beta), dimnames = dimnames(FDR_out_beta))
+            q_vec <- rep(NA_real_, length(p_vec_all))
+            q_good <- numeric(length(p_vec))
+            q_good[o] <- pmin(q_ord, 1)
+            q_vec[good] <- q_good
+            FDR_storey[ut] <- q_vec
+            FDR_storey[lower.tri(FDR_storey)] <- t(FDR_storey)[lower.tri(FDR_storey)]
         }
+        diag(FDR_storey) <- NA_real_
+        FDR_main <- FDR_out_disc
+        FDR_main_method <- "BH(exact empirical P; unique unordered off-diagonal pairs)"
+        n_sig_005 <- sum(FDR_main[upper.tri(FDR_main)] < 0.05, na.rm = TRUE)
+        min_p_possible <- 1 / (perms + 1)
     }
-    # Main FDR choice: use FDR_storey if available, otherwise fallback to FDR_out_beta
-    FDR_main <- if (!is.null(FDR_storey)) FDR_storey else FDR_out_beta
-    n_sig_005 <- sum(FDR_main < 0.05, na.rm = TRUE)
-    min_p_possible <- if (!is.null(P)) 1 / (perms + 1) else NA_real_
 
     step06$done(paste0("FDR_main_method=", FDR_main_method))
 
@@ -610,7 +599,7 @@
         A_num <- (A_bin | t(A_bin)) * 1
         g_tmp <- igraph::simplify(
             igraph::graph_from_adjacency_matrix(A_num,
-                mode = "undirected",
+                mode = "max",
                 diag = FALSE
             ),
             remove.multiple = TRUE,
@@ -663,26 +652,35 @@
         grad = betas,
         L_min = L_min,
         qc = qc,
-        FDR = FDR_main, # Main recommendation (q-value or beta-BH fallback)
+        FDR = FDR_main, # Authoritative global BH on exact empirical P
         FDR_storey = FDR_storey, # Available in in-memory mode only
         FDR_disc = FDR_out_disc, # Original discrete BH
         FDR_beta = FDR_out_beta,
         FDR_mid = FDR_out_mid,
         FDR_uniform = FDR_out_uniform,
         meta = list(
+            formula_id = "Lee2009_S2_v1",
+            norm_layer = norm_layer,
+            input_fingerprint = res$input_fingerprint,
+            data_fingerprint = res$input_fingerprint$data,
+            permutation_fingerprint = res$input_fingerprint$permutation,
+            weight_style = res$weight_style,
+            S2 = res$S2,
             perms = perms,
+            block_side = block_side,
             block_size = block_size,
             ncores = ncores,
             mem_mode = if (inherits(L, "big.matrix")) "bigmemory" else "inmemory",
-            p_source = if (!is.null(P)) "permutation" else "analytic",
-            p_resolution = if (!is.null(P)) paste0("~", format(1 / (perms + 1), scientific = TRUE)) else "analytic",
+            p_source = if (!is.null(P)) "permutation" else "unavailable",
+            z_source = if (!is.null(P)) "signed inverse-normal transform of exact two-sided permutation P" else "unavailable",
+            p_resolution = if (!is.null(P)) paste0("~", format(1 / (perms + 1), scientific = TRUE)) else "unavailable",
             pi0_hat = pi0_hat,
-            n_tests = length(FDR_main),
+            n_tests = if (is.null(FDR_main)) 0L else if (nrow(FDR_main) == ncol(FDR_main)) choose(nrow(FDR_main), 2) else length(FDR_main),
             n_sig_FDR_lt_0.05 = n_sig_005,
             min_p_possible = min_p_possible,
             FDR_main_method = FDR_main_method,
-            pval_modes = c("disc=(k+1)/(B+1)", "beta=(k+1)/(B+2)", "mid=(k+0.5)/(B+1)", "uniform=(k+U)/(B+1)"),
-            note = "FDR: main=Storey q (beta p) if possible; fallback=BH(beta). All matrices retained for diagnostics."
+            pval_modes = c("exact=(k+1)/(B+1)", "beta=(k+1)/(B+2)", "mid=(k+0.5)/(B+1)", "uniform=(k+U)/(B+1)"),
+            note = "FDR main is BH on exact empirical P over unique unordered off-diagonal pairs; beta/mid/uniform/Storey matrices are exploratory diagnostics."
         )
     )
 
@@ -763,6 +761,21 @@
   if (verbose) .log_info(parent, "S01", "extracting Lee's L and Pearson correlation matrices", verbose)
   g_layer <- .select_grid_layer(scope_obj, grid_name)
   grid_name <- names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
+  lee_layer_obj <- if (!is.null(scope_obj@stats[[grid_name]])) {
+    scope_obj@stats[[grid_name]][[lee_stats_layer]]
+  } else {
+    NULL
+  }
+  lee_meta <- if (is.list(lee_layer_obj)) lee_layer_obj$meta else NULL
+  if (!is.list(lee_meta) ||
+      !identical(lee_meta$formula_id, "Lee2009_S2_v1") ||
+      !is.list(lee_meta$input_fingerprint) ||
+      !identical(lee_meta$input_fingerprint$schema, "lee_input_fingerprint_v2")) {
+    stop(
+      "LeeStats provenance is missing or incompatible. Rerun computeL() with the corrected Lee2009/S2 implementation before computeLvsRCurve().",
+      call. = FALSE
+    )
+  }
   Lmat <- .get_lee_matrix(scope_obj, grid_name, lee_layer = lee_stats_layer)
   rmat <- .get_pearson_matrix(scope_obj, grid_name, level = ifelse(level == "grid", "grid", "cell"))
 
@@ -1152,15 +1165,17 @@
 #' @param ncores Number of threads to use for permutation testing.
 #' @param perms Number of permutations for p-value estimation.
 #' @param verbose Emit progress messages when TRUE.
-#' @param expr_layer Layer name.
+#' @param expr_layer Optional expression layer name; when supplied it must match
+#'   the `norm_layer` recorded in LeeStats metadata.
 #' @param pear_range Parameter value.
 #' @param L_range Parameter value.
 #' @param do_perm Parameter value.
-#' @param block_side Parameter value.
-#' @param use_blocks Logical flag.
+#' @param block_side Positive integer block side for the current permutation
+#'   analysis; it may differ from the value used by `computeL()`.
+#' @param use_blocks A single logical flag.
 #' @param clamp_mode Parameter value.
 #' @param p_adj_mode Parameter value.
-#' @param mem_limit_GB Parameter value.
+#' @param mem_limit_GB Positive finite memory budget for permutation batches.
 #' @param pval_mode Parameter value.
 #' @param CI_rule Parameter value.
 #' @return A data.frame of top pairs with statistics.
@@ -1182,7 +1197,7 @@
                        clamp_mode = c("none", "ref_only", "both"),
                        p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
                        mem_limit_GB = 2,
-                       pval_mode = c("beta", "mid", "uniform"),
+                       pval_mode = c("exact", "beta", "mid", "uniform"),
                        curve_layer = NULL,
                        CI_rule = c("remove_within", "remove_outside", "none"),
                        verbose = TRUE) {
@@ -1192,6 +1207,29 @@
   clamp_mode <- match.arg(clamp_mode)
   pval_mode <- match.arg(pval_mode)
   CI_rule <- match.arg(CI_rule)
+  grid_name <- .lee_assert_layer_name(grid_name, "grid_name")
+  lee_stats_layer <- .lee_assert_layer_name(lee_stats_layer, "lee_stats_layer")
+  do_perm <- .lee_assert_flag(do_perm, "do_perm")
+  use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
+  verbose <- .lee_assert_flag(verbose, "verbose")
+  ncores <- .lee_assert_positive_integer(ncores, "ncores")
+  block_side <- .lee_assert_positive_integer(block_side, "block_side")
+  mem_limit_GB <- .lee_assert_positive_finite(mem_limit_GB, "mem_limit_GB")
+  top_n <- .lee_assert_positive_integer(top_n, "top_n")
+  perms <- .lee_assert_nonnegative_integer(perms, "perms")
+  if (isTRUE(do_perm) && perms < 1L) {
+    stop("When do_perm=TRUE, perms must be a positive integer.", call. = FALSE)
+  }
+  if (!is.null(expr_layer)) expr_layer <- .lee_assert_layer_name(expr_layer, "expr_layer")
+  if (!is.null(curve_layer)) curve_layer <- .lee_assert_layer_name(curve_layer, "curve_layer")
+  validate_range <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 2L || anyNA(x) || any(!is.finite(x)) || x[1L] > x[2L]) {
+      stop(name, " must contain two finite numbers in non-decreasing order.", call. = FALSE)
+    }
+    as.numeric(x)
+  }
+  pear_range <- validate_range(pear_range, "pear_range")
+  L_range <- validate_range(L_range, "L_range")
 
   parent <- "getTopLvsR"
   step01 <- .log_step(parent, "S01", "load matrices and compute Delta", verbose)
@@ -1201,17 +1239,120 @@
     .log_info(parent, "S01", paste0("direction=", direction, " top_n=", top_n), verbose)
   }
 
-  logi <- detectCores(TRUE)
-  safe_cores <- max(1L, min(ncores, logi))
+  logi <- suppressWarnings(detectCores(TRUE))
+  if (!is.numeric(logi) || length(logi) != 1L || is.na(logi) || !is.finite(logi) || logi < 1L) {
+    logi <- 1L
+  }
+  logi <- as.integer(logi)
+  safe_cores <- min(ncores, logi)
   if (ncores > safe_cores) {
     .log_info(parent, "S01", paste0(
       "adjusting ncores: requested=", ncores,
       " capped at available=", safe_cores
     ), verbose)
-    ncores <- safe_cores
   }
-  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
+  ncores <- safe_cores
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    try(RhpcBLASctl::blas_set_num_threads(1), silent = TRUE)
+  }
   Sys.setenv(OMP_NUM_THREADS = ncores)
+
+  ## The observed L matrix and every later permutation must be tied to the
+  ## exact normalized data and weights that produced it. Never infer a layer
+  ## from the LeeStats name and never fall back to Xz.
+  provenance_grid <- .select_grid_layer(scope_obj, grid_name)
+  lee_stats_obj <- NULL
+  if (!is.null(scope_obj@stats[[grid_name]])) {
+    lee_stats_obj <- scope_obj@stats[[grid_name]][[lee_stats_layer]]
+  }
+  if (is.null(lee_stats_obj)) lee_stats_obj <- provenance_grid[[lee_stats_layer]]
+  lee_meta <- if (is.list(lee_stats_obj)) lee_stats_obj$meta else NULL
+  if (!is.list(lee_meta) || !identical(lee_meta$formula_id, "Lee2009_S2_v1")) {
+    stop(
+      "LeeStats layer '", lee_stats_layer,
+      "' has missing or incompatible Lee formula provenance. Rerun computeL() with geneSCOPE >= 1.0.1.",
+      call. = FALSE
+    )
+  }
+  observed_norm_layer <- lee_meta$norm_layer
+  if (!is.character(observed_norm_layer) || length(observed_norm_layer) != 1L ||
+      is.na(observed_norm_layer) || !nzchar(observed_norm_layer)) {
+    stop(
+      "LeeStats metadata has no valid norm_layer. Rerun computeL(); getTopLvsR() will not fall back to Xz.",
+      call. = FALSE
+    )
+  }
+  if (!is.null(expr_layer) && !identical(expr_layer, observed_norm_layer)) {
+    stop(
+      "expr_layer ('", expr_layer, "') does not match the norm_layer ('",
+      observed_norm_layer, "') that produced observed Lee's L. Rerun computeL() or omit expr_layer.",
+      call. = FALSE
+    )
+  }
+  expr_layer <- observed_norm_layer
+  X_current_raw <- provenance_grid[[observed_norm_layer]]
+  if (is.null(X_current_raw)) {
+    stop(
+      "Observed Lee norm_layer '", observed_norm_layer,
+      "' is missing from the current grid. Rerun computeL(); fallback to Xz is prohibited.",
+      call. = FALSE
+    )
+  }
+  X_current <- .validate_lee_norm_layer(
+    X_current_raw, observed_norm_layer,
+    context = "[geneSCOPE::getTopLvsR]"
+  )
+  W_current <- provenance_grid$W
+  grid_info_current <- provenance_grid$grid_info
+  if (is.null(W_current)) {
+    stop("Grid layer missing spatial weights W; rerun computeWeights() and computeL().", call. = FALSE)
+  }
+  target_ids <- as.character(grid_info_current$grid_id)
+  if (!length(target_ids) || anyNA(target_ids) || any(!nzchar(target_ids)) || anyDuplicated(target_ids)) {
+    stop("grid_info$grid_id must be complete, non-empty, and unique.", call. = FALSE)
+  }
+  align_ids <- function(source_ids, label) {
+    if (is.null(source_ids) || anyNA(source_ids) || anyDuplicated(source_ids)) {
+      stop(label, " grid IDs must be complete and unique.", call. = FALSE)
+    }
+    idx <- match(target_ids, as.character(source_ids))
+    if (anyNA(idx) || length(source_ids) != length(target_ids)) {
+      stop(label, " grid ID set does not match grid_info$grid_id.", call. = FALSE)
+    }
+    idx
+  }
+  X_current <- X_current[align_ids(rownames(X_current), observed_norm_layer), , drop = FALSE]
+  current_weight_style <- .lee_weight_style(W_current)
+  W_current <- W_current[
+    align_ids(rownames(W_current), "W rows"),
+    align_ids(colnames(W_current), "W columns"),
+    drop = FALSE
+  ]
+  attr(W_current, "weight_style") <- current_weight_style
+  rownames(X_current) <- target_ids
+  dimnames(W_current) <- list(target_ids, target_ids)
+  current_fingerprint <- .lee_input_fingerprint(
+    X_current, W_current, grid_info_current,
+    norm_layer = observed_norm_layer,
+    block_side = block_side
+  )
+  if (!is.list(lee_meta$input_fingerprint) ||
+      !identical(lee_meta$data_fingerprint, lee_meta$input_fingerprint$data) ||
+      !.lee_same_observed_data(lee_meta$input_fingerprint, current_fingerprint)) {
+    stop(
+      "Current X/W/grid data do not match the inputs that produced observed Lee's L. Rerun computeL() before getTopLvsR().",
+      call. = FALSE
+    )
+  }
+  if (!identical(lee_meta$weight_style, current_weight_style)) {
+    stop("Current weight_style does not match observed Lee metadata; rerun computeL().", call. = FALSE)
+  }
+  current_S2 <- .lee_s2_value(W_current)
+  if (!is.numeric(lee_meta$S2) || length(lee_meta$S2) != 1L ||
+      is.na(lee_meta$S2) || !is.finite(lee_meta$S2) || lee_meta$S2 <= 0 ||
+      abs(current_S2 - lee_meta$S2) > 1e-12 * max(1, abs(lee_meta$S2))) {
+    stop("Current Lee S2 does not match observed Lee metadata; rerun computeL().", call. = FALSE)
+  }
 
   L_mat <- .get_lee_matrix(scope_obj, grid_name, lee_layer = lee_stats_layer)
   r_mat <- .get_pearson_matrix(scope_obj, grid_name, level = pear_level)
@@ -1448,30 +1589,9 @@
     .log_info(parent, "S04", paste0("pval_mode=", pval_mode), verbose)
     .log_info(parent, "S04", paste0("p_adj_mode=", p_adj_mode), verbose)
   }
-  g_layer <- .select_grid_layer(scope_obj, grid_name)
-  # Infer expression layer from lee_stats_layer if not specified
-  if (is.null(expr_layer) || !nzchar(expr_layer)) {
-    inferred <- sub("^LeeStats_", "", lee_stats_layer)
-    expr_layer <- if (identical(inferred, lee_stats_layer)) "Xz" else inferred
-    if (verbose) {
-      .log_info(parent, "S04", paste0(
-        "expr_layer=", expr_layer, " (inferred from lee_stats_layer)"
-      ), verbose)
-    }
-  }
-  Xcand <- g_layer[[expr_layer]]
-  if (is.null(Xcand) && expr_layer != "Xz") Xcand <- g_layer$Xz
-  Xz <- Xcand
-  W <- g_layer$W
-  grid_info <- g_layer$grid_info
-  if (is.null(Xz)) stop("Grid layer missing expression layer '", expr_layer, "' and 'Xz'")
-  if (is.null(W)) stop("Grid layer missing spatial weights W; run .compute_weights() first")
-  # Align rows of Xz to grid_info if possible
-  if (!is.null(rownames(Xz)) && !is.null(grid_info$grid_id)) {
-    ord <- match(grid_info$grid_id, rownames(Xz))
-    if (!any(is.na(ord))) Xz <- Xz[ord, , drop = FALSE]
-  }
-  if (!is.matrix(Xz)) Xz <- as.matrix(Xz)
+  Xz <- X_current
+  W <- W_current
+  grid_info <- grid_info_current
   genes_top <- unique(c(sel$gene1, sel$gene2))
   gene_map <- match(genes_top, colnames(Xz))
   if (any(is.na(gene_map))) stop("Selected genes not found in Xz")
@@ -1480,8 +1600,15 @@
     match(sel$gene2, genes_top) - 1L
   )
   delta_ref <- sel$Delta
+  # A common row permutation is applied to every gene, so Pearson r is
+  # invariant.  Use exactly the observed reference (including any clamp) in
+  # every null Delta instead of recomputing grid-level Pearson in C++.
+  pearson_ref <- sel$LeesL - delta_ref
+  if (any(!is.finite(pearson_ref)) || any(!is.finite(delta_ref))) {
+    stop("Selected Delta/Pearson references must be finite.", call. = FALSE)
+  }
 
-  backend_label <- if (use_blocks) "C++ delta_lr_perm_csr_block" else "C++ delta_lr_perm_csr"
+  backend_label <- if (use_blocks) "C++ delta_l_fixed_r_perm_csr_block" else "C++ delta_l_fixed_r_perm_csr"
   .log_backend(parent, "S04", "permutation_backend", paste0(
     backend_label,
     " threads=", ncores,
@@ -1537,23 +1664,33 @@
         attempt, perm_threads, bsz, remaining, clamp_mode
       ), verbose)
       attempt <- attempt + 1
-      idx_mat <- matrix(integer(0), nrow = n_cells, ncol = bsz)
+      idx_mat <- matrix(NA_integer_, nrow = n_cells, ncol = bsz)
       for (p in seq_len(bsz)) {
-        new_order <- sample(length(split_rows))
-        idx_mat[, p] <- unlist(split_rows[new_order], use.names = FALSE) - 1L
+        if (use_blocks) {
+          idx <- seq_len(n_cells)
+          for (rows in split_rows) {
+            idx[rows] <- rows[sample.int(length(rows), length(rows), replace = FALSE)]
+          }
+          if (!identical(sort(idx), seq_len(n_cells)) || any(block_id[idx] != block_id)) {
+            stop("Internal block permutation invariant failed", call. = FALSE)
+          }
+        } else {
+          idx <- sample.int(n_cells, n_cells, replace = FALSE)
+        }
+        idx_mat[, p] <- idx - 1L
       }
       res <- tryCatch(
         {
           if (use_blocks) {
-            .delta_lr_perm_csr_block(
+            .delta_l_fixed_r_perm_csr_block(
               Xz_sub, W_indices, W_values, W_row_ptr, idx_mat,
-              as.integer(block_id) - 1L, gene_pairs, delta_ref,
+              as.integer(block_id) - 1L, gene_pairs, delta_ref, pearson_ref,
               perm_threads
             )
           } else {
-            .delta_lr_perm_csr(
+            .delta_l_fixed_r_perm_csr(
               Xz_sub, W_indices, W_values, W_row_ptr, idx_mat,
-              gene_pairs, delta_ref,
+              gene_pairs, delta_ref, pearson_ref,
               perm_threads
             )
           }
@@ -1585,6 +1722,7 @@
   N <- perms
   k <- exceed_count
   p_values <- switch(pval_mode,
+    exact   = (k + 1) / (N + 1),
     beta    = (k + 1) / (N + 2),
     mid     = (k + 0.5) / (N + 1),
     uniform = (k + runif(length(k))) / (N + 1)

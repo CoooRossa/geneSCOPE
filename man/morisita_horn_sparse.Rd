@@ -3,9 +3,6 @@
 \name{morisita_horn_sparse}
 \alias{morisita_horn_sparse}
 \title{Optimised sparse Morisita–Horn similarity}
-\usage{
-morisita_horn_sparse(G, edges, use_chao = TRUE, nthreads = 1L)
-}
 \arguments{
 \item{G}{\code{dgCMatrix}.  Sparse matrix of counts (genes × grids).}
 

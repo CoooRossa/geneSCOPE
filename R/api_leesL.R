@@ -6,20 +6,28 @@
 #' @param scope_obj A `scope_object` with at least one populated `@grid` slot.
 #' @param grid_name Name of the grid layer to process (auto-selected if only one exists).
 #' @param genes Optional subset of genes to include.
-#' @param within If `TRUE`, restricts analysis to the selected gene set on both axes.
-#' @param ncores Number of cores for parallel processing.
-#' @param block_side Number of grid cells per side for block partitioning.
-#' @param perms Number of permutations for Monte-Carlo p-values.
-#' @param block_size Number of permutations processed per batch.
+#' @param within A single logical value. If `TRUE`, restricts analysis to the
+#'   selected gene set on both axes.
+#' @param ncores A positive integer number of cores for parallel processing.
+#' @param block_side A positive integer number of grid cells per side for block
+#'   permutations.
+#' @param perms A non-negative integer number of Monte-Carlo permutations; use
+#'   zero to store observed Lee's L without permutation inference.
+#' @param block_size A positive integer number of permutations processed per batch.
 #' @param L_min Similarity threshold used when building QC similarity graphs.
-#' @param norm_layer Name of the normalised expression layer (default `"Xz"`).
+#' @param norm_layer Name of the normalized expression layer (default `"Xz"`).
+#'   The layer must be numeric, finite, and column-centred relative to its RMS
+#'   magnitude; unit variance is not required.
 #' @param lee_stats_layer_name Output statistics layer name (auto-generated when NULL).
-#' @param legacy_formula Use legacy denominator for compatibility.
-#' @param mem_limit_GB RAM threshold that triggers streaming mode.
-#' @param chunk_size Number of columns processed per chunk in streaming mode.
-#' @param use_bigmemory Whether to use file-backed matrices for large computations.
+#' @param legacy_formula Must remain `FALSE`; the non-canonical legacy
+#'   denominator is no longer supported.
+#' @param mem_limit_GB Positive finite memory limit for the dense Lee result.
+#'   Oversized results fail closed; no pseudo-streaming path is used.
+#' @param chunk_size Retained for API compatibility; chunking is disabled.
+#' @param use_bigmemory Must remain `FALSE`. The former chunk route was
+#'   RAM-backed rather than file-backed and is disabled.
 #' @param backing_path Directory for temporary files (default `tempdir()`).
-#' @param cache_inputs Whether to .cache preprocessed inputs for reuse across calls.
+#' @param cache_inputs Whether to cache preprocessed inputs for reuse across calls.
 #' @param verbose Whether to emit progress messages.
 #' @param ncore Deprecated alias of `ncores`.
 #' @return The modified `scope_object`.
@@ -47,7 +55,7 @@ computeL <- function(
     legacy_formula = FALSE,
     mem_limit_GB = 2,
     chunk_size = 32L,
-    use_bigmemory = TRUE,
+    use_bigmemory = FALSE,
     backing_path = tempdir(),
     cache_inputs = TRUE,
     verbose = TRUE,
@@ -157,24 +165,33 @@ computeLvsRCurve <- function(
 #' @param grid_name Grid layer name.
 #' @param pear_level Correlation level (`cell` or `grid`).
 #' @param lee_stats_layer Lee statistics layer name.
-#' @param expr_layer Optional expression layer name for gene prevalence filtering.
+#' @param expr_layer Optional expression layer name. For permutation inference it
+#'   must match the `norm_layer` recorded by `computeL()`; omitting it is safest.
 #' @param pear_range Range of Pearson r values to include.
 #' @param L_range Range of Lee's L values to include.
 #' @param top_n Number of top pairs to return.
 #' @param direction Which tail to select (`largest`, `smallest`, `both`).
-#' @param do_perm Whether to run permutation testing.
-#' @param perms Number of permutations for p-value estimation.
-#' @param block_side Block side length used when building permutation blocks.
-#' @param use_blocks Whether to use spatial blocks for permutations.
-#' @param ncores Number of threads to use.
+#' @param do_perm A single logical value indicating whether to run permutation testing.
+#' @param perms A non-negative integer number of permutations (positive when
+#'   `do_perm = TRUE`).
+#' @param block_side A positive integer block side length. It may differ from
+#'   the value used by `computeL()` because observed-data and permutation
+#'   provenance are validated separately.
+#' @param use_blocks A single logical value indicating whether to use spatial blocks.
+#' @param ncores A positive integer number of threads to use.
 #' @param clamp_mode Whether to clamp Delta using reference-only or both ends.
 #' @param p_adj_mode Multiple-testing adjustment mode.
-#' @param mem_limit_GB Memory threshold controlling chunking behavior.
+#' @param mem_limit_GB Positive finite memory budget for permutation index batches.
 #' @param pval_mode P-value mode used when transforming permutation counts.
 #' @param curve_layer Optional curve layer from `computeLvsRCurve()`.
 #' @param CI_rule Confidence-interval filtering rule (`remove_within`, `remove_outside`, `none`).
 #' @param verbose Emit progress messages when TRUE.
 #' @return A data.frame with ranked gene pairs and associated statistics.
+#' @details
+#' `getTopLvsR()` requires LeeStats provenance written by the corrected
+#' Lee-2009/S2 implementation. It reuses the recorded normalized layer and
+#' refuses stale objects or changed X/W/grid inputs; rerun `computeL()` when
+#' that validation fails.
 #' @examples
 #' \dontrun{
 #' scope_obj <- computeL(scope_obj, grid_name = "grid30", ncores = 16)
@@ -202,7 +219,7 @@ getTopLvsR <- function(
     clamp_mode = c("none", "ref_only", "both"),
     p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
     mem_limit_GB = 2,
-    pval_mode = c("beta", "mid", "uniform"),
+    pval_mode = c("exact", "beta", "mid", "uniform"),
     curve_layer = NULL,
     CI_rule = c("remove_within", "remove_outside", "none"),
     verbose = TRUE) {

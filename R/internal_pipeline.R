@@ -513,9 +513,29 @@
     }
 
     stats_obj <- scope_obj@stats[[gname]][[stats_layer]]
+    if (identical(similarity_slot, "L")) {
+        lee_meta <- stats_obj$meta
+        provenance_ok <- is.list(lee_meta) &&
+            identical(lee_meta$formula_id, "Lee2009_S2_v1") &&
+            is.list(lee_meta$input_fingerprint) &&
+            identical(lee_meta$input_fingerprint$schema, "lee_input_fingerprint_v2") &&
+            is.numeric(lee_meta$S2) && length(lee_meta$S2) == 1L &&
+            is.finite(lee_meta$S2) && lee_meta$S2 > 0
+        if (!isTRUE(provenance_ok)) {
+            stop(
+                "Lee similarity provenance is missing or incompatible in ",
+                grid_name, "/", stats_layer,
+                ". Rerun computeL() with the corrected Lee2009/S2 implementation before clusterGenes().",
+                call. = FALSE
+            )
+        }
+    }
     sim_mat <- stats_obj[[similarity_slot]]
     if (is.null(sim_mat)) stop("Similarity slot missing in stats layer: ", similarity_slot)
     sig_mat <- if (use_significance) stats_obj[[significance_slot]] else NULL
+    if (use_significance && is.null(sig_mat)) {
+        stop("Significance slot missing in stats layer: ", significance_slot, call. = FALSE)
+    }
 
     list(
         grid_name = gname,
@@ -1078,10 +1098,13 @@
                     )
                     res <- try(.run_graph_algorithm(g_local, algo_per_run, res_param, objective), silent = TRUE)
                     if (inherits(res, "try-error")) {
-                        rep.int(1L, length(vertex_names))
+                        stop("Stage-1 graph algorithm failed: ", as.character(res), call. = FALSE)
                     } else {
                         mm <- try(igraph::membership(res), silent = TRUE)
-                        if (inherits(mm, "try-error") || is.null(mm)) rep.int(1L, length(vertex_names)) else mm
+                        if (inherits(mm, "try-error") || is.null(mm)) {
+                            stop("Stage-1 membership extraction failed: ", as.character(mm), call. = FALSE)
+                        }
+                        mm
                     }
                 },
                 future.seed = TRUE
@@ -1235,129 +1258,6 @@
     )
 }
 
-#' Stage2 Refine Workflow V2
-#' @description
-#' Internal helper for `.stage2_refine_workflow_v2`.
-#' @param stage1 Parameter value.
-#' @param similarity_matrix Parameter value.
-#' @param config Parameter value.
-#' @param FDR Parameter value.
-#' @param mh_object Parameter value.
-#' @param aux_stats Parameter value.
-#' @param pearson_matrix Parameter value.
-#' @param verbose Logical; whether to emit progress messages.
-#' @return Return value used internally.
-#' @keywords internal
-.stage2_refine_workflow_v2 <- function(stage1,
-                                   similarity_matrix,
-                                   config,
-                                   FDR = NULL,
-                                   mh_object = NULL,
-                                   aux_stats = NULL,
-                                   pearson_matrix = NULL,
-                                   verbose = TRUE) {
-    .cluster_message(verbose, "[cluster] Step3: Stage-2 correction & clustering...",
-        parent = "clusterGenes", step = "S07"
-    )
-
-    validation <- .stage2_validate_inputs(stage1, config, verbose)
-    kept_genes <- validation$kept_genes
-    genes_all <- validation$genes_all
-    stage1_membership_labels <- validation$stage1_membership_labels
-    stage1_consensus_matrix <- validation$stage1_consensus_matrix
-    stage1_similarity_graph <- validation$stage1_similarity_graph
-    stage1_mode_selected <- validation$stage1_mode_selected
-    stage1_membership_matrix <- validation$stage1_membership_matrix
-    stage2_algo_final <- validation$stage2_algo_final
-    stage2_backend <- validation$stage2_backend
-    stage1_algo_effective <- validation$stage1_algo_effective
-
-    io_res <- .stage2_prepare_paths_and_io(
-        stage1_membership_labels = stage1_membership_labels,
-        kept_genes = kept_genes,
-        stage1_consensus_matrix = stage1_consensus_matrix,
-        stage1 = stage1,
-        genes_all = genes_all,
-        stage1_similarity_graph = stage1_similarity_graph,
-        similarity_matrix = similarity_matrix,
-        config = config,
-        verbose = verbose
-    )
-    if (io_res$early_return) {
-        return(io_res$result)
-    }
-    stage1_membership_labels <- io_res$stage1_membership_labels
-
-    native_res <- .stage2_prepare_native_inputs(
-        kept_genes = kept_genes,
-        similarity_matrix = similarity_matrix,
-        config = config,
-        FDR = FDR,
-        aux_stats = aux_stats,
-        pearson_matrix = pearson_matrix,
-        mh_object = mh_object,
-        stage1_membership_labels = stage1_membership_labels,
-        verbose = verbose
-    )
-    L_post <- native_res$L_post
-    corrected_similarity_graph <- native_res$corrected_similarity_graph
-    edges_corr <- native_res$edges_corr
-    W <- native_res$W
-    use_log1p_weight <- native_res$use_log1p_weight
-
-    runtime_cfg <- .stage2_configure_runtime_threads(config, stage1_mode_selected, kept_genes)
-
-    refine_res <- .stage2_run_refine_blocks(
-        kept_genes = kept_genes,
-        stage1_membership_labels = stage1_membership_labels,
-        corrected_similarity_graph = corrected_similarity_graph,
-        stage2_algo_final = stage2_algo_final,
-        stage2_backend = stage2_backend,
-        runtime_cfg = runtime_cfg,
-        config = config,
-        verbose = verbose,
-        use_log1p_weight = use_log1p_weight
-    )
-    memb_final <- refine_res$memb_final
-    cons <- refine_res$cons
-
-    metrics_before <- .summarise_cluster_metrics(memb_final, cons, W)
-    genes_before <- .summarise_gene_membership(memb_final, cons, W, kept_genes)
-
-    qc_res <- .stage2_apply_qc_and_subcluster(
-        memb_final = memb_final,
-        cons = cons,
-        metrics_before = metrics_before,
-        genes_before = genes_before,
-        corrected_similarity_graph = corrected_similarity_graph,
-        runtime_cfg = runtime_cfg,
-        config = config,
-        stage2_algo_final = stage2_algo_final
-    )
-    memb_final <- qc_res$memb_final
-    cons <- qc_res$cons
-
-    .stage2_postprocess_and_assemble(
-        memb_final = memb_final,
-        cons = cons,
-        metrics_before = metrics_before,
-        genes_before = genes_before,
-        edges_corr = edges_corr,
-        corrected_similarity_graph = corrected_similarity_graph,
-        W = W,
-        kept_genes = kept_genes,
-        genes_all = genes_all,
-        stage1_membership_matrix = stage1_membership_matrix,
-        stage1_consensus_matrix = stage1_consensus_matrix,
-        stage1_similarity_graph = stage1_similarity_graph,
-        similarity_matrix = similarity_matrix,
-        use_log1p_weight = use_log1p_weight,
-        runtime_cfg = runtime_cfg,
-        config = config,
-        L_post = L_post,
-        stage2_backend = stage2_backend
-    )
-}
 
 #' Stage2 Validate Inputs
 #' @description
@@ -1484,92 +1384,44 @@
             }
         }
 
-        # --- Rebuild consensus graph with L-based weights & sign (matches old script output) ----
-        cons_mat <- stage1_consensus_matrix
-        if (is.null(cons_mat)) {
-            cons_mat <- sparseMatrix(i = integer(0), j = integer(0), x = numeric(0),
-                dims = c(length(kept_genes), length(kept_genes)),
-                dimnames = list(kept_genes, kept_genes))
-        }
-        edges_keep <- if (inherits(cons_mat, "sparseMatrix")) {
-            TT <- as(cons_mat, "TsparseMatrix")
-            if (!length(TT@x)) {
-                matrix(integer(0), ncol = 2)
-            } else {
-                keep <- TT@x > 0
-                cbind(TT@i[keep] + 1L, TT@j[keep] + 1L)
-            }
-        } else {
-            which(cons_mat > 0, arr.ind = TRUE)
-        }
-        edges_keep <- edges_keep[edges_keep[, 1] < edges_keep[, 2], , drop = FALSE]
-
+        # Rebuild only from the already FDR/q95-filtered Stage-1 matrix.
         A_sub_local <- stage1$similarity_sub %||% stage1$A_sub
-        if (!is.null(A_sub_local) && !identical(rownames(A_sub_local), kept_genes)) {
+        if (is.null(A_sub_local)) {
+            stop("Stage-1 did not retain its filtered similarity matrix.", call. = FALSE)
+        }
+        if (!identical(rownames(A_sub_local), kept_genes)) {
             A_sub_local <- A_sub_local[kept_genes, kept_genes, drop = FALSE]
         }
-        L_raw_sub <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
-
+        assigned_genes <- kept_genes[!is.na(stage1_membership_labels[kept_genes])]
+        A_final <- A_sub_local[assigned_genes, assigned_genes, drop = FALSE]
+        diag(A_final) <- 0
+        edges_keep <- .arrind_from_matrix_predicate(
+            A_final, op = "gt", cutoff = 0,
+            triangle = "upper", keep_diag = FALSE
+        )
         if (nrow(edges_keep)) {
-            intra_df <- data.frame(
-                from = kept_genes[edges_keep[, 1]],
-                to = kept_genes[edges_keep[, 2]],
-                weight = if (is.null(A_sub_local)) rep(1, nrow(edges_keep)) else A_sub_local[cbind(edges_keep[, 1], edges_keep[, 2])],
-                sign = ifelse(L_raw_sub[cbind(edges_keep[, 1], edges_keep[, 2])] < 0, "neg", "pos"),
+            base_weight <- as.numeric(A_final[edges_keep])
+            edge_weight <- if (isTRUE(config$use_log1p_weight)) log1p(base_weight) else base_weight
+            valid_edge <- is.finite(edge_weight) & edge_weight > 0
+            edges_keep <- edges_keep[valid_edge, , drop = FALSE]
+            base_weight <- base_weight[valid_edge]
+            edge_weight <- edge_weight[valid_edge]
+            edges_df_final <- data.frame(
+                from = assigned_genes[edges_keep[, 1]],
+                to = assigned_genes[edges_keep[, 2]],
+                weight = edge_weight,
+                sign = ifelse(base_weight < 0, "neg", "pos"),
                 stringsAsFactors = FALSE
             )
         } else {
-            intra_df <- data.frame(from = character(0), to = character(0),
-                weight = numeric(0), sign = character(0), stringsAsFactors = FALSE)
+            edges_df_final <- data.frame(
+                from = character(0), to = character(0),
+                weight = numeric(0), sign = character(0),
+                stringsAsFactors = FALSE
+            )
         }
-
-        cross_df <- NULL
-        if (isTRUE(config$keep_cross_stable)) {
-            tbl_stable <- table(stage1_membership_labels, useNA = "no")
-            min_keep <- max(1L, as.integer(config$min_cluster_size %||% 2L))
-            stable_cl <- names(tbl_stable)[tbl_stable >= min_keep]
-            if (length(stable_cl) > 1 && !is.null(A_sub_local)) {
-                genes_stable <- kept_genes[stage1_membership_labels %in% as.integer(stable_cl)]
-                if (length(genes_stable) > 1) {
-	                    L_sub_raw <- L_raw_sub[genes_stable, genes_stable, drop = FALSE]
-	                    ij <- .arrind_from_matrix_predicate(
-	                        L_sub_raw,
-	                        op = "ge",
-	                        cutoff = config$min_cutoff,
-	                        triangle = "upper",
-	                        keep_diag = FALSE
-	                    )
-                    if (nrow(ij)) {
-                        g1 <- genes_stable[ij[, 1]]
-                        g2 <- genes_stable[ij[, 2]]
-                        cl1 <- stage1_membership_labels[g1]
-                        cl2 <- stage1_membership_labels[g2]
-                        keep_cross <- cl1 != cl2 & !is.na(cl1) & !is.na(cl2)
-                        if (any(keep_cross)) {
-                            g1 <- g1[keep_cross]; g2 <- g2[keep_cross]
-                            Lval <- L_sub_raw[cbind(match(g1, genes_stable), match(g2, genes_stable))]
-                            mask <- (if (isTRUE(config$use_log1p_weight)) log1p(Lval) else Lval) > 0
-                            if (any(mask)) {
-                                cross_df <- data.frame(
-                                    from = g1[mask],
-                                    to = g2[mask],
-                                    weight = (if (isTRUE(config$use_log1p_weight)) log1p(Lval) else Lval)[mask],
-                                    sign = ifelse(Lval[mask] < 0, "neg", "pos"),
-                                    stringsAsFactors = FALSE
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        edges_df_final <- if (!is.null(cross_df)) unique(rbind(intra_df, cross_df)) else intra_df
-
         g_cons <- igraph::graph_from_data_frame(
-            edges_df_final,
-            directed = FALSE,
-            vertices = kept_genes
+            edges_df_final, directed = FALSE, vertices = assigned_genes
         )
 
         return(list(
@@ -1577,7 +1429,7 @@
             result = list(
                 membership = stage1_membership_labels,
                 genes_all = genes_all,
-                kept_genes = kept_genes,
+                kept_genes = assigned_genes,
                 consensus_graph = g_cons,
                 membership_matrix = stage1$stage1_membership_matrix,
                 stage1_consensus = stage1_consensus_matrix,
@@ -1585,7 +1437,7 @@
                 metrics_after = NULL,
                 genes_before = NULL,
                 genes_after = NULL,
-                W = igraph::as_adjacency_matrix(stage1_similarity_graph, attr = "weight", sparse = TRUE)
+                W = igraph::as_adjacency_matrix(g_cons, attr = "weight", sparse = TRUE)
             )
         ))
     }
@@ -2000,10 +1852,6 @@
 if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_consensus_workflow_v2", inherits = FALSE)) {
     .stage1_consensus_workflow <- .stage1_consensus_workflow_v2
 }
-if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refine_workflow_v2", inherits = FALSE)) {
-    .stage2_refine_workflow <- .stage2_refine_workflow_v2
-}
-
 #' Summarise Cluster Metrics
 #' @description
 #' Internal helper for `.summarise_cluster_metrics`.
@@ -2366,10 +2214,13 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
                     )
                     res <- try(.run_graph_algorithm(g_local, algo_per_run, res_param, objective), silent = TRUE)
                     if (inherits(res, "try-error")) {
-                        rep.int(1L, length(vertex_names))
+                        stop("Stage-1 graph algorithm failed: ", as.character(res), call. = FALSE)
                     } else {
                         mm <- try(igraph::membership(res), silent = TRUE)
-                        if (inherits(mm, "try-error") || is.null(mm)) rep.int(1L, length(vertex_names)) else mm
+                        if (inherits(mm, "try-error") || is.null(mm)) {
+                            stop("Stage-1 membership extraction failed: ", as.character(mm), call. = FALSE)
+                        }
+                        mm
                     }
                 },
                 future.seed = TRUE
@@ -2591,99 +2442,55 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
             }
         }
 
-        cons_mat <- stage1_consensus_matrix
-        if (is.null(cons_mat)) {
-            cons_mat <- sparseMatrix(i = integer(0), j = integer(0), x = numeric(0),
-                dims = c(length(kept_genes), length(kept_genes)),
-                dimnames = list(kept_genes, kept_genes))
-        }
-        edges_keep <- if (inherits(cons_mat, "sparseMatrix")) {
-            TT <- as(cons_mat, "TsparseMatrix")
-            if (!length(TT@x)) {
-                matrix(integer(0), ncol = 2)
-            } else {
-                keep <- TT@x > 0
-                cbind(TT@i[keep] + 1L, TT@j[keep] + 1L)
-            }
-        } else {
-            which(cons_mat > 0, arr.ind = TRUE)
-        }
-        edges_keep <- edges_keep[edges_keep[, 1] < edges_keep[, 2], , drop = FALSE]
-
+        # The stored graph must be a view of the already thresholded Stage-1
+        # similarity, not a second pass over raw L.  In particular, do not add
+        # cross-module edges that bypass FDR or q95 filtering.
         A_sub_local <- stage1$similarity_sub %||% stage1$A_sub
-        if (!is.null(A_sub_local) && !identical(rownames(A_sub_local), kept_genes)) {
+        if (is.null(A_sub_local)) {
+            stop("Stage-1 did not retain its filtered similarity matrix.", call. = FALSE)
+        }
+        if (!identical(rownames(A_sub_local), kept_genes)) {
             A_sub_local <- A_sub_local[kept_genes, kept_genes, drop = FALSE]
         }
-        L_raw_sub <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
-
+        assigned_genes <- kept_genes[!is.na(stage1_membership_labels[kept_genes])]
+        A_final <- A_sub_local[assigned_genes, assigned_genes, drop = FALSE]
+        diag(A_final) <- 0
+        edges_keep <- .arrind_from_matrix_predicate(
+            A_final,
+            op = "gt",
+            cutoff = 0,
+            triangle = "upper",
+            keep_diag = FALSE
+        )
         if (nrow(edges_keep)) {
-            intra_df <- data.frame(
-                from = kept_genes[edges_keep[, 1]],
-                to = kept_genes[edges_keep[, 2]],
-                weight = if (is.null(A_sub_local)) rep(1, nrow(edges_keep)) else A_sub_local[cbind(edges_keep[, 1], edges_keep[, 2])],
-                sign = ifelse(L_raw_sub[cbind(edges_keep[, 1], edges_keep[, 2])] < 0, "neg", "pos"),
+            base_weight <- as.numeric(A_final[edges_keep])
+            edge_weight <- if (isTRUE(config$use_log1p_weight)) log1p(base_weight) else base_weight
+            valid_edge <- is.finite(edge_weight) & edge_weight > 0
+            edges_keep <- edges_keep[valid_edge, , drop = FALSE]
+            base_weight <- base_weight[valid_edge]
+            edge_weight <- edge_weight[valid_edge]
+            edges_df_final <- data.frame(
+                from = assigned_genes[edges_keep[, 1]],
+                to = assigned_genes[edges_keep[, 2]],
+                weight = edge_weight,
+                sign = ifelse(base_weight < 0, "neg", "pos"),
                 stringsAsFactors = FALSE
             )
         } else {
-            intra_df <- data.frame(from = character(0), to = character(0),
-                weight = numeric(0), sign = character(0), stringsAsFactors = FALSE)
+            edges_df_final <- data.frame(
+                from = character(0), to = character(0),
+                weight = numeric(0), sign = character(0),
+                stringsAsFactors = FALSE
+            )
         }
-
-        cross_df <- NULL
-        if (isTRUE(config$keep_cross_stable)) {
-            tbl_stable <- table(stage1_membership_labels, useNA = "no")
-            min_keep <- max(1L, as.integer(config$min_cluster_size %||% 2L))
-            stable_cl <- names(tbl_stable)[tbl_stable >= min_keep]
-            if (length(stable_cl) > 1 && !is.null(A_sub_local)) {
-                idx_stable <- stage1_membership_labels %in% as.integer(stable_cl)
-                genes_stable <- kept_genes[idx_stable]
-                if (length(genes_stable) > 1) {
-	                    L_sub_raw <- L_raw_sub[genes_stable, genes_stable, drop = FALSE]
-	                    ij <- .arrind_from_matrix_predicate(
-	                        L_sub_raw,
-	                        op = "ge",
-	                        cutoff = config$min_cutoff,
-	                        triangle = "upper",
-	                        keep_diag = FALSE
-	                    )
-                    if (nrow(ij)) {
-                        g1 <- genes_stable[ij[, 1]]
-                        g2 <- genes_stable[ij[, 2]]
-                        cl1 <- stage1_membership_labels[g1]
-                        cl2 <- stage1_membership_labels[g2]
-                        keep_cross <- cl1 != cl2 & !is.na(cl1) & !is.na(cl2)
-                        if (any(keep_cross)) {
-                            g1 <- g1[keep_cross]; g2 <- g2[keep_cross]
-                            Lval <- L_sub_raw[cbind(match(g1, genes_stable), match(g2, genes_stable))]
-                            wgt <- if (isTRUE(config$use_log1p_weight)) log1p(Lval) else Lval
-                            mask <- wgt > 0
-                            if (any(mask)) {
-                                cross_df <- data.frame(
-                                    from = g1[mask],
-                                    to = g2[mask],
-                                    weight = wgt[mask],
-                                    sign = ifelse(Lval[mask] < 0, "neg", "pos"),
-                                    stringsAsFactors = FALSE
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        edges_df_final <- if (!is.null(cross_df)) unique(rbind(intra_df, cross_df)) else intra_df
-
-        g_cons <- igraph::graph_from_data_frame(
-            edges_df_final,
-            directed = FALSE,
-            vertices = kept_genes
+        g_cons <- igraph::graph_from_data_frame(edges_df_final,
+            directed = FALSE, vertices = assigned_genes
         )
 
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
-            kept_genes = kept_genes,
+            kept_genes = assigned_genes,
             consensus_graph = g_cons,
             membership_matrix = stage1$stage1_membership_matrix,
             stage1_consensus = stage1_consensus_matrix,
@@ -2691,20 +2498,15 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
             metrics_after = NULL,
             genes_before = NULL,
             genes_after = NULL,
-            W = igraph::as_adjacency_matrix(stage1_similarity_graph, attr = "weight", sparse = TRUE)
+            W = igraph::as_adjacency_matrix(g_cons, attr = "weight", sparse = TRUE)
         ))
     }
 
     L_post <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
     L_post[abs(L_post) < config$min_cutoff] <- 0
-    if (config$use_significance && !is.null(FDR)) {
-        L_post <- tryCatch(
-            .align_and_filter_fdr(L_post, similarity_matrix, FDR, config$significance_max),
-            error = function(e) {
-                .log_info("clusterGenes", "S07", paste0("significance subset disabled: ", conditionMessage(e)), verbose)
-                L_post
-            }
-        )
+    if (config$use_significance) {
+        if (is.null(FDR)) stop("Significance filtering requested but FDR is missing.", call. = FALSE)
+        L_post <- .align_and_filter_fdr(L_post, similarity_matrix, FDR, config$significance_max)
     }
     L_post[L_post < 0] <- 0
     L_post <- pmax(L_post, t(L_post))
@@ -2794,42 +2596,13 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
     diag(L_post) <- 0
 
     if (isTRUE(config$keep_stage1_backbone)) {
-        pos_vals <- as.numeric(L_post[L_post > 0])
-        if (length(pos_vals) == 0) {
-            w_floor <- 1e-6
-        } else {
-            qv <- quantile(pos_vals, probs = min(max(config$backbone_floor_q, 0), 0.25), na.rm = TRUE)
-            w_floor <- max(1e-8, as.numeric(qv))
-        }
-        sim_pos_full <- pmax(similarity_matrix, 0)
-        cl_ids_stage1 <- sort(na.omit(unique(stage1_membership_labels)))
-        for (cid in cl_ids_stage1) {
-            genes_c <- kept_genes[stage1_membership_labels[kept_genes] == cid]
-            if (length(genes_c) < 2) next
-            M <- L_post[genes_c, genes_c, drop = FALSE]
-            if (!any(M > 0, na.rm = TRUE)) {
-                M <- sim_pos_full[genes_c, genes_c, drop = FALSE]
-            }
-            idx_back <- if (inherits(M, "sparseMatrix")) {
-                ed <- summary(M)
-                ed <- ed[ed$i < ed$j & ed$x > 0, , drop = FALSE]
-                if (!nrow(ed)) matrix(integer(0), ncol = 2) else as.matrix(ed[, c("i", "j"), drop = FALSE])
-            } else {
-                which(upper.tri(M) & M > 0, arr.ind = TRUE)
-            }
-            if (nrow(idx_back) == 0) next
-            mst_edge_table <- data.frame(from = genes_c[idx_back[, 1]], to = genes_c[idx_back[, 2]], w = M[idx_back], stringsAsFactors = FALSE)
-            gtmp <- igraph::graph_from_data_frame(mst_edge_table, directed = FALSE, vertices = genes_c)
-            if (igraph::ecount(gtmp) == 0) next
-            mst_c <- igraph::mst(gtmp, weights = 1 / (igraph::E(gtmp)$w + 1e-9))
-            if (igraph::ecount(mst_c) == 0) next
-            ep <- igraph::as_data_frame(mst_c, what = "edges")
-            for (k in seq_len(nrow(ep))) {
-                i <- ep$from[k]; j <- ep$to[k]
-                L_post[i, j] <- max(L_post[i, j], w_floor)
-                L_post[j, i] <- L_post[i, j]
-            }
-        }
+        L_post <- .stage2_restore_filtered_backbone(
+            L_post = L_post,
+            stage1_similarity = stage1$similarity_sub %||% stage1$A_sub,
+            kept_genes = kept_genes,
+            stage1_membership_labels = stage1_membership_labels,
+            backbone_floor_q = config$backbone_floor_q
+        )
     }
 
     ed1 <- summary(L_post)
@@ -2999,10 +2772,13 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
                         )
                         res <- try(.run_graph_algorithm(g_local, algo_per_run_sub, res_param_sub, objective), silent = TRUE)
                         if (inherits(res, "try-error")) {
-                            rep.int(1L, length(genes_c))
+                            stop("Stage-2 subcluster graph algorithm failed: ", as.character(res), call. = FALSE)
                         } else {
                             mm <- try(igraph::membership(res), silent = TRUE)
-                            if (inherits(mm, "try-error") || is.null(mm)) rep.int(1L, length(genes_c)) else mm
+                            if (inherits(mm, "try-error") || is.null(mm)) {
+                                stop("Stage-2 subcluster membership extraction failed: ", as.character(mm), call. = FALSE)
+                            }
+                            mm
                         }
                     },
                     future.seed = TRUE
@@ -3315,4 +3091,10 @@ if (!exists(".stage2_refine_workflow", inherits = FALSE) && exists(".stage2_refi
         weights_matrix = W,
         stage2_backend = stage2_backend
     )
+}
+
+# Compatibility shim kept as a dynamic forwarder so it cannot retain a stale
+# closure if the active Stage-2 implementation is changed during package load.
+.stage2_refine_workflow <- function(...) {
+    .stage2_refine_workflow_v2(...)
 }

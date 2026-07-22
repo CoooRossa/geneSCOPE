@@ -15,7 +15,8 @@
   n_threads = 1L,
   chunk_size = 1000L,
   clamp_nonneg_r = FALSE,
-  tiny = FALSE
+  tiny = FALSE,
+  pearson_ref = NULL
 )
 }
 \arguments{
@@ -40,6 +41,9 @@
 \item{clamp_nonneg_r}{Parameter value.}
 
 \item{tiny}{Parameter value.}
+
+\item{pearson_ref}{Optional fixed observed Pearson reference, aligned to
+`gene_pairs`. When supplied, permutation Delta uses `L_perm - pearson_ref`.}
 }
 \value{
 Return value used internally.

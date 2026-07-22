@@ -13,7 +13,8 @@
   mh_object,
   stage1_membership_labels,
   config,
-  verbose
+  verbose,
+  stage1_similarity = NULL
 )
 }
 \arguments{
@@ -34,6 +35,9 @@
 \item{config}{Parameter value.}
 
 \item{verbose}{Logical; whether to emit progress messages.}
+
+\item{stage1_similarity}{Stage-1 filtered similarity_sub/A_sub matrix used
+exclusively for optional backbone recovery.}
 }
 \value{
 Return value used internally.

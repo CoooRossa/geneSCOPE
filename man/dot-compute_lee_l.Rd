@@ -13,7 +13,7 @@
   ncores = 1,
   mem_limit_GB = 16,
   chunk_size = 256L,
-  use_bigmemory = TRUE,
+  use_bigmemory = FALSE,
   backing_path = tempdir(),
   block_side = 8,
   cache_inputs = FALSE,
@@ -25,25 +25,26 @@
 
 \item{grid_name}{Grid layer name (or `NULL` to use the active layer).}
 
-\item{norm_layer}{Layer name.}
+\item{norm_layer}{Normalized expression layer name. Custom layers must be
+numeric, finite, and column-centred; unit variance is not required.}
 
 \item{genes}{Parameter value.}
 
-\item{within}{Parameter value.}
+\item{within}{A single logical value controlling square selected-gene output.}
 
-\item{ncores}{Number of cores/threads to use.}
+\item{ncores}{Positive integer number of cores/threads to use.}
 
-\item{mem_limit_GB}{Parameter value.}
+\item{mem_limit_GB}{Positive finite maximum dense native Lee result size in GiB.}
 
-\item{chunk_size}{Parameter value.}
+\item{chunk_size}{Retained for API compatibility; chunking is disabled.}
 
-\item{use_bigmemory}{Logical flag.}
+\item{use_bigmemory}{Must remain `FALSE`; the former route was RAM-backed.}
 
-\item{backing_path}{Filesystem path.}
+\item{backing_path}{Retained for API compatibility.}
 
-\item{block_side}{Parameter value.}
+\item{block_side}{Positive integer block side for permutation preprocessing.}
 
-\item{cache_inputs}{Parameter value.}
+\item{cache_inputs}{A single logical value controlling preprocessing reuse.}
 
 \item{input_cache}{Parameter value.}
 }

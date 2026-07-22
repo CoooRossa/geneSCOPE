@@ -2,19 +2,8 @@
 % Please edit documentation in R/internal_pipeline.R
 \name{.stage2_refine_workflow_v2}
 \alias{.stage2_refine_workflow_v2}
-\title{Stage2 Refine Workflow V2}
+\title{Stage-2 refinement workflow (baseline)}
 \usage{
-.stage2_refine_workflow_v2(
-  stage1,
-  similarity_matrix,
-  config,
-  FDR = NULL,
-  mh_object = NULL,
-  aux_stats = NULL,
-  pearson_matrix = NULL,
-  verbose = TRUE
-)
-
 .stage2_refine_workflow_v2(
   stage1,
   similarity_matrix,
@@ -45,14 +34,10 @@ consensus options, minimum cluster sizes, etc.).}
 \item{verbose}{Logical; emit progress logs.}
 }
 \value{
-Return value used internally.
-
 List containing refined membership vector, consensus graph/matrix, and
   associated metrics plus intermediate matrices used by downstream steps.
 }
 \description{
-Internal helper for `.stage2_refine_workflow_v2`.
-
 Internal helper for `.stage2_refine_workflow_v2`.
 Applies MH weighting/CI95 filtering and optional sub-clustering to refine
 stage-1 results, producing corrected memberships and consensus graphs.

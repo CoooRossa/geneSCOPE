@@ -19,7 +19,7 @@ computeL(
   legacy_formula = FALSE,
   mem_limit_GB = 2,
   chunk_size = 32L,
-  use_bigmemory = TRUE,
+  use_bigmemory = FALSE,
   backing_path = tempdir(),
   cache_inputs = TRUE,
   verbose = TRUE,
@@ -33,33 +33,41 @@ computeL(
 
 \item{genes}{Optional subset of genes to include.}
 
-\item{within}{If `TRUE`, restricts analysis to the selected gene set on both axes.}
+\item{within}{A single logical value. If `TRUE`, restricts analysis to the
+selected gene set on both axes.}
 
-\item{ncores}{Number of cores for parallel processing.}
+\item{ncores}{A positive integer number of cores for parallel processing.}
 
-\item{block_side}{Number of grid cells per side for block partitioning.}
+\item{block_side}{A positive integer number of grid cells per side for block
+permutations.}
 
-\item{perms}{Number of permutations for Monte-Carlo p-values.}
+\item{perms}{A non-negative integer number of Monte-Carlo permutations; use
+zero to store observed Lee's L without permutation inference.}
 
-\item{block_size}{Number of permutations processed per batch.}
+\item{block_size}{A positive integer number of permutations processed per batch.}
 
 \item{L_min}{Similarity threshold used when building QC similarity graphs.}
 
-\item{norm_layer}{Name of the normalised expression layer (default `"Xz"`).}
+\item{norm_layer}{Name of the normalized expression layer (default `"Xz"`).
+The layer must be numeric, finite, and column-centred relative to its RMS
+magnitude; unit variance is not required.}
 
 \item{lee_stats_layer_name}{Output statistics layer name (auto-generated when NULL).}
 
-\item{legacy_formula}{Use legacy denominator for compatibility.}
+\item{legacy_formula}{Must remain `FALSE`; the non-canonical legacy
+denominator is no longer supported.}
 
-\item{mem_limit_GB}{RAM threshold that triggers streaming mode.}
+\item{mem_limit_GB}{Positive finite memory limit for the dense Lee result.
+Oversized results fail closed; no pseudo-streaming path is used.}
 
-\item{chunk_size}{Number of columns processed per chunk in streaming mode.}
+\item{chunk_size}{Retained for API compatibility; chunking is disabled.}
 
-\item{use_bigmemory}{Whether to use file-backed matrices for large computations.}
+\item{use_bigmemory}{Must remain `FALSE`. The former chunk route was
+RAM-backed rather than file-backed and is disabled.}
 
 \item{backing_path}{Directory for temporary files (default `tempdir()`).}
 
-\item{cache_inputs}{Whether to .cache preprocessed inputs for reuse across calls.}
+\item{cache_inputs}{Whether to cache preprocessed inputs for reuse across calls.}
 
 \item{verbose}{Whether to emit progress messages.}
 

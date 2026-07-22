@@ -2,7 +2,6 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(cpp11)]]
 // [[Rcpp::plugins(openmp)]]
-#define ARMA_64BIT_WORD
 #include <RcppArmadillo.h>
 
 #ifdef _OPENMP
@@ -36,6 +35,7 @@ inline double dot_two_sparse(const uword *idxA, const double *valA, uword lenA,
 }
 
 //' @title Optimised sparse Morisita–Horn similarity
+//' @name morisita_horn_sparse
 //'
 //' @description
 //'   Computes pair‑wise Morisita–Horn similarity between rows of a sparse

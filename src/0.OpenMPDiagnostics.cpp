@@ -4,6 +4,7 @@
 #include <omp.h>
 #endif
 
+// [[Rcpp::export]]
 Rcpp::List native_openmp_info() {
   Rcpp::List out;
 #ifdef _OPENMP
@@ -24,7 +25,11 @@ Rcpp::List native_openmp_info() {
   return out;
 }
 
+// [[Rcpp::export]]
 Rcpp::List native_openmp_set_threads(const int n_threads) {
+  if (n_threads < 1) {
+    Rcpp::stop("n_threads must be at least 1");
+  }
   Rcpp::List out;
   out["requested_threads"] = n_threads;
 #ifdef _OPENMP
@@ -41,6 +46,10 @@ Rcpp::List native_openmp_set_threads(const int n_threads) {
   return out;
 }
 
+// Retain the historical registered symbols used by earlier repaired builds.
+// The package itself uses the standard Rcpp-generated wrappers above, while
+// these aliases preserve ABI compatibility for saved scripts that call the
+// old symbols directly.
 RcppExport SEXP _geneSCOPERebuild_native_openmp_info(void) {
   BEGIN_RCPP
   Rcpp::RObject rcpp_result_gen;

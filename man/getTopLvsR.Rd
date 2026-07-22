@@ -22,7 +22,7 @@ getTopLvsR(
   clamp_mode = c("none", "ref_only", "both"),
   p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
   mem_limit_GB = 2,
-  pval_mode = c("beta", "mid", "uniform"),
+  pval_mode = c("exact", "beta", "mid", "uniform"),
   curve_layer = NULL,
   CI_rule = c("remove_within", "remove_outside", "none"),
   verbose = TRUE
@@ -37,7 +37,8 @@ getTopLvsR(
 
 \item{lee_stats_layer}{Lee statistics layer name.}
 
-\item{expr_layer}{Optional expression layer name for gene prevalence filtering.}
+\item{expr_layer}{Optional expression layer name. For permutation inference it
+must match the `norm_layer` recorded by `computeL()`; omitting it is safest.}
 
 \item{pear_range}{Range of Pearson r values to include.}
 
@@ -47,21 +48,24 @@ getTopLvsR(
 
 \item{direction}{Which tail to select (`largest`, `smallest`, `both`).}
 
-\item{do_perm}{Whether to run permutation testing.}
+\item{do_perm}{A single logical value indicating whether to run permutation testing.}
 
-\item{perms}{Number of permutations for p-value estimation.}
+\item{perms}{A non-negative integer number of permutations (positive when
+`do_perm = TRUE`).}
 
-\item{block_side}{Block side length used when building permutation blocks.}
+\item{block_side}{A positive integer block side length. It may differ from
+the value used by `computeL()` because observed-data and permutation
+provenance are validated separately.}
 
-\item{use_blocks}{Whether to use spatial blocks for permutations.}
+\item{use_blocks}{A single logical value indicating whether to use spatial blocks.}
 
-\item{ncores}{Number of threads to use.}
+\item{ncores}{A positive integer number of threads to use.}
 
 \item{clamp_mode}{Whether to clamp Delta using reference-only or both ends.}
 
 \item{p_adj_mode}{Multiple-testing adjustment mode.}
 
-\item{mem_limit_GB}{Memory threshold controlling chunking behavior.}
+\item{mem_limit_GB}{Positive finite memory budget for permutation index batches.}
 
 \item{pval_mode}{P-value mode used when transforming permutation counts.}
 
@@ -77,6 +81,12 @@ A data.frame with ranked gene pairs and associated statistics.
 \description{
 Ranks gene pairs by the deviation between Lee's L and Pearson correlation and
 returns a table of top pairs.
+}
+\details{
+`getTopLvsR()` requires LeeStats provenance written by the corrected
+Lee-2009/S2 implementation. It reuses the recorded normalized layer and
+refuses stale objects or changed X/W/grid inputs; rerun `computeL()` when
+that validation fails.
 }
 \examples{
 \dontrun{

@@ -19,7 +19,7 @@
   legacy_formula = FALSE,
   mem_limit_GB = 2,
   chunk_size = 32L,
-  use_bigmemory = TRUE,
+  use_bigmemory = FALSE,
   backing_path = tempdir(),
   cache_inputs = TRUE,
   verbose = TRUE,
@@ -35,30 +35,35 @@
 \item{genes}{Optional character vector of genes to include; if \code{NULL}
 all genes are used.}
 
-\item{within}{Logical. If \code{TRUE} restrict analysis to the selected
+\item{within}{A single logical value. If \code{TRUE} restrict analysis to the selected
 gene set on both axes (default). Otherwise compute gene × all.}
 
-\item{ncores}{Integer. Number of cores for parallel processing (default 1).}
+\item{ncores}{Positive integer. Number of cores for parallel processing (default 1).}
 
-\item{block_side}{Integer. Number of grid cells per side for block partitioning (default 8).}
+\item{block_side}{Positive integer. Number of grid cells per side for block partitioning (default 8).}
 
-\item{perms}{Integer. Number of permutations for Monte-Carlo p-values (default 1000).}
+\item{perms}{Non-negative integer. Number of permutations for Monte-Carlo p-values (default 1000).}
 
-\item{block_size}{Integer. Number of permutations processed per batch (default 64).}
+\item{block_size}{Positive integer. Number of permutations processed per batch (default 64).}
 
 \item{L_min}{Numeric threshold used when building the QC similarity graph.}
 
-\item{norm_layer}{Character. Name of the normalised expression layer (default "Xz").}
+\item{norm_layer}{Character. Name of the normalized expression layer (default
+"Xz"). Custom layers must be numeric, finite, and column-centred relative
+to their RMS magnitude; unit variance is not required.}
 
 \item{lee_stats_layer_name}{Character. Name for the output statistics layer.}
 
-\item{legacy_formula}{Logical. Use legacy denominator for compatibility.}
+\item{legacy_formula}{Must remain `FALSE`; the non-canonical legacy
+denominator is disabled.}
 
-\item{mem_limit_GB}{Numeric. RAM threshold that triggers streaming mode (default 8).}
+\item{mem_limit_GB}{Numeric. Maximum allowed dense Lee result size in GiB
+(default 2); oversized results fail closed.}
 
-\item{chunk_size}{Integer. Number of columns processed per chunk (default 128).}
+\item{chunk_size}{Retained for API compatibility; the unsafe chunk route is disabled.}
 
-\item{use_bigmemory}{Logical. Use file-backed matrices for large computations (default TRUE).}
+\item{use_bigmemory}{Must remain `FALSE`; the former chunk route was
+RAM-backed rather than file-backed and is disabled.}
 
 \item{backing_path}{Character. Directory for temporary files (default tempdir()).}
 
@@ -72,8 +77,8 @@ gene set on both axes (default). Otherwise compute gene × all.}
 The modified \code{scope_object}.
 }
 \description{
-High-level wrapper that computes Lee's L, analytical Z-scores, empirical
-  p-values via block permutations, FDR, spatial gradients, quality-control
-  metrics, and stores everything under a new layer in \code{@grid}.
+High-level wrapper that computes Lee's L, empirical p-values and signed
+  Z-scores via block permutations, FDR, spatial gradients, and quality-control
+  metrics, and stores everything under a new layer in \code{@stats}.
 }
 \keyword{internal}

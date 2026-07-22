@@ -5,7 +5,7 @@
 #' @return Named list.
 #' @keywords internal
 .native_openmp_info <- function() {
-    .Call(`_geneSCOPERebuild_native_openmp_info`)
+    native_openmp_info()
 }
 
 #' Set OpenMP threads (best-effort)
@@ -16,5 +16,5 @@
 #' @return Named list with requested/max threads and compile status.
 #' @keywords internal
 .native_openmp_set_threads <- function(n_threads = 1L) {
-    .Call(`_geneSCOPERebuild_native_openmp_set_threads`, as.integer(n_threads))
+    native_openmp_set_threads(as.integer(n_threads))
 }

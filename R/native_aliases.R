@@ -20,3 +20,7 @@
 .delta_lr_perm_block <- function(...) delta_lr_perm_block(...)
 .delta_lr_perm_csr <- function(...) delta_lr_perm_csr(...)
 .delta_lr_perm_csr_block <- function(...) delta_lr_perm_csr_block(...)
+.delta_l_fixed_r_perm <- function(...) delta_l_fixed_r_perm(...)
+.delta_l_fixed_r_perm_block <- function(...) delta_l_fixed_r_perm_block(...)
+.delta_l_fixed_r_perm_csr <- function(...) delta_l_fixed_r_perm_csr(...)
+.delta_l_fixed_r_perm_csr_block <- function(...) delta_l_fixed_r_perm_csr_block(...)

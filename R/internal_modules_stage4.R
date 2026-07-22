@@ -634,6 +634,90 @@
   )
 }
 
+#' Restore a minimal Stage-1 backbone without bypassing Stage-1 filtering.
+#' @keywords internal
+.stage2_restore_filtered_backbone <- function(L_post,
+                                              stage1_similarity,
+                                              kept_genes,
+                                              stage1_membership_labels,
+                                              backbone_floor_q = 0.02) {
+  if (is.null(stage1_similarity)) {
+    stop(
+      "keep_stage1_backbone=TRUE requires stage1$similarity_sub/A_sub; raw similarity cannot be used.",
+      call. = FALSE
+    )
+  }
+  rn <- rownames(stage1_similarity)
+  cn <- colnames(stage1_similarity)
+  if (is.null(rn) || is.null(cn) || anyNA(rn) || anyNA(cn) ||
+      anyDuplicated(rn) || anyDuplicated(cn) ||
+      !all(kept_genes %in% rn) || !all(kept_genes %in% cn)) {
+    stop("Stage-1 filtered similarity cannot be aligned uniquely to kept_genes.", call. = FALSE)
+  }
+  stage1_filtered <- stage1_similarity[kept_genes, kept_genes, drop = FALSE]
+  stage1_filtered <- pmax(stage1_filtered, t(stage1_filtered))
+  stage1_filtered[!is.finite(stage1_filtered) | stage1_filtered <= 0] <- 0
+  diag(stage1_filtered) <- 0
+
+  if (is.null(names(stage1_membership_labels))) {
+    if (length(stage1_membership_labels) != length(kept_genes)) {
+      stop("Unnamed Stage-1 membership must have one value per kept gene.", call. = FALSE)
+    }
+    names(stage1_membership_labels) <- kept_genes
+  }
+  membership <- stage1_membership_labels[kept_genes]
+  assigned_genes <- kept_genes[!is.na(membership)]
+
+  pos_vals <- as.numeric(L_post[L_post > 0])
+  w_floor <- if (!length(pos_vals)) {
+    1e-6
+  } else {
+    max(1e-8, as.numeric(stats::quantile(
+      pos_vals,
+      probs = min(max(backbone_floor_q, 0), 0.25),
+      na.rm = TRUE
+    )))
+  }
+
+  for (cid in sort(unique(membership[assigned_genes]))) {
+    genes_c <- assigned_genes[membership[assigned_genes] == cid]
+    if (length(genes_c) < 2L) next
+    candidates <- stage1_filtered[genes_c, genes_c, drop = FALSE]
+    idx_back <- .arrind_from_matrix_predicate(
+      candidates, op = "gt", cutoff = 0,
+      triangle = "upper", keep_diag = FALSE
+    )
+    if (!nrow(idx_back)) next
+    source_weight <- as.numeric(candidates[idx_back])
+    edge_table <- data.frame(
+      from = genes_c[idx_back[, 1]],
+      to = genes_c[idx_back[, 2]],
+      weight = source_weight,
+      stringsAsFactors = FALSE
+    )
+    candidate_graph <- igraph::graph_from_data_frame(
+      edge_table, directed = FALSE, vertices = genes_c
+    )
+    forest <- igraph::mst(
+      candidate_graph,
+      weights = 1 / (igraph::E(candidate_graph)$weight + 1e-9)
+    )
+    if (!igraph::ecount(forest)) next
+    recovered <- igraph::as_data_frame(forest, what = "edges")
+    for (k in seq_len(nrow(recovered))) {
+      i <- recovered$from[k]
+      j <- recovered$to[k]
+      source_w <- stage1_filtered[i, j]
+      recovery_w <- min(w_floor, as.numeric(source_w))
+      if (is.finite(recovery_w) && recovery_w > 0 && L_post[i, j] <= 0) {
+        L_post[i, j] <- recovery_w
+        L_post[j, i] <- recovery_w
+      }
+    }
+  }
+  L_post
+}
+
 #' Stage2 Native Inputs Validate Inputs
 #' @description
 #' Internal helper for `.stage2_native_inputs_validate_inputs`.
@@ -703,6 +787,8 @@
 #' @param stage1_membership_labels Parameter value.
 #' @param config Parameter value.
 #' @param verbose Logical; whether to emit progress messages.
+#' @param stage1_similarity Stage-1 filtered similarity_sub/A_sub matrix used
+#'   exclusively for optional backbone recovery.
 #' @return Return value used internally.
 #' @keywords internal
 .stage2_native_inputs_materialize <- function(spec,
@@ -713,7 +799,8 @@
                                               mh_object,
                                               stage1_membership_labels,
                                               config,
-                                              verbose) {
+                                              verbose,
+                                              stage1_similarity = NULL) {
   kept_genes <- spec$kept_genes
   L_post <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
   L_post[abs(L_post) < config$min_cutoff] <- 0
@@ -814,42 +901,13 @@
   diag(L_post) <- 0
 
   if (isTRUE(config$keep_stage1_backbone)) {
-    pos_vals <- as.numeric(L_post[L_post > 0])
-    if (length(pos_vals) == 0) {
-      w_floor <- 1e-6
-    } else {
-      w_floor <- max(
-        1e-8,
-        as.numeric(quantile(pos_vals, probs = min(max(config$backbone_floor_q, 0), 0.25), na.rm = TRUE))
-      )
-    }
-    for (cid in sort(na.omit(unique(stage1_membership_labels)))) {
-      genes_c <- kept_genes[stage1_membership_labels[kept_genes] == cid]
-      if (length(genes_c) < 2) next
-      M <- L_post[genes_c, genes_c, drop = FALSE]
-      if (!any(M > 0, na.rm = TRUE)) {
-        M <- pmax(similarity_matrix, 0)[genes_c, genes_c, drop = FALSE]
-      }
-      idx_back <- .arrind_from_matrix_predicate(
-        M,
-        op = "gt",
-        cutoff = 0,
-        triangle = "upper",
-        keep_diag = FALSE
-      )
-      if (nrow(idx_back) == 0) next
-      mst_edge_table <- data.frame(from = genes_c[idx_back[, 1]], to = genes_c[idx_back[, 2]], w = M[idx_back], stringsAsFactors = FALSE)
-      gtmp <- igraph::graph_from_data_frame(mst_edge_table, directed = FALSE, vertices = genes_c)
-      if (igraph::ecount(gtmp) == 0) next
-      mst_c <- igraph::mst(gtmp, weights = 1 / (igraph::E(gtmp)$w + 1e-9))
-      if (igraph::ecount(mst_c) == 0) next
-      ep <- igraph::as_data_frame(mst_c, what = "edges")
-      for (k in seq_len(nrow(ep))) {
-        i <- ep$from[k]; j <- ep$to[k]
-        L_post[i, j] <- max(L_post[i, j], w_floor)
-        L_post[j, i] <- L_post[i, j]
-      }
-    }
+    L_post <- .stage2_restore_filtered_backbone(
+      L_post = L_post,
+      stage1_similarity = stage1_similarity,
+      kept_genes = kept_genes,
+      stage1_membership_labels = stage1_membership_labels,
+      backbone_floor_q = config$backbone_floor_q
+    )
   }
 
   ed1 <- summary(L_post)
@@ -940,7 +998,8 @@
     mh_object = data$mh_object,
     stage1_membership_labels = data$stage1_membership_labels,
     config = data$config,
-    verbose = FALSE
+    verbose = FALSE,
+    stage1_similarity = data$stage1_similarity_sub %||% data$stage1_similarity
   )
   .stage2_native_inputs_validate_outputs(payload, spec, validated)
   list(
@@ -1169,10 +1228,13 @@
             )
             res <- try(.run_graph_algorithm(g_local, algo_per_run_sub, res_param_sub, objective), silent = TRUE)
             if (inherits(res, "try-error")) {
-              rep.int(1L, length(genes_c))
+              stop("Stage-2 subcluster graph algorithm failed: ", as.character(res), call. = FALSE)
             } else {
               mm <- try(igraph::membership(res), silent = TRUE)
-              if (inherits(mm, "try-error") || is.null(mm)) rep.int(1L, length(genes_c)) else mm
+              if (inherits(mm, "try-error") || is.null(mm)) {
+                stop("Stage-2 subcluster membership extraction failed: ", as.character(mm), call. = FALSE)
+              }
+              mm
             }
           },
           future.seed = TRUE

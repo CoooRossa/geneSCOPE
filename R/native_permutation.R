@@ -12,6 +12,8 @@
 #' @param chunk_size Parameter value.
 #' @param clamp_nonneg_r Parameter value.
 #' @param tiny Parameter value.
+#' @param pearson_ref Optional fixed observed Pearson reference, aligned to
+#'   `gene_pairs`. When supplied, permutation Delta uses `L_perm - pearson_ref`.
 #' @return Return value used internally.
 #' @keywords internal
 .delta_perm_pairs <- function(Xz, W, idx_mat, gene_pairs, delta_ref,
@@ -19,7 +21,33 @@
                              n_threads = 1L,
                              chunk_size = 1000L,
                              clamp_nonneg_r = FALSE,
-                             tiny = FALSE) {
+                             tiny = FALSE,
+                             pearson_ref = NULL) {
+    if (!is.null(pearson_ref)) {
+        if (length(pearson_ref) != nrow(gene_pairs)) {
+            stop("pearson_ref length must equal nrow(gene_pairs).", call. = FALSE)
+        }
+        if (!is.null(csr)) {
+            if (is.null(block_ids)) {
+                return(.delta_l_fixed_r_perm_csr(
+                    Xz, csr$indices, csr$values, csr$row_ptr, idx_mat,
+                    gene_pairs, delta_ref, pearson_ref, n_threads
+                ))
+            }
+            return(.delta_l_fixed_r_perm_csr_block(
+                Xz, csr$indices, csr$values, csr$row_ptr, idx_mat, block_ids,
+                gene_pairs, delta_ref, pearson_ref, n_threads
+            ))
+        }
+        if (is.null(block_ids)) {
+            return(.delta_l_fixed_r_perm(
+                Xz, W, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads
+            ))
+        }
+        return(.delta_l_fixed_r_perm_block(
+            Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads
+        ))
+    }
     if (!is.null(csr)) {
         if (is.null(block_ids)) {
             .delta_lr_perm_csr(Xz, csr$indices, csr$values, csr$row_ptr,

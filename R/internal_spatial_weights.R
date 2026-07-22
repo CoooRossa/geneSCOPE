@@ -46,6 +46,42 @@
 }
 .listw_b_omp <- function(nb) listw_B_omp(nb)
 
+# Summarise the values that were actually built, so weight metadata is an
+# auditable description of W/listw rather than only a restatement of the
+# requested style.  Zero-neighbour rows are valid under zero.policy and are
+# therefore accepted alongside unit-sum rows for style="W".
+.spw_verify_weight_values <- function(W = NULL, listw_obj = NULL, tol = 1e-12) {
+  source <- "none"
+  values <- numeric(0)
+  row_sums <- numeric(0)
+
+  if (!is.null(W)) {
+    source <- "matrix"
+    if (inherits(W, "Matrix")) {
+      values <- as.numeric(W@x)
+      row_sums <- as.numeric(Matrix::rowSums(W))
+    } else {
+      W_dense <- as.matrix(W)
+      values <- as.numeric(W_dense[W_dense != 0])
+      row_sums <- rowSums(W_dense)
+    }
+  } else if (!is.null(listw_obj)) {
+    source <- "listw"
+    values <- as.numeric(unlist(listw_obj$weights, use.names = FALSE))
+    row_sums <- vapply(listw_obj$weights, sum, numeric(1L))
+  }
+
+  finite <- !identical(source, "none") &&
+    all(is.finite(values)) && all(is.finite(row_sums))
+  list(
+    source = source,
+    finite = finite,
+    binary = finite && all(abs(values - 1) <= tol),
+    row_normalized = finite && length(row_sums) > 0L &&
+      all(abs(row_sums) <= tol | abs(row_sums - 1) <= tol)
+  )
+}
+
 #' Builds spatial neighbourhood structures, converts them to listw/sparse
 #' @description
 #' Internal helper for `.compute_weights`.
@@ -80,8 +116,34 @@
                            kernel_radius = NULL,
                            kernel_sigma = NULL,
                            ncores = detectCores(logical = TRUE)) {
+  if (length(style) != 1L || is.na(style) || !nzchar(as.character(style))) {
+    stop("style must be one non-empty value.", call. = FALSE)
+  }
+  style <- as.character(style)
+  style_requested <- style
+  is_kernel_request <- grepl("^kernel", style, ignore.case = TRUE)
+  if (is_kernel_request) {
+    style <- tolower(style)
+  } else {
+    style <- toupper(style)
+    if (!style %in% c("B", "W")) {
+      stop(
+        "style='", style, "' is not supported for stored grid$W. ",
+        "Only B (binary) and W (row-standardized) guarantee that grid$W, listw, ",
+        "and weight_style metadata describe the same matrix.",
+        call. = FALSE
+      )
+    }
+  }
   topology <- match.arg(topology)
   use_fuzzy <- grepl("^fuzzy", topology)
+  if (use_fuzzy) {
+    stop(
+      "fuzzy_queen/fuzzy_hex weights are disabled because they do not provide one authoritative ",
+      "grid$W/listw matrix. Use topology='queen' or 'hex' with style='B' or style='W'.",
+      call. = FALSE
+    )
+  }
   topo_arg <- if (use_fuzzy) {
     if (identical(topology, "fuzzy_hex")) "hex" else "queen"
   } else {
@@ -100,6 +162,13 @@
   grid_name <- layer_info$grid_name
   layer <- layer_info$layer
   meta <- .spw_validate_grid_metadata(layer, grid_name)
+
+  # A compute call owns the complete W/listw state for this layer.  Remove old
+  # objects before building so a disabled output can never expose a matrix or
+  # listw left by an earlier call (including an earlier kernel call).
+  scope_obj@grid[[grid_name]]$W <- NULL
+  scope_obj@grid[[grid_name]]$listw <- NULL
+  scope_obj@grid[[grid_name]]$weight_provenance <- NULL
   ncores_use <- max(1L, min(ncores, detectCores(logical = TRUE)))
   .log_info(parent, "S01", paste0(
     "grid_name=", grid_name,
@@ -157,10 +226,6 @@
       stop("kernel_sigma must be > 0 (set `min_neighbors` when using style='kernel_*').")
     }
 
-    if (!store_mat && verbose) {
-      .log_info(parent, "S02", paste0("style='", style, "' forces store_mat=TRUE; storing W."), verbose)
-    }
-    store_mat_effective <- TRUE
     .log_info(parent, "S02", paste0(
       "kernel=", kernel_token,
       " radius=", kernel_radius_use,
@@ -253,6 +318,7 @@
     }
     diag(W) <- 0
     dimnames(W) <- list(meta$grid_id, meta$grid_id)
+    attr(W, "weight_style") <- "W"
   } else {
     # 3) Build the full neighbourhood structure and relabel to active cells
     nb_bundle <- .spw_build_neighbourhood(meta, topo_info,
@@ -301,9 +367,18 @@
   # 4) Convert to requested outputs
     if (store_mat_effective) {
       W <- .listw_b_omp(relabel_nb)
-      diag(W) <- 0
       W@x[] <- 1
+      # zero_policy temporarily represents isolated grids by self-neighbours so
+      # the native builder can retain their rows.  Binaryising after diag(W)=0
+      # would turn those explicit zeros back into self-loops.
+      diag(W) <- 0
+      W <- Matrix::drop0(W)
       dimnames(W) <- list(meta$grid_id, meta$grid_id)
+      if (!use_fuzzy && identical(toupper(as.character(style)[1L]), "W")) {
+        W <- .row_normalize_sparse(W)
+        dimnames(W) <- list(meta$grid_id, meta$grid_id)
+      }
+      attr(W, "weight_style") <- if (use_fuzzy) "B" else as.character(style)[1L]
       .log_backend(parent, "S03", "matrix_builder", "C++ .listw_b_omp", verbose = verbose)
     }
   }
@@ -328,31 +403,97 @@
   ))
 
   if (kernel_style) {
-    if (store_mat_effective) {
-      scope_obj@grid[[grid_name]]$W <- W
-    }
     if (store_listw) {
-      scope_obj@grid[[grid_name]]$listw <- spdep::mat2listw(W,
+      listw_obj <- spdep::mat2listw(W,
         style = "W",
         zero.policy = zero_policy
       )
       .log_backend(parent, "S04", "listw_builder", "spdep::mat2listw", verbose = verbose)
     }
   } else {
-    if (store_listw || store_mat_effective) {
-      listw_obj <- spdep::nb2listw(relabel_nb,
+    if (store_listw) {
+      nb_for_listw <- relabel_nb
+      # The native matrix builder temporarily needs a self index for isolated
+      # rows. Restore spdep's zero-neighbour sentinel before listw conversion so
+      # listw has the same zero diagonal/isolated rows as grid$W.
+      if (zero_policy && length(zero_idx)) {
+        for (j in zero_idx) nb_for_listw[[j]] <- 0L
+      }
+      listw_obj <- spdep::nb2listw(nb_for_listw,
         style = style,
         zero.policy = zero_policy
       )
     }
-    if (store_mat_effective) {
-      scope_obj@grid[[grid_name]]$W <- W
-    }
     if (store_listw) {
-      scope_obj@grid[[grid_name]]$listw <- listw_obj
       .log_backend(parent, "S04", "listw_builder", "spdep::nb2listw", verbose = verbose)
     }
   }
+
+  weight_style <- if (kernel_style) "W" else as.character(style)[1L]
+  kernel_backend <- if (!kernel_style) {
+    NA_character_
+  } else if (topo_info$topology %in% c("queen", "rook")) {
+    "C++ grid_weights_kernel_rect_omp"
+  } else if (topo_info$topology %in% c("hex-oddr", "hex-evenr")) {
+    "C++ grid_weights_kernel_hexr_omp"
+  } else {
+    "C++ grid_weights_kernel_hexq_omp"
+  }
+  matrix_backend <- if (kernel_style) {
+    kernel_backend
+  } else if (isTRUE(store_mat_effective)) {
+    "C++ listw_B_omp"
+  } else {
+    NA_character_
+  }
+  listw_backend <- if (!isTRUE(store_listw)) {
+    NA_character_
+  } else if (kernel_style) {
+    "spdep::mat2listw"
+  } else {
+    "spdep::nb2listw"
+  }
+  verification <- .spw_verify_weight_values(W = W, listw_obj = listw_obj)
+  provenance <- list(
+    schema_version = 1L,
+    requested_style = style_requested,
+    weight_style = weight_style,
+    row_normalized = identical(weight_style, "W"),
+    row_normalized_verified = identical(weight_style, "W") &&
+      isTRUE(verification$row_normalized),
+    binary = identical(weight_style, "B"),
+    binary_verified = identical(weight_style, "B") &&
+      isTRUE(verification$binary),
+    finite_verified = isTRUE(verification$finite),
+    verification_source = verification$source,
+    topology = topo_info$topology,
+    backend = if (!is.na(matrix_backend)) matrix_backend else listw_backend,
+    matrix_backend = matrix_backend,
+    listw_backend = listw_backend,
+    neighbourhood_backend = if (kernel_style) NA_character_ else nb_backend,
+    kernel = if (kernel_style) kernel_token else NA_character_,
+    kernel_radius = if (kernel_style) kernel_radius_use else NA_integer_,
+    kernel_sigma = if (kernel_style) kernel_sigma_use else NA_real_,
+    zero_policy = isTRUE(zero_policy),
+    store_mat = isTRUE(store_mat_effective),
+    store_listw = isTRUE(store_listw)
+  )
+
+  if (!is.null(W)) {
+    attr(W, "weight_style") <- weight_style
+    attr(W, "weight_provenance") <- provenance
+  }
+  if (!is.null(listw_obj)) {
+    attr(listw_obj, "weight_style") <- weight_style
+    attr(listw_obj, "weight_provenance") <- provenance
+  }
+
+  # Assign both outputs explicitly.  The NULL branches are deliberate: they
+  # make the no-storage contract true even when the input layer carried stale
+  # objects from a prior computation.
+  scope_obj@grid[[grid_name]]$W <- if (isTRUE(store_mat_effective)) W else NULL
+  scope_obj@grid[[grid_name]]$listw <- if (isTRUE(store_listw)) listw_obj else NULL
+  scope_obj@grid[[grid_name]]$weight_provenance <- provenance
 
   # Optionally restore empty neighbour vectors for downstream consumers
   if (zero_policy && length(zero_idx)) {
@@ -378,32 +519,39 @@
 
   step05 <- .log_step(parent, "S05", "finalize and return", verbose)
   step05$enter("summary")
-  w_nnz <- if (!is.null(W) && inherits(W, "Matrix")) {
-    length(W@x)
-  } else if (!is.null(W) && is.matrix(W)) {
-    sum(W != 0)
+  W_stored <- scope_obj@grid[[grid_name]]$W
+  w_nnz <- if (!is.null(W_stored) && inherits(W_stored, "Matrix")) {
+    length(W_stored@x)
+  } else if (!is.null(W_stored) && is.matrix(W_stored)) {
+    sum(W_stored != 0)
   } else {
     NA_integer_
   }
-  w_dim <- if (!is.null(W)) paste0(nrow(W), "x", ncol(W)) else "NA"
-  diag_zero <- if (!is.null(W) && !is.matrix(W)) {
-    all(diag(W) == 0)
-  } else if (!is.null(W) && is.matrix(W)) {
-    all(diag(W) == 0)
+  w_dim <- if (!is.null(W_stored)) paste0(nrow(W_stored), "x", ncol(W_stored)) else "NA"
+  diag_zero <- if (!is.null(W_stored) && !is.matrix(W_stored)) {
+    all(diag(W_stored) == 0)
+  } else if (!is.null(W_stored) && is.matrix(W_stored)) {
+    all(diag(W_stored) == 0)
   } else {
     NA
   }
-  w_binary <- if (!is.null(W) && inherits(W, "Matrix")) {
-    if (!length(W@x)) TRUE else all(W@x %in% c(0, 1))
-  } else if (!is.null(W) && is.matrix(W)) {
-    if (!length(W)) TRUE else all(W[W != 0] %in% c(0, 1))
+  w_binary <- if (!is.null(W_stored) && inherits(W_stored, "Matrix")) {
+    if (!length(W_stored@x)) TRUE else all(W_stored@x %in% c(0, 1))
+  } else if (!is.null(W_stored) && is.matrix(W_stored)) {
+    if (!length(W_stored)) TRUE else all(W_stored[W_stored != 0] %in% c(0, 1))
   } else {
     NA
   }
-  row_norm_flag <- if (use_fuzzy) "fuzzy" else "FALSE"
+  row_norm_flag <- if (use_fuzzy) {
+    "fuzzy"
+  } else if (identical(toupper(as.character(style)[1L]), "W")) {
+    "TRUE"
+  } else {
+    "FALSE"
+  }
   summary_msg <- paste0(
     "grid_name=", grid_name,
-    " W=", if (!is.null(W)) "TRUE" else "FALSE",
+    " W=", if (!is.null(W_stored)) "TRUE" else "FALSE",
     " dims=", w_dim,
     " nnz=", w_nnz,
     " diag_zero=", diag_zero,
@@ -1103,14 +1251,31 @@ fuzzy_queen_jaccard <- function(x, y,
   }
   gx <- grid_info$gx
   gy <- grid_info$gy
+  grid_id <- as.character(grid_info$grid_id)
   xbins_eff <- layer$xbins_eff
   ybins_eff <- layer$ybins_eff
+  if (!length(grid_id) || anyNA(grid_id) || any(!nzchar(grid_id)) || anyDuplicated(grid_id)) {
+    stop("grid_info$grid_id must be complete, non-empty, and unique.", call. = FALSE)
+  }
+  if (length(gx) != length(grid_id) || length(gy) != length(grid_id) ||
+      anyNA(gx) || anyNA(gy) || any(!is.finite(gx)) || any(!is.finite(gy))) {
+    stop("grid_info gx/gy must be finite and have one value per grid_id.", call. = FALSE)
+  }
+  if (any(abs(gx - round(gx)) > sqrt(.Machine$double.eps)) ||
+      any(abs(gy - round(gy)) > sqrt(.Machine$double.eps))) {
+    stop("grid_info gx/gy must be integer lattice coordinates.", call. = FALSE)
+  }
+  gx <- as.integer(round(gx))
+  gy <- as.integer(round(gy))
+  if (anyDuplicated(paste(gx, gy, sep = "\r"))) {
+    stop("grid_info contains duplicated (gx, gy) coordinates.", call. = FALSE)
+  }
   if (any(gx < 1 | gx > xbins_eff | gy < 1 | gy > ybins_eff)) {
     stop("gx/gy exceed xbins_eff × ybins_eff range; check coordinates.")
   }
   list(
     grid_info = as.data.table(grid_info),
-    grid_id = grid_info$grid_id,
+    grid_id = grid_id,
     gx = gx,
     gy = gy,
     xbins_eff = xbins_eff,

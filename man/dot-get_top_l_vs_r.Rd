@@ -22,7 +22,7 @@
   clamp_mode = c("none", "ref_only", "both"),
   p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
   mem_limit_GB = 2,
-  pval_mode = c("beta", "mid", "uniform"),
+  pval_mode = c("exact", "beta", "mid", "uniform"),
   curve_layer = NULL,
   CI_rule = c("remove_within", "remove_outside", "none"),
   verbose = TRUE
@@ -37,7 +37,8 @@
 
 \item{lee_stats_layer}{Lee statistics layer name.}
 
-\item{expr_layer}{Layer name.}
+\item{expr_layer}{Optional expression layer name; when supplied it must match
+the `norm_layer` recorded in LeeStats metadata.}
 
 \item{pear_range}{Parameter value.}
 
@@ -51,9 +52,10 @@
 
 \item{perms}{Number of permutations for p-value estimation.}
 
-\item{block_side}{Parameter value.}
+\item{block_side}{Positive integer block side for the current permutation
+analysis; it may differ from the value used by `computeL()`.}
 
-\item{use_blocks}{Logical flag.}
+\item{use_blocks}{A single logical flag.}
 
 \item{ncores}{Number of threads to use for permutation testing.}
 
@@ -61,7 +63,7 @@
 
 \item{p_adj_mode}{Parameter value.}
 
-\item{mem_limit_GB}{Parameter value.}
+\item{mem_limit_GB}{Positive finite memory budget for permutation batches.}
 
 \item{pval_mode}{Parameter value.}
 

@@ -9,7 +9,7 @@
 #' @return Return value used internally.
 #' @keywords internal
 .align_and_filter_fdr <- function(L, L_raw, FDRmat, FDR_max) {
-    if (is.null(FDRmat)) return(L)
+    if (is.null(FDRmat)) stop("FDR matrix is required when significance filtering is enabled.", call. = FALSE)
     FM <- FDRmat
 
     # 1) Robust coercion to base matrix
@@ -17,43 +17,26 @@
         FM <- try({
             if (requireNamespace("bigmemory", quietly = TRUE)) bigmemory::as.matrix(FM) else FM[, ]
         }, silent = TRUE)
-        if (inherits(FM, "try-error")) {
-            warning("[align_and_filter_FDR] FDR is big.matrix but cannot coerce to base matrix; disabling FDR filter.")
-            return(L)
-        }
+        if (inherits(FM, "try-error")) stop("FDR big.matrix cannot be coerced to a matrix.", call. = FALSE)
     } else if (!is.matrix(FM)) {
         FM_try <- try(as.matrix(FM), silent = TRUE)
         if (!inherits(FM_try, "try-error") && is.matrix(FM_try)) {
             FM <- FM_try
-        } else {
-            warning("[align_and_filter_FDR] FDR object cannot be coerced to matrix (class=", paste(class(FDRmat), collapse=","), "); disabling FDR filter.")
-            return(L)
-        }
+        } else stop("FDR object cannot be coerced to a matrix.", call. = FALSE)
     }
 
-    # 2) Align by names (preferred) or by shape
-    policy <- getOption("geneSCOPE.fdr_align_policy", "by_name")
-    if (is.null(dim(FM))) {
-        FM <- matrix(FM, nrow = nrow(L_raw), ncol = ncol(L_raw))
-        FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-    } else if (!(identical(dim(FM), dim(L_raw)) &&
-                 identical(rownames(FM), rownames(L_raw)) &&
-                 identical(colnames(FM), colnames(L_raw)))) {
-        if (identical(policy, "by_shape")) {
-            FM <- .safe_set_dim(FM, dim(L_raw))
-            FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-        } else {
-            if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
-                all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
-                FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
-            } else {
-                # fall back to shape-only alignment, but keep numeric matrix where possible
-                FM <- .safe_set_dim(FM, dim(L_raw))
-                FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-            }
-        }
+    # 2) Fail-closed name alignment. Shape-only relabelling can connect the
+    # wrong genes and is never acceptable for significance filtering.
+    raw_rows <- rownames(L_raw); raw_cols <- colnames(L_raw)
+    fdr_rows <- rownames(FM); fdr_cols <- colnames(FM)
+    if (is.null(raw_rows) || is.null(raw_cols) || anyDuplicated(raw_rows) || anyDuplicated(raw_cols) ||
+        is.null(fdr_rows) || is.null(fdr_cols) || anyDuplicated(fdr_rows) || anyDuplicated(fdr_cols)) {
+        stop("L and FDR must have complete, unique row and column gene names.", call. = FALSE)
     }
-    FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+    if (!setequal(raw_rows, fdr_rows) || !setequal(raw_cols, fdr_cols)) {
+        stop("FDR gene sets do not exactly match the similarity matrix.", call. = FALSE)
+    }
+    FM <- FM[raw_rows, raw_cols, drop = FALSE]
 
     # 3) Subset FDR to current kept rows of L
     target_rows <- rownames(L)
@@ -73,12 +56,13 @@
         if (length(LT@x)) {
             rows <- LT@i + 1L
             cols <- LT@j + 1L
-            mask <- (FM[cbind(rows, cols)] > FDR_max)
+            fvals <- FM[cbind(rows, cols)]
+            mask <- !is.finite(fvals) | fvals > FDR_max
             if (any(mask)) LT@x[mask] <- 0
         }
         return(drop0(as(LT, "CsparseMatrix")))
     }
-    L[FM > FDR_max] <- 0
+    L[!is.finite(FM) | FM > FDR_max] <- 0
     L
 }
 
@@ -4117,6 +4101,13 @@
         if (success) {
             res <- result$object
         } else {
+            if (current_cores <= min_cores) {
+                stop(
+                    "Lee's L computation failed at one thread: ",
+                    conditionMessage(result$error),
+                    call. = FALSE
+                )
+            }
             attempt <- attempt + 1
             current_cores <- max(floor(current_cores / 2), min_cores)
             if (verbose) .log_info("computeL", "S03", paste0("Reducing cores to ", current_cores, " and retrying"), verbose)
