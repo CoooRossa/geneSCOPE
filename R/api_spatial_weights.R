@@ -14,7 +14,9 @@
 #' @param grid_name Character; name of the grid layer to operate on. If \code{NULL}
 #'   and only one grid layer exists, it is auto-selected. If multiple layers exist,
 #'   the name must be specified.
-#' @param style Style for `spdep::nb2listw()` (default `"B"`).
+#' @param style Adjacency style `"B"` or `"W"` (default `"B"`). Styles
+#'   `C/U/S/minmax` are rejected until `grid$W` and `listw` can share identical
+#'   semantics.
 #'   Kernel weights (main-2 parity) are enabled by setting `style = "kernel_gaussian"`
 #'   or `style = "kernel_flat"`. In that case, use `kernel_radius`/`kernel_sigma`
 #'   to control the kernel shape. For backward compatibility, `max_order` and
@@ -26,7 +28,8 @@
 #' @param verbose Logical; whether to emit compact public progress messages.
 #'   Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
 #'   \code{options(geneSCOPE.verbose = FALSE)} for global control.
-#' @param topology Topology choice (`auto`, `queen`, `rook`, `hex`, `fuzzy_queen`, `fuzzy_hex`).
+#' @param topology Topology choice (`auto`, `queen`, `rook`, `hex`). Fuzzy
+#'   topologies currently fail closed instead of storing conflicting matrices.
 #' @param nb_order Optional higher-order neighbour expansion.
 #' @param min_neighbors Minimum neighbour count when expanding (non-kernel styles).
 #' @param max_order Maximum neighbour order (non-kernel styles).

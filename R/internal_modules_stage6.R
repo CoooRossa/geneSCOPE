@@ -500,24 +500,35 @@
   }
   mode <- if (!is.null(Z_mat)) "matrix" else "vector"
   if (mode == "matrix") {
-    if (!is.matrix(Z_mat) && !inherits(Z_mat, "big.matrix")) {
-      stop("Z_mat must be a matrix or big.matrix.")
+    if (inherits(Z_mat, "big.matrix")) {
+      stop("big.matrix FDR smoothing is disabled because the current route is RAM-backed and does not preserve the unique-pair test family.")
     }
+    if (!is.matrix(Z_mat)) {
+      stop("Z_mat must be a matrix.")
+    }
+    if (!is.null(P) && !identical(dim(P), dim(Z_mat))) stop("P dimensions must match Z_mat.")
     dims <- list(nrow = nrow(Z_mat), ncol = ncol(Z_mat))
   } else {
     if (!is.numeric(p_values)) stop("p_values must be numeric.")
     dims <- list(length = length(p_values))
   }
-  chunk_size <- max(1L, as.integer(chunk_size))
+  chunk_size <- .lee_validate_integer_scalar(chunk_size, "chunk_size", lower = 1L)
+  if (!is.character(p_adj_mode) || length(p_adj_mode) != 1L || is.na(p_adj_mode)) {
+    stop("p_adj_mode must be one non-missing character value.")
+  }
+  p_adj_mode <- tolower(p_adj_mode)
+  if (!p_adj_mode %in% c("bh", "by", "bh_universe", "by_universe", "bonferroni")) {
+    stop("p_adj_mode must be one of bh, by, bh_universe, by_universe, or bonferroni.")
+  }
   list(
     mode = mode,
     Z_mat = if (mode == "matrix") Z_mat else NULL,
     P = if (mode == "matrix") P else NULL,
-    perms = as.integer(max(0L, perms)),
+    perms = .lee_validate_integer_scalar(perms, "perms", lower = 0L),
     chunk_size = chunk_size,
     verbose = isTRUE(verbose),
     p_values = if (mode == "vector") as.numeric(p_values) else NULL,
-    p_adj_mode = tolower(p_adj_mode),
+    p_adj_mode = p_adj_mode,
     total_universe = total_universe,
     dims = dims,
     permutation_exists = !is.null(P)
@@ -573,6 +584,7 @@
   }
 
   apply_adjustment <- function(values, mode, universe) {
+    adj_universe <- adjust_universe(length(values), universe)
     switch(mode,
       "by" = p.adjust(values, "BY"),
       "bh_universe" = p.adjust(values, "BH", n = adj_universe),
@@ -588,113 +600,38 @@
   if (mode == "matrix") {
     Z_mat <- validated_inputs$Z_mat
     P <- validated_inputs$P
-    chunk_size <- validated_inputs$chunk_size
-    verbose <- validated_inputs$verbose
-    is_big <- inherits(Z_mat, "big.matrix")
-    n_genes <- ncol(Z_mat)
-    idx_chunks <- seq(1, n_genes, by = chunk_size)
-    allocate <- function() {
-      bigmemory::big.matrix(
-        nrow = nrow(Z_mat),
-        ncol = n_genes,
-        type = "double",
-        init = NA_real_
-      )
+    # Compute regular-matrix adjustments over the authoritative family:
+    # unique unordered, finite, off-diagonal pairs.
+    p_disc_full <- if (!is.null(P)) {
+      as.matrix(P)
+    } else {
+      matrix(NA_real_, nrow(Z_mat), ncol(Z_mat), dimnames = dimnames(Z_mat))
     }
-    if (is_big && !requireNamespace("bigmemory", quietly = TRUE)) {
-      stop("bigmemory is required for chunked matrix FDR smoothing")
+    if (!is.null(P)) {
+      k_est_full <- round(p_disc_full * (perms + 1) - 1)
+      k_est_full[k_est_full < 0] <- 0
+      k_est_full[k_est_full > perms] <- perms
+      p_beta_full <- (k_est_full + 1) / (perms + 2)
+      p_mid_full <- (k_est_full + 0.5) / (perms + 1)
+      p_uniform_full <- (k_est_full + matrix(runif(length(k_est_full)), nrow = nrow(k_est_full))) / (perms + 1)
+    } else {
+      p_beta_full <- p_mid_full <- p_uniform_full <- p_disc_full
     }
-    FDR_disc <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_beta <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_mid <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    FDR_uniform <- if (is_big) allocate() else matrix(NA_real_, nrow = nrow(Z_mat), ncol = n_genes)
-    
-    # PASS 1: Collect all p-values (global BH requires all p-values simultaneously)
-    all_p_disc <- numeric(0)
-    all_p_beta <- numeric(0)
-    all_p_mid <- numeric(0)
-    all_p_uniform <- numeric(0)
-    chunk_info <- list()
-    
-    for (start in idx_chunks) {
-      end <- min(start + chunk_size - 1L, n_genes)
-      chunk_n <- (end - start + 1L) * nrow(Z_mat)
-      chunk_info[[length(chunk_info) + 1L]] <- list(start = start, end = end, n = chunk_n)
-      
-      if (!is.null(P)) {
-        p_disc <- P[, start:end, drop = FALSE]
-        k_est <- round(p_disc * (perms + 1) - 1)
-        k_est[k_est < 0] <- 0
-        k_est[k_est > perms] <- perms
-        p_beta <- (k_est + 1) / (perms + 2)
-        p_mid <- (k_est + 0.5) / (perms + 1)
-        p_uniform <- (k_est + matrix(runif(length(k_est)), nrow = nrow(k_est))) / (perms + 1)
-      } else {
-        Z_chunk <- Z_mat[, start:end, drop = FALSE]
-        p_disc <- 2 * pnorm(-abs(Z_chunk))
-        p_beta <- p_mid <- p_uniform <- p_disc
-      }
-      
-      all_p_disc <- c(all_p_disc, as.numeric(p_disc))
-      all_p_beta <- c(all_p_beta, as.numeric(p_beta))
-      all_p_mid <- c(all_p_mid, as.numeric(p_mid))
-      all_p_uniform <- c(all_p_uniform, as.numeric(p_uniform))
+    FDR_disc <- .lee_pairwise_p_adjust(p_disc_full, "BH")
+    FDR_beta <- .lee_pairwise_p_adjust(p_beta_full, "BH")
+    FDR_mid <- .lee_pairwise_p_adjust(p_mid_full, "BH")
+    FDR_uniform <- .lee_pairwise_p_adjust(p_uniform_full, "BH")
+    storey <- .lee_pairwise_storey(p_beta_full)
+    FDR_storey <- storey$q_values
+    pi0_hat <- storey$pi0_hat
+    FDR_main <- FDR_disc
+    FDR_main_method <- if (is.null(P)) {
+      "not computed (perms=0; observed L only)"
+    } else {
+      "BH(exact empirical P; unique unordered off-diagonal pairs)"
     }
-    
-    # PASS 2: Apply global BH correction to all p-values at once (correct implementation)
-    all_q_disc <- p.adjust(all_p_disc, method = "BH")
-    all_q_beta <- p.adjust(all_p_beta, method = "BH")
-    all_q_mid <- p.adjust(all_p_mid, method = "BH")
-    all_q_uniform <- p.adjust(all_p_uniform, method = "BH")
-    
-    # PASS 3: Redistribute q-values to chunks
-    idx_offset <- 1L
-    for (ci in chunk_info) {
-      start <- ci$start
-      end <- ci$end
-      n_chunk <- ci$n
-      
-      q_disc_chunk <- all_q_disc[idx_offset:(idx_offset + n_chunk - 1L)]
-      q_beta_chunk <- all_q_beta[idx_offset:(idx_offset + n_chunk - 1L)]
-      q_mid_chunk <- all_q_mid[idx_offset:(idx_offset + n_chunk - 1L)]
-      q_uniform_chunk <- all_q_uniform[idx_offset:(idx_offset + n_chunk - 1L)]
-      
-      FDR_disc[, start:end] <- matrix(q_disc_chunk, nrow = nrow(Z_mat))
-      FDR_beta[, start:end] <- matrix(q_beta_chunk, nrow = nrow(Z_mat))
-      FDR_mid[, start:end] <- matrix(q_mid_chunk, nrow = nrow(Z_mat))
-      FDR_uniform[, start:end] <- matrix(q_uniform_chunk, nrow = nrow(Z_mat))
-      
-      idx_offset <- idx_offset + n_chunk
-    }
-    FDR_storey <- NULL
-    pi0_hat <- NA_real_
-    FDR_main_method <- if (is_big) "BH(beta p) (chunked, no q-value)" else "Storey q-value (beta p)"
-    if (!is_big) {
-      reference <- if (!is.null(P)) p.adjust(P, "BH") * NA_real_ else NA_real_
-      p_vec <- as.numeric(if (!is.null(P)) P else 2 * pnorm(-abs(Z_mat)))
-      m_tot <- length(p_vec)
-      if (m_tot > 0) {
-        lambdas <- seq(0.5, 0.95, by = 0.05)
-        pi0_vals <- sapply(lambdas, function(lam) {
-          mean(p_vec > lam) / (1 - lam)
-        })
-        pi0_hat <- min(1, min(pi0_vals, na.rm = TRUE))
-        if (!is.finite(pi0_hat) || pi0_hat <= 0) pi0_hat <- 1
-        o <- order(p_vec, na.last = NA)
-        ro <- integer(m_tot); ro[o] <- seq_along(o)
-        q_raw <- pi0_hat * m_tot * p_vec / pmax(ro, 1)
-        q_ord <- q_raw[o]
-        for (i in seq_len(length(q_ord) - 1)) {
-          idx <- length(q_ord) - i
-          if (q_ord[idx] > q_ord[idx + 1]) q_ord[idx] <- q_ord[idx + 1]
-        }
-        q_final <- numeric(m_tot)
-        q_final[o] <- pmin(q_ord, 1)
-        FDR_storey <- matrix(q_final, nrow = nrow(FDR_beta), dimnames = dimnames(FDR_beta))
-      }
-    }
-    FDR_main <- if (!is.null(FDR_storey)) FDR_storey else FDR_beta
-    n_sig_005 <- sum(FDR_main < 0.05, na.rm = TRUE)
+    main_values <- if (nrow(FDR_main) == ncol(FDR_main)) FDR_main[upper.tri(FDR_main)] else as.numeric(FDR_main)
+    n_sig_005 <- if (is.null(P)) NA_integer_ else sum(main_values[is.finite(main_values)] < 0.05)
     return(list(
       FDR_out_disc = FDR_disc,
       FDR_out_beta = FDR_beta,
@@ -706,7 +643,7 @@
       pi0_hat = pi0_hat,
       n_sig_005 = n_sig_005,
       min_p_possible = min_p_possible,
-      raw_p = if (!is.null(P)) P else 2 * pnorm(-abs(Z_mat))
+      raw_p = p_disc_full
     ))
   } else {
     p_values <- validated_inputs$p_values

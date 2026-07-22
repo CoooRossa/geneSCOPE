@@ -27,14 +27,19 @@
 #' @param L_min Similarity threshold used when building QC similarity graphs.
 #' @param norm_layer Name of the normalised expression layer (default `"Xz"`).
 #' @param lee_stats_layer_name Output statistics layer name (auto-generated when NULL).
-#' @param legacy_formula Use legacy denominator for compatibility.
-#' @param mem_limit_GB RAM threshold that triggers streaming mode.
-#' @param chunk_size Number of columns processed per chunk in streaming mode.
-#' @param use_bigmemory Whether to use file-backed matrices for large computations.
-#'   Defaults to `FALSE`; if a matrix exceeds `mem_limit_GB` and the user did
-#'   not explicitly set this argument, geneSCOPE may still enable chunked
-#'   bigmemory mode as a safety fallback.
-#' @param backing_path Directory for temporary files (default `tempdir()`).
+#' @param legacy_formula Deprecated compatibility flag. `TRUE` now errors;
+#'   only the canonical Lee L denominator `n/S2` is supported.
+#' @param mem_limit_GB In-memory working-set limit. Exceeding it fails closed
+#'   unless the caller explicitly raises the limit after checking available RAM.
+#' @param chunk_size Reserved chunk-size compatibility setting; it does not
+#'   enable a file-backed Lee L route.
+#' @param use_bigmemory Reserved compatibility flag. It must remain `FALSE`.
+#'   The former chunk route used a shared RAM-backed `big.matrix`, so `TRUE`
+#'   now fails closed rather than claiming file-backed execution. If an output
+#'   exceeds `mem_limit_GB`, reduce the gene set or explicitly choose an
+#'   in-memory limit only after confirming available RAM.
+#' @param backing_path Reserved compatibility path; the disabled bigmemory route
+#'   no longer writes Lee L backing files.
 #' @param cache_inputs Whether to .cache preprocessed inputs for reuse across calls.
 #' @param verbose Logical; whether to emit compact public progress messages.
 #'   Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
@@ -81,6 +86,7 @@ computeL <- function(
     verbose = TRUE,
     backend = "cpp",
     ncore = NULL) {
+    user_set_bigmemory <- !missing(use_bigmemory)
     approximate_q_method <- match.arg(approximate_q_method)
     backend <- if (missing(backend)) {
         "cpp"
@@ -140,7 +146,8 @@ computeL <- function(
                 backing_path = backing_path,
                 cache_inputs = cache_inputs,
                 verbose = verbose,
-                ncore = ncore
+                ncore = ncore,
+                .user_set_bigmemory = user_set_bigmemory
             )
         )
 
@@ -437,10 +444,9 @@ computeLvsRCurve <- function(
 #'   coverage diagnostics. Canonical support columns are recorded on `[0,1]`
 #'   while legacy percent columns remain available on `0-100` for backward
 #'   compatibility.
-#' @param backend Backend policy for the ranking layer. This layer is currently
-#'   implemented in R only. `auto` records the package-wide C++ → R policy and
-#'   selects R; forcing `python` errors explicitly because no Python core compute
-#'   tier is shipped.
+#' @param backend Backend policy. Pair ranking is implemented in R, while
+#'   `do_perm=TRUE` requires the C++ fixed-Pearson Delta null. Therefore
+#'   `backend="r"` is supported only with `do_perm=FALSE`.
 #' @param CI_rule Confidence-interval filtering rule (`remove_within`, `remove_outside`, `none`).
 #' @param verbose Logical; whether to emit compact public progress messages.
 #'   Default is \code{TRUE}. Set to \code{FALSE} for silent operation, or use
@@ -475,7 +481,7 @@ getTopLvsR <- function(
     clamp_mode = c("none", "ref_only", "both"),
     p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
     mem_limit_GB = 2,
-    pval_mode = c("beta", "mid", "uniform"),
+    pval_mode = c("exact", "beta", "mid", "uniform"),
     curve_layer = NULL,
     support_pct_scale = c("auto", "0-1", "0-100"),
     backend = "cpp",

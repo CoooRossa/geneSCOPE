@@ -35,7 +35,6 @@ static void genescope_rcpp_exports_darwin_spatial_guard(const char* entrypoint,
     }
 }
 
-
 // grid_nb_omp
 List grid_nb_omp(const int nrow, const int ncol, const bool queen);
 RcppExport SEXP _geneSCOPE_grid_nb_omp(SEXP nrowSEXP, SEXP ncolSEXP, SEXP queenSEXP) {
@@ -537,6 +536,80 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// delta_l_fixed_r_perm
+arma::vec delta_l_fixed_r_perm(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::umat& gene_pairs, const arma::vec& delta_ref, const arma::vec& pearson_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_l_fixed_r_perm(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP pearson_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type pearson_ref(pearson_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_l_fixed_r_perm(Xz, W, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_l_fixed_r_perm_block
+arma::vec delta_l_fixed_r_perm_block(const arma::mat& Xz, const arma::sp_mat& W, const arma::umat& idx_mat, const arma::uvec& block_ids, const arma::umat& gene_pairs, const arma::vec& delta_ref, const arma::vec& pearson_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_l_fixed_r_perm_block(SEXP XzSEXP, SEXP WSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP pearson_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::sp_mat& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type pearson_ref(pearson_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_l_fixed_r_perm_block(Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_l_fixed_r_perm_csr
+arma::vec delta_l_fixed_r_perm_csr(const arma::mat& Xz, const arma::uvec& W_indices, const arma::vec& W_values, const arma::uvec& W_row_ptr, const arma::umat& idx_mat, const arma::umat& gene_pairs, const arma::vec& delta_ref, const arma::vec& pearson_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_l_fixed_r_perm_csr(SEXP XzSEXP, SEXP W_indicesSEXP, SEXP W_valuesSEXP, SEXP W_row_ptrSEXP, SEXP idx_matSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP pearson_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_indices(W_indicesSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type W_values(W_valuesSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_row_ptr(W_row_ptrSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type pearson_ref(pearson_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_l_fixed_r_perm_csr(Xz, W_indices, W_values, W_row_ptr, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// delta_l_fixed_r_perm_csr_block
+arma::vec delta_l_fixed_r_perm_csr_block(const arma::mat& Xz, const arma::uvec& W_indices, const arma::vec& W_values, const arma::uvec& W_row_ptr, const arma::umat& idx_mat, const arma::uvec& block_ids, const arma::umat& gene_pairs, const arma::vec& delta_ref, const arma::vec& pearson_ref, const int n_threads);
+RcppExport SEXP _geneSCOPE_delta_l_fixed_r_perm_csr_block(SEXP XzSEXP, SEXP W_indicesSEXP, SEXP W_valuesSEXP, SEXP W_row_ptrSEXP, SEXP idx_matSEXP, SEXP block_idsSEXP, SEXP gene_pairsSEXP, SEXP delta_refSEXP, SEXP pearson_refSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xz(XzSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_indices(W_indicesSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type W_values(W_valuesSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type W_row_ptr(W_row_ptrSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type idx_mat(idx_matSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type block_ids(block_idsSEXP);
+    Rcpp::traits::input_parameter< const arma::umat& >::type gene_pairs(gene_pairsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type delta_ref(delta_refSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type pearson_ref(pearson_refSEXP);
+    Rcpp::traits::input_parameter< const int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(delta_l_fixed_r_perm_csr_block(Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // consensus_coo_cpp
 Rcpp::List consensus_coo_cpp(Rcpp::IntegerMatrix memb, double thr, int n_threads);
 RcppExport SEXP _geneSCOPE_consensus_coo_cpp(SEXP membSEXP, SEXP thrSEXP, SEXP n_threadsSEXP) {
@@ -598,6 +671,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"_geneSCOPE_delta_lr_perm_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_block, 8},
     {"_geneSCOPE_delta_lr_perm_csr", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr, 9},
     {"_geneSCOPE_delta_lr_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_lr_perm_csr_block, 10},
+    {"_geneSCOPE_delta_l_fixed_r_perm", (DL_FUNC) &_geneSCOPE_delta_l_fixed_r_perm, 7},
+    {"_geneSCOPE_delta_l_fixed_r_perm_block", (DL_FUNC) &_geneSCOPE_delta_l_fixed_r_perm_block, 8},
+    {"_geneSCOPE_delta_l_fixed_r_perm_csr", (DL_FUNC) &_geneSCOPE_delta_l_fixed_r_perm_csr, 9},
+    {"_geneSCOPE_delta_l_fixed_r_perm_csr_block", (DL_FUNC) &_geneSCOPE_delta_l_fixed_r_perm_csr_block, 10},
     {"_geneSCOPE_consensus_coo_cpp", (DL_FUNC) &_geneSCOPE_consensus_coo_cpp, 3},
     {"_geneSCOPE_test_64bit_support", (DL_FUNC) &_geneSCOPE_test_64bit_support, 0},
     {"_geneSCOPERebuild_native_openmp_info",        (DL_FUNC) &_geneSCOPERebuild_native_openmp_info,        0},

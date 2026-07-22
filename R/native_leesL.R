@@ -1,3 +1,221 @@
+#' Identifier for the canonical Lee's L implementation.
+#' @keywords internal
+.lee_formula_id <- function() "Lee_S2_WtW_v1"
+
+#' Recognize formula identifiers emitted by corrected geneSCOPE releases.
+#' @keywords internal
+.lee_formula_id_is_supported <- function(x) {
+    is.character(x) && length(x) == 1L && !is.na(x) &&
+        x %in% c(.lee_formula_id(), "Lee2009_S2_v1")
+}
+
+#' Validate a positive integer Lee workflow parameter.
+#' @keywords internal
+.lee_assert_positive_integer <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 1L || is.na(x) || !is.finite(x) ||
+        x < 1 || x > .Machine$integer.max || x != floor(x)) {
+        stop(name, " must be a single positive integer.", call. = FALSE)
+    }
+    as.integer(x)
+}
+
+#' Validate a non-negative integer Lee workflow parameter.
+#' @keywords internal
+.lee_assert_nonnegative_integer <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 1L || is.na(x) || !is.finite(x) ||
+        x < 0 || x > .Machine$integer.max || x != floor(x)) {
+        stop(name, " must be a single non-negative integer.", call. = FALSE)
+    }
+    as.integer(x)
+}
+
+#' Validate a positive finite Lee workflow parameter.
+#' @keywords internal
+.lee_assert_positive_finite <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 1L || is.na(x) || !is.finite(x) || x <= 0) {
+        stop(
+            name, " must be a single positive finite number.",
+            if (identical(name, "mem_limit_GB")) {
+                " An invalid limit is fail-closed because the requested output exceeds mem_limit_GB."
+            } else {
+                ""
+            },
+            call. = FALSE
+        )
+    }
+    as.numeric(x)
+}
+
+#' Validate a scalar logical Lee workflow parameter.
+#' @keywords internal
+.lee_assert_flag <- function(x, name) {
+    if (!is.logical(x) || length(x) != 1L || is.na(x)) {
+        stop(name, " must be a single non-missing logical value.", call. = FALSE)
+    }
+    x
+}
+
+#' Validate a scalar layer name.
+#' @keywords internal
+.lee_assert_layer_name <- function(x, name) {
+    if (!is.character(x) || length(x) != 1L || is.na(x) || !nzchar(x)) {
+        stop(name, " must be a single non-empty character string.", call. = FALSE)
+    }
+    x
+}
+
+#' Resolve the weight style recorded on a Lee weight matrix.
+#' @keywords internal
+.lee_weight_style <- function(W) {
+    style <- attr(W, "weight_style", exact = TRUE)
+    if (is.null(style)) {
+        provenance <- attr(W, "weight_provenance", exact = TRUE)
+        if (is.list(provenance)) style <- provenance$weight_style
+    }
+    style <- if (is.null(style) || length(style) != 1L || is.na(style)) {
+        ""
+    } else {
+        toupper(as.character(style))
+    }
+    if (style %in% c("B", "W")) return(style)
+    nonzero <- if (inherits(W, "sparseMatrix")) W@x else as.matrix(W)[as.matrix(W) != 0]
+    if (length(nonzero) && all(nonzero == 1)) "B" else "W"
+}
+
+#' Validate a normalized expression layer used by Lee's L.
+#' @description
+#' Lee's formula assumes centred variables. Unit variance is not required
+#' because the denominator removes positive per-column scale factors.
+#' @keywords internal
+.validate_lee_norm_layer <- function(X, norm_layer, context = "Lee's L") {
+    norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
+    X <- tryCatch(as.matrix(X), error = function(e) {
+        stop(
+            context, " expression layer '", norm_layer,
+            "' cannot be converted to a matrix: ", conditionMessage(e),
+            call. = FALSE
+        )
+    })
+    if (!is.numeric(X) || length(dim(X)) != 2L || any(dim(X) < 1L)) {
+        stop(
+            context, " expression layer '", norm_layer,
+            "' must be a non-empty numeric matrix.", call. = FALSE
+        )
+    }
+    if (any(!is.finite(X))) {
+        stop(
+            context, " expression layer '", norm_layer,
+            "' contains non-finite values.", call. = FALSE
+        )
+    }
+    centre <- colMeans(X)
+    rms <- sqrt(colMeans(X * X))
+    relative_offset <- abs(centre) / pmax(rms, .Machine$double.eps)
+    bad <- which(!is.finite(relative_offset) | relative_offset > 1e-7)
+    if (length(bad)) {
+        labels <- colnames(X)
+        labels <- if (is.null(labels)) as.character(bad) else labels[bad]
+        stop(
+            context, " expression layer '", norm_layer,
+            "' must be column-centred (abs(mean)/RMS <= 1e-7); offending columns: ",
+            paste(utils::head(labels, 5L), collapse = ", "),
+            if (length(bad) > 5L) " ..." else "",
+            ". Unit variance is not required.",
+            call. = FALSE
+        )
+    }
+    X
+}
+
+#' Compute Lee's canonical spatial normalizer from a weight matrix.
+#' @keywords internal
+.lee_s2_value <- function(W) {
+    if (is.null(dim(W)) || length(dim(W)) != 2L || nrow(W) != ncol(W) || nrow(W) < 1L) {
+        stop("W must be a non-empty square matrix before computing Lee S2.", call. = FALSE)
+    }
+    row_totals <- as.numeric(W %*% rep.int(1, ncol(W)))
+    S2 <- sum(row_totals * row_totals)
+    if (length(S2) != 1L || !is.finite(S2) || S2 <= 0) {
+        stop("W has non-finite or non-positive Lee S2; Lee's L is undefined.", call. = FALSE)
+    }
+    as.numeric(S2)
+}
+
+#' Fingerprint the inputs that determine observed Lee's L and its permutations.
+#' @keywords internal
+.lee_hash_object <- function(x) {
+    # Use one dependency-free algorithm in every environment. Mixing an
+    # optional xxhash path with this MD5 path would make identical scope
+    # objects fail provenance checks after moving between installations.
+    path <- tempfile("genescope-lee-fingerprint-", fileext = ".rdsbin")
+    con <- file(path, open = "wb")
+    con_open <- TRUE
+    on.exit({
+        if (con_open) try(close(con), silent = TRUE)
+        unlink(path)
+    }, add = TRUE)
+    serialize(x, con, version = 3L)
+    close(con)
+    con_open <- FALSE
+    unname(tools::md5sum(path)[[1L]])
+}
+
+#' Fingerprint the inputs that determine observed Lee's L and its permutations.
+#' @keywords internal
+.lee_input_fingerprint <- function(Xz, W, grid_info, norm_layer, block_side) {
+    norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
+    block_side <- .lee_assert_positive_integer(block_side, "block_side")
+    hash <- .lee_hash_object
+    w_payload <- if (inherits(W, "sparseMatrix")) {
+        Wc <- if (inherits(W, "dgCMatrix")) {
+            W
+        } else {
+            methods::as(methods::as(W, "generalMatrix"), "CsparseMatrix")
+        }
+        list(
+            class = "dgCMatrix", dim = dim(Wc), dimnames = dimnames(Wc),
+            p = Wc@p, i = Wc@i, x = Wc@x
+        )
+    } else {
+        list(class = class(W), dim = dim(W), dimnames = dimnames(W), values = as.matrix(W))
+    }
+    grid_frame <- as.data.frame(grid_info, stringsAsFactors = FALSE)
+    grid_cols <- intersect(
+        c("grid_id", "gx", "gy", "xmin", "xmax", "ymin", "ymax"),
+        names(grid_frame)
+    )
+    grid_payload <- grid_frame[, grid_cols, drop = FALSE]
+    data_components <- list(
+        X = hash(list(dim = dim(Xz), dimnames = dimnames(Xz), values = Xz)),
+        W = hash(w_payload),
+        grid = hash(grid_payload),
+        weight_style = hash(.lee_weight_style(W))
+    )
+    permutation_components <- list(block_side = block_side)
+    list(
+        schema = "lee_input_fingerprint_v2",
+        norm_layer = norm_layer,
+        data = c(
+            list(schema = "lee_observed_data_v1", hash = hash(data_components)),
+            data_components
+        ),
+        permutation = c(
+            list(schema = "lee_permutation_config_v1", hash = hash(permutation_components)),
+            permutation_components
+        )
+    )
+}
+
+#' Compare only the observed-data part of two Lee fingerprints.
+#' @keywords internal
+.lee_same_observed_data <- function(observed, current) {
+    is.list(observed) && is.list(current) &&
+        identical(observed$schema, "lee_input_fingerprint_v2") &&
+        identical(current$schema, "lee_input_fingerprint_v2") &&
+        identical(observed$norm_layer, current$norm_layer) &&
+        identical(observed$data, current$data)
+}
+
 #' Resolve gene indices for Lee's L computations.
 #' @description
 #' Internal helper for `.compute_lee_l()`. Filters missing/empty gene names and
@@ -150,6 +368,9 @@
         tryCatch(
             .lee_l_cols(Xz, W, cols0 = as.integer(chunk_pos - 1L), n_threads = ncores),
             error = function(e) {
+                if (isTRUE(getOption("geneSCOPE.lee_l.strict_cpp", FALSE))) {
+                    stop("Strict C++ Lee's L backend failed: ", conditionMessage(e), call. = FALSE)
+                }
                 .lee_l_auto_fallback_warning(e, chunked = TRUE)
                 .lee_l_cols_r(Xz, W, chunk_pos)
             }
@@ -162,22 +383,25 @@
     Xz <- validated$Xz
     W <- validated$W
 
-    S0 <- sum(W)
-    if (!is.finite(S0)) {
-        stop(".lee_l_cache_r: W sum is non-finite.", call. = FALSE)
-    }
-    if (S0 == 0) {
-        out <- matrix(0, ncol(Xz), ncol(Xz))
-        dimnames(out) <- NULL
-        return(out)
-    }
+    S2 <- .lee_s2_value(W)
 
     dz2 <- colSums(Xz^2)
+    if (any(!is.finite(dz2))) {
+        stop(".lee_l_cache_r: gene norms are non-finite.", call. = FALSE)
+    }
+    zero_norm <- dz2 <= 0
     WZ <- as.matrix(W %*% Xz)
-    num <- crossprod(Xz, WZ)
+    if (any(!is.finite(WZ))) {
+        stop(".lee_l_cache_r: W %*% Xz produced non-finite values.", call. = FALSE)
+    }
+    num <- crossprod(WZ)
     den <- sqrt(outer(dz2, dz2))
-    out <- (nrow(Xz) / S0) * (num / den)
-    out[!is.finite(out)] <- 0
+    out <- (nrow(Xz) / S2) * (num / den)
+    zero_pairs <- outer(zero_norm, zero_norm, `|`)
+    if (any(!is.finite(out[!zero_pairs]))) {
+        stop(".lee_l_cache_r: Lee's L produced unexpected non-finite values.", call. = FALSE)
+    }
+    out[zero_pairs] <- 0
     dimnames(out) <- NULL
     out
 }
@@ -198,23 +422,27 @@
         )
     }
 
-    S0 <- sum(W)
-    if (!is.finite(S0)) {
-        stop(".lee_l_cols_r: W sum is non-finite.", call. = FALSE)
-    }
-    if (S0 == 0) {
-        out <- matrix(0, ncol(Xz), length(col_indices))
-        dimnames(out) <- NULL
-        return(out)
-    }
+    S2 <- .lee_s2_value(W)
 
     dz2_all <- colSums(Xz^2)
+    if (any(!is.finite(dz2_all))) {
+        stop(".lee_l_cols_r: gene norms are non-finite.", call. = FALSE)
+    }
+    zero_norm_all <- dz2_all <= 0
     Xz_sub <- Xz[, col_indices, drop = FALSE]
+    WZ_all <- as.matrix(W %*% Xz)
     WZ_sub <- as.matrix(W %*% Xz_sub)
-    num <- crossprod(Xz, WZ_sub)
+    if (any(!is.finite(WZ_all)) || any(!is.finite(WZ_sub))) {
+        stop(".lee_l_cols_r: W %*% Xz produced non-finite values.", call. = FALSE)
+    }
+    num <- crossprod(WZ_all, WZ_sub)
     den <- sqrt(outer(dz2_all, dz2_all[col_indices]))
-    out <- (nrow(Xz) / S0) * (num / den)
-    out[!is.finite(out)] <- 0
+    out <- (nrow(Xz) / S2) * (num / den)
+    zero_pairs <- outer(zero_norm_all, zero_norm_all[col_indices], `|`)
+    if (any(!is.finite(out[!zero_pairs]))) {
+        stop(".lee_l_cols_r: Lee's L produced unexpected non-finite values.", call. = FALSE)
+    }
+    out[zero_pairs] <- 0
     dimnames(out) <- NULL
     out
 }
@@ -250,9 +478,19 @@
                          block_side = 8,
                          cache_inputs = FALSE,
                          input_cache = NULL) {
-    if (use_bigmemory && !requireNamespace("bigmemory", quietly = TRUE)) {
-        use_bigmemory <- FALSE
+    within <- .lee_assert_flag(within, "within")
+    ncores <- .lee_assert_positive_integer(ncores, "ncores")
+    block_side <- .lee_assert_positive_integer(block_side, "block_side")
+    cache_inputs <- .lee_assert_flag(cache_inputs, "cache_inputs")
+    use_bigmemory <- .lee_assert_flag(use_bigmemory, "use_bigmemory")
+    norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
+    if (isTRUE(use_bigmemory)) {
+        stop(
+            "use_bigmemory=TRUE is disabled: the native Lee L chunk route allocates a shared RAM-backed big.matrix, not a safe file-backed result.",
+            call. = FALSE
+        )
     }
+    mem_limit_GB <- .lee_assert_positive_finite(mem_limit_GB, "mem_limit_GB")
 
     ## ---- 0. Get grid layer (new helper) ---------------------------------
     g_layer <- .select_grid_layer(scope_obj, grid_name)
@@ -265,31 +503,124 @@
 
     ## ---- 1. Extract expression matrix and weight matrix (with optional reuse) ----
     grid_info <- g_layer$grid_info
+    if (is.null(g_layer[[norm_layer]])) {
+        stop("Grid layer is missing norm_layer='", norm_layer, "'.", call. = FALSE)
+    }
+    Xz_source <- .validate_lee_norm_layer(
+        g_layer[[norm_layer]], norm_layer,
+        context = "[geneSCOPE::.compute_lee_l]"
+    )
+    W_source <- g_layer$W
+    if (is.null(W_source)) stop("Grid layer is missing W; run computeWeights() first.", call. = FALSE)
+    source_weight_style <- attr(W_source, "weight_style", exact = TRUE) %||%
+        g_layer$weights_meta$weight_style %||% "unknown"
+    if (is.null(attr(W_source, "weight_style", exact = TRUE))) {
+        attr(W_source, "weight_style") <- as.character(source_weight_style)[1L]
+    }
+    source_fingerprint <- .lee_input_fingerprint(
+        Xz = Xz_source,
+        W = W_source,
+        grid_info = grid_info,
+        norm_layer = norm_layer,
+        block_side = block_side
+    )
+    alignment_schema <- "grid_id_independent_fingerprint_v4"
     cache_valid <- cache_inputs &&
         !is.null(input_cache) &&
+        identical(input_cache$alignment_schema, alignment_schema) &&
         identical(input_cache$norm_layer, norm_layer) &&
         identical(input_cache$grid_id, grid_info$grid_id) &&
-        identical(input_cache$block_side, block_side)
+        identical(input_cache$block_side, block_side) &&
+        identical(input_cache$source_fingerprint, source_fingerprint)
 
+    target_ids <- as.character(grid_info$grid_id)
+    if (!length(target_ids) || anyNA(target_ids) || any(!nzchar(target_ids)) || anyDuplicated(target_ids)) {
+        stop("grid_info$grid_id must be present, non-empty, and unique before Lee's L alignment.", call. = FALSE)
+    }
     if (cache_valid) {
         Xz_full <- input_cache$Xz_full
         W <- input_cache$W
         block_id <- input_cache$block_id
-    } else {
-        Xz_full <- as.matrix(g_layer[[norm_layer]])
-        ord <- match(grid_info$grid_id, rownames(Xz_full))
-        Xz_full <- Xz_full[ord, , drop = FALSE]
-        w_style_attr <- attr(g_layer$W, "weight_style", exact = TRUE)
-        W <- g_layer$W[ord, ord]
+        cached_fingerprint <- tryCatch(
+            .lee_input_fingerprint(
+                Xz_full, W, grid_info,
+                norm_layer = norm_layer,
+                block_side = block_side
+            ),
+            error = function(e) NULL
+        )
+        expected_block_id <- tryCatch(
+            .compact_block_id(.assign_block_id(grid_info, block_side = block_side)),
+            error = function(e) NULL
+        )
+        cached_block_id <- tryCatch(
+            as.integer(.compact_block_id(block_id)),
+            error = function(e) NULL
+        )
+        cache_valid <-
+            is.matrix(Xz_full) &&
+            identical(rownames(Xz_full), target_ids) &&
+            identical(rownames(W), target_ids) &&
+            identical(colnames(W), target_ids) &&
+            length(block_id) == length(target_ids) &&
+            identical(cached_block_id, as.integer(expected_block_id)) &&
+            identical(cached_fingerprint, input_cache$input_fingerprint)
+    }
+    if (!cache_valid) {
+        Xz_full <- as.matrix(Xz_source)
+
+        .alignment_index <- function(source_ids, label) {
+            if (is.null(source_ids)) {
+                stop(label, " has no grid_id dimnames; rerun the producing step.", call. = FALSE)
+            }
+            source_ids <- as.character(source_ids)
+            if (anyNA(source_ids) || anyDuplicated(source_ids)) {
+                stop(label, " grid_id dimnames contain missing or duplicated values.", call. = FALSE)
+            }
+            idx <- match(target_ids, source_ids)
+            if (anyNA(idx) || length(source_ids) != length(target_ids)) {
+                stop(label, " grid_id set does not exactly match grid_info$grid_id.", call. = FALSE)
+            }
+            idx
+        }
+
+        x_ord <- .alignment_index(rownames(Xz_full), norm_layer)
+        w_row_ord <- .alignment_index(rownames(W_source), "W rows")
+        w_col_ord <- .alignment_index(colnames(W_source), "W columns")
+
+        Xz_full <- Xz_full[x_ord, , drop = FALSE]
+        w_style_attr <- attr(W_source, "weight_style", exact = TRUE)
+        W <- W_source[w_row_ord, w_col_ord, drop = FALSE]
         if (!is.null(w_style_attr) && is.null(attr(W, "weight_style", exact = TRUE))) {
             attr(W, "weight_style") <- w_style_attr
+        }
+        rownames(Xz_full) <- target_ids
+        dimnames(W) <- list(target_ids, target_ids)
+
+        if (!identical(rownames(Xz_full), target_ids) ||
+            !identical(rownames(W), target_ids) ||
+            !identical(colnames(W), target_ids)) {
+            stop("Failed to align Xz and W independently to grid_info$grid_id.", call. = FALSE)
         }
         block_id <- .assign_block_id(grid_info, block_side = block_side)
     }
 
     block_id <- .compact_block_id(block_id)
 
+    input_fingerprint <- .lee_input_fingerprint(
+        Xz = Xz_full,
+        W = W,
+        grid_info = grid_info,
+        norm_layer = norm_layer,
+        block_side = block_side
+    )
+    weight_style <- .lee_weight_style(W)
+    S2 <- .lee_s2_value(W)
+
     all_genes <- colnames(Xz_full)
+    if (is.null(all_genes) || anyNA(all_genes) || any(!nzchar(all_genes)) || anyDuplicated(all_genes)) {
+        stop("The normalized Lee input must have unique, non-empty gene column names.", call. = FALSE)
+    }
     idx_keep <- .resolve_leeL_gene_indices(genes, all_genes)
     validated <- .validate_lee_l_native_inputs(Xz_full, W, caller = ".compute_lee_l")
     Xz_full <- validated$Xz
@@ -299,100 +630,45 @@
         stop(.lee_l_python_backend_unavailable(), call. = FALSE)
     }
 
-    n_g <- length(idx_keep)
-    n_cells <- nrow(Xz_full)
-    n_g_full <- ncol(Xz_full)
-    output_ncol <- if (within) n_g else n_g_full
-    bytes_output <- (n_g * output_ncol * 8) / 1024^3
-    bytes_native_full <- ((n_g_full * n_g_full * 8) + (n_cells * n_g_full * 8)) / 1024^3
+    Xz_compute <- if (isTRUE(within)) Xz_full[, idx_keep, drop = FALSE] else Xz_full
+    n_cells <- nrow(Xz_compute)
+    n_g_compute <- ncol(Xz_compute)
+    bytes_native_full <- ((n_g_compute * n_g_compute * 8) + (n_cells * n_g_compute * 8)) / 1024^3
 
-    if (!use_bigmemory && bytes_native_full > mem_limit_GB) {
+    if (bytes_native_full > mem_limit_GB) {
         stop(
             ".compute_lee_l: estimated Lee's L working set (~",
             sprintf("%.2f", bytes_native_full),
             " GB) exceeds mem_limit_GB=", sprintf("%.2f", mem_limit_GB),
-            " with use_bigmemory=FALSE. Enable chunked mode or reduce the gene set.",
+            " with use_bigmemory=FALSE. Reduce the gene set or raise mem_limit_GB only after confirming available RAM.",
             call. = FALSE
         )
     }
 
-    need_stream <- use_bigmemory && bytes_native_full > mem_limit_GB
-
-    ## ======================================================
-    ## =============  A. One‑shot computation (fits in RAM) ===============
-    ## ======================================================
-    if (!need_stream) {
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
         RhpcBLASctl::blas_set_num_threads(1)
-        native_call <- function() .lee_l_cache(Xz_full, W, n_threads = ncores)
-        if (identical(backend, "r")) {
-            L_full <- .lee_l_cache_r(Xz_full, W)
-        } else {
-            L_full <- tryCatch(
-                native_call(),
-                error = function(e) {
-                    .lee_l_auto_fallback_warning(e)
-                    .lee_l_cache_r(Xz_full, W)
-                }
-            )
-        }
-
-        if (within) {
-            Lmat <- L_full[idx_keep, idx_keep, drop = FALSE]
-            Xuse <- Xz_full[, idx_keep, drop = FALSE]
-        } else {
-            Lmat <- L_full[idx_keep, , drop = FALSE]
-            Xuse <- Xz_full[, idx_keep, drop = FALSE]
-        }
-
-        ## ======================================================
-        ## =============  B. Chunked computation with file mapping ================
-        ## ======================================================
+    }
+    native_call <- function() .lee_l_cache(Xz_compute, W, n_threads = ncores)
+    if (identical(backend, "r")) {
+        L_full <- .lee_l_cache_r(Xz_compute, W)
     } else {
-        ## Use in-memory shared big.matrix to avoid unsupported 'shared' arg on filebacked in some versions
-        ## Note: this stores the chunked result in RAM. Ensure sufficient memory is available.
-        L_bm <- bigmemory::big.matrix(
-            nrow = n_g, ncol = output_ncol, type = "double",
-            init = NA_real_,
-            dimnames = NULL,
-            shared = TRUE
-        )
-
-        RhpcBLASctl::blas_set_num_threads(1)
-
-        ## ---- Process column blocks and write ----
-        if (within) {
-            Xz_work <- Xz_full[, idx_keep, drop = FALSE]
-
-            for (start in seq(1L, n_g, by = chunk_size)) {
-                chunk_pos <- start:min(n_g, start + chunk_size - 1L)
-                L_block <- .compute_block_unified(Xz_work, W, chunk_pos, backend = backend, ncores = ncores)
-
-                ## Write column block + symmetric columns
-                L_bm[, chunk_pos] <- L_block
-                L_bm[chunk_pos, ] <- t(L_block)
-
-                rm(L_block)
-                gc(verbose = FALSE)
+        L_full <- tryCatch(
+            native_call(),
+            error = function(e) {
+                if (isTRUE(getOption("geneSCOPE.lee_l.strict_cpp", FALSE))) {
+                    stop("Strict C++ Lee's L backend failed: ", conditionMessage(e), call. = FALSE)
+                }
+                .lee_l_auto_fallback_warning(e)
+                .lee_l_cache_r(Xz_compute, W)
             }
-        } else {
-            for (start in seq(1L, n_g, by = chunk_size)) {
-                chunk_pos <- start:min(n_g, start + chunk_size - 1L)
-                full_idx_chunk <- idx_keep[chunk_pos]
-                L_block <- .compute_block_unified(Xz_full, W, full_idx_chunk, backend = backend, ncores = ncores)
-                L_bm[chunk_pos, ] <- t(L_block)
-
-                rm(L_block)
-                gc(verbose = FALSE)
-            }
-        }
-
-        ## ---- Add gene names (only two vectors) ----
-        dimnames(L_bm) <- list(
-            all_genes[idx_keep],
-            if (within) all_genes[idx_keep] else all_genes
         )
+    }
 
-        Lmat <- L_bm
+    if (within) {
+        Lmat <- L_full
+        Xuse <- Xz_compute
+    } else {
+        Lmat <- L_full[idx_keep, , drop = FALSE]
         Xuse <- Xz_full[, idx_keep, drop = FALSE]
     }
 
@@ -411,11 +687,18 @@
         grid_info = g_layer$grid_info,
         grid_name = grid_name, # ← Additional return, convenient for .compute_l
         block_id  = block_id,
+        input_fingerprint = input_fingerprint,
+        weight_style = weight_style,
+        S2 = S2,
         input_cache = if (cache_inputs) {
             list(
+                alignment_schema = alignment_schema,
                 norm_layer = norm_layer,
                 grid_id = grid_info$grid_id,
                 block_side = block_side,
+                source_fingerprint = source_fingerprint,
+                input_fingerprint = input_fingerprint,
+                weight_style = weight_style,
                 Xz_full = Xz_full,
                 W = W,
                 block_id = block_id
@@ -447,8 +730,11 @@
         is.matrix(Xz), inherits(W, "dgCMatrix"),
         length(block_id) == nrow(Xz)
     )
+    perms <- .lee_validate_integer_scalar(perms, "perms", lower = 0L)
 
-    RhpcBLASctl::blas_set_num_threads(1)
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+        RhpcBLASctl::blas_set_num_threads(1)
+    }
     ngen <- ncol(Xz)
     geCnt <- matrix(0, ngen, ngen)
     done <- 0L
@@ -462,8 +748,13 @@
         idx_mat <- replicate(bsz,
             {
                 # Preserve block positions and shuffle rows within each block.
-                # This implements the documented constrained block-wise null.
-                unlist(lapply(split_rows, function(x) x[sample.int(length(x))]), use.names = FALSE)
+                # Sampling each block and concatenating the results is not
+                # equivalent when block positions are non-contiguous.
+                idx <- seq_len(nrow(Xz))
+                for (rows in split_rows) {
+                    idx[rows] <- rows[sample.int(length(rows), length(rows), replace = FALSE)]
+                }
+                idx
             },
             simplify = "matrix"
         ) - 1L # 0-based for C++

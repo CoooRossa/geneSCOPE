@@ -170,9 +170,8 @@
                                          block_size,
                                          current_cores,
                                          verbose) {
-  if (!is.matrix(L) && !inherits(L, "big.matrix")) {
-    stop("L must be a matrix or big.matrix.")
-  }
+  if (inherits(L, "big.matrix")) stop("big.matrix Lee postprocessing is disabled because the current route is RAM-backed.")
+  if (!is.matrix(L)) stop("L must be a matrix.")
   if (nrow(L) != ncol(L)) stop("L must be square.")
   if (!is.matrix(X_full)) stop("X_full must be a matrix.")
   if (!is.matrix(X_used)) stop("X_used must be a matrix.")
@@ -188,10 +187,10 @@
   if (nrow(W) != n_cells || ncol(W) != n_cells) stop("W must be square with rows equal to cells.")
 
   if (length(block_id) != n_cells) stop("block_id length must equal number of cells.")
-  if (!is.numeric(chunk_size) || chunk_size <= 0) stop("chunk_size must be a positive number.")
-  if (!is.numeric(perms) || perms < 0) stop("perms must be a non-negative number.")
-  if (!is.numeric(block_size) || block_size <= 0) stop("block_size must be a positive number.")
-  if (!is.numeric(current_cores) || current_cores < 1) stop("current_cores must be >= 1.")
+  chunk_size <- .lee_validate_integer_scalar(chunk_size, "chunk_size", lower = 1L)
+  perms <- .lee_validate_integer_scalar(perms, "perms", lower = 0L)
+  block_size <- .lee_validate_integer_scalar(block_size, "block_size", lower = 1L)
+  current_cores <- .lee_validate_integer_scalar(current_cores, "current_cores", lower = 1L)
 
   required_grid <- c("grid_id", "xmin", "xmax", "ymin", "ymax")
   if (!is.data.frame(grid_inf) || !all(required_grid %in% colnames(grid_inf))) {
@@ -225,12 +224,12 @@
     cells = as.character(cells),
     genes = if (is.null(genes)) NULL else as.character(genes),
     within = isTRUE(within),
-    chunk_size = as.integer(chunk_size),
+    chunk_size = chunk_size,
     L_min = as.numeric(L_min),
     block_id = as.integer(block_id),
-    perms = as.integer(perms),
-    block_size = as.integer(block_size),
-    current_cores = max(1L, as.integer(current_cores)),
+    perms = perms,
+    block_size = block_size,
+    current_cores = current_cores,
     verbose = isTRUE(verbose),
     gene_order = gene_names,
     sample_order = as.character(sample_names),
@@ -298,48 +297,15 @@
 
   n <- nrow(X_full)
 
-  ## --- 3. Analytical Z computation with memory optimization ---
-  if (within || is.null(genes)) {
-    S0 <- sum(W)
-    EZ <- -1 / (n - 1)
-    Var <- (n^2 * (n - 2)) / ((n - 1)^2 * (n - 3) * S0)
-
-    if (inherits(L, "big.matrix")) {
-      if (verbose) .log_info("computeL", "S04", "Computing Z-scores in chunks", verbose)
-      Z_mat <- L
-      n_genes <- ncol(L)
-      chunk_genes <- seq(1, n_genes, by = chunk_size)
-      for (start in chunk_genes) {
-        end <- min(start + chunk_size - 1, n_genes)
-        L_chunk <- L[, start:end]
-        Z_chunk <- (L_chunk - EZ) / sqrt(Var)
-        Z_mat[, start:end] <- Z_chunk
-      }
-    } else {
-      Z_mat <- (L - EZ) / sqrt(Var)
-    }
-  } else {
-    if (inherits(L, "big.matrix")) {
-      stop("Asymmetric Z-score computation not yet supported for big.matrix")
-    }
-    Z_mat <- t(apply(L, 1, function(v) {
-      sdv <- sd(v)
-      if (sdv == 0) rep(0, length(v)) else (v - mean(v)) / sdv
-    }))
-    dimnames(Z_mat) <- dimnames(L)
-  }
+  ## Lee L does not share Moran's-I analytic moments. Z remains unavailable
+  ## until it is derived from exact two-sided permutation P below.
+  L_reg <- as.matrix(L)
+  Z_mat <- matrix(NA_real_, nrow(L_reg), ncol(L_reg), dimnames = dimnames(L_reg))
 
   ## --- 4. Monte Carlo p-values with BLAS control and error recovery ---
   P <- if (perms > 0) {
     if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
       RhpcBLASctl::blas_set_num_threads(1)
-    }
-
-    L_reg <- if (inherits(L, "big.matrix")) {
-      if (verbose) .log_info("computeL", "S05", "Converting to regular matrix for permutation tests", verbose)
-      as.matrix(L)
-    } else {
-      L
     }
 
     if (verbose) .log_info("computeL", "S05", "Running permutation tests", verbose)
@@ -396,15 +362,22 @@
     }
 
     if (!perm_success) {
-      if (verbose) {
-        .log_info("computeL", "S05", "!!! Warning: Permutation test failed; setting P = NULL !!!", verbose)
-      }
-      NULL
+      stop("Lee's L permutation test failed; no partial P/FDR result was returned.", call. = FALSE)
     } else {
       P
     }
   } else {
     NULL
+  }
+
+  if (!is.null(P)) {
+    dimnames(P) <- dimnames(L_reg)
+    zero_var <- colSums(X_used^2) <= .Machine$double.eps
+    if (any(zero_var)) {
+      P[zero_var, ] <- NA_real_
+      P[, zero_var] <- NA_real_
+    }
+    Z_mat <- .lee_empirical_signed_z(L_reg, P)
   }
 
   ## --- 5. FDR: Three Monte Carlo smoothing strategies as in .get_top_l_vs_r ---
@@ -691,6 +664,84 @@
   )
 }
 
+#' Restore a Stage-1 backbone without bypassing Stage-1 filtering
+#' @description
+#' Adds an MST only when a Stage-1 module has lost every Stage-2 edge. Candidate
+#' edges and their restored weights come exclusively from the aligned,
+#' significance/q-guard-filtered Stage-1 similarity matrix.
+#' @keywords internal
+.stage2_restore_filtered_backbone <- function(L_post,
+                                              stage1_similarity_sub,
+                                              stage1_membership_labels,
+                                              kept_genes,
+                                              backbone_floor_q = 0.02) {
+  if (is.null(stage1_similarity_sub)) {
+    stop("keep_stage1_backbone requires stage1$similarity_sub/A_sub; raw similarity recovery is forbidden.", call. = FALSE)
+  }
+  if (is.null(rownames(stage1_similarity_sub)) || is.null(colnames(stage1_similarity_sub)) ||
+      !all(kept_genes %in% rownames(stage1_similarity_sub)) ||
+      !all(kept_genes %in% colnames(stage1_similarity_sub))) {
+    stop("Stage-1 filtered similarity cannot be aligned to kept_genes.", call. = FALSE)
+  }
+  stage1_filtered <- stage1_similarity_sub[kept_genes, kept_genes, drop = FALSE]
+  stage1_filtered[!is.finite(stage1_filtered) | stage1_filtered <= 0] <- 0
+  stage1_filtered <- pmax(stage1_filtered, t(stage1_filtered))
+  diag(stage1_filtered) <- 0
+
+  # `backbone_floor_q` remains in the internal call contract, but a recovered
+  # edge must retain its filtered Stage-1 weight exactly. Applying a Stage-2
+  # floor here would manufacture a weight that never passed Stage-1 filtering.
+  invisible(backbone_floor_q)
+
+  if (is.null(names(stage1_membership_labels))) {
+    if (length(stage1_membership_labels) != length(kept_genes)) {
+      stop("Unnamed Stage-1 membership must have one entry per kept gene.", call. = FALSE)
+    }
+    names(stage1_membership_labels) <- kept_genes
+  }
+  if (anyNA(names(stage1_membership_labels)) || anyDuplicated(names(stage1_membership_labels)) ||
+      !all(kept_genes %in% names(stage1_membership_labels))) {
+    stop("Stage-1 membership cannot be aligned uniquely to kept_genes.", call. = FALSE)
+  }
+  membership <- stage1_membership_labels[kept_genes]
+  for (cid in sort(stats::na.omit(unique(membership)))) {
+    genes_c <- kept_genes[!is.na(membership) & membership == cid]
+    if (length(genes_c) < 2L) next
+    current <- L_post[genes_c, genes_c, drop = FALSE]
+    if (any(current > 0, na.rm = TRUE)) next
+
+    candidates <- stage1_filtered[genes_c, genes_c, drop = FALSE]
+    idx_back <- .arrind_from_matrix_predicate(
+      candidates,
+      op = "gt",
+      cutoff = 0,
+      triangle = "upper",
+      keep_diag = FALSE
+    )
+    if (!nrow(idx_back)) next
+    edge_table <- data.frame(
+      from = genes_c[idx_back[, 1L]],
+      to = genes_c[idx_back[, 2L]],
+      weight = as.numeric(candidates[idx_back]),
+      stringsAsFactors = FALSE
+    )
+    graph <- igraph::graph_from_data_frame(edge_table, directed = FALSE, vertices = genes_c)
+    if (!igraph::ecount(graph)) next
+    tree <- igraph::mst(graph, weights = 1 / (igraph::E(graph)$weight + 1e-9))
+    edges <- igraph::as_data_frame(tree, what = "edges")
+    if (!nrow(edges)) next
+    for (k in seq_len(nrow(edges))) {
+      i <- edges$from[k]
+      j <- edges$to[k]
+      source_weight <- as.numeric(stage1_filtered[i, j])
+      if (!is.finite(source_weight) || source_weight <= 0) next
+      L_post[i, j] <- max(as.numeric(L_post[i, j]), source_weight)
+      L_post[j, i] <- L_post[i, j]
+    }
+  }
+  L_post
+}
+
 #' Stage2 Native Inputs Materialize
 #' @description
 #' Internal helper for `.stage2_native_inputs_materialize`.
@@ -713,7 +764,8 @@
                                               mh_object,
                                               stage1_membership_labels,
                                               config,
-                                              verbose) {
+                                              verbose,
+                                              stage1_similarity_sub = NULL) {
   kept_genes <- spec$kept_genes
   L_post <- similarity_matrix[kept_genes, kept_genes, drop = FALSE]
   L_post[abs(L_post) < config$min_cutoff] <- 0
@@ -814,42 +866,13 @@
   diag(L_post) <- 0
 
   if (isTRUE(config$keep_stage1_backbone)) {
-    pos_vals <- as.numeric(L_post[L_post > 0])
-    if (length(pos_vals) == 0) {
-      w_floor <- 1e-6
-    } else {
-      w_floor <- max(
-        1e-8,
-        as.numeric(quantile(pos_vals, probs = min(max(config$backbone_floor_q, 0), 0.25), na.rm = TRUE))
-      )
-    }
-    for (cid in sort(na.omit(unique(stage1_membership_labels)))) {
-      genes_c <- kept_genes[stage1_membership_labels[kept_genes] == cid]
-      if (length(genes_c) < 2) next
-      M <- L_post[genes_c, genes_c, drop = FALSE]
-      if (!any(M > 0, na.rm = TRUE)) {
-        M <- pmax(similarity_matrix, 0)[genes_c, genes_c, drop = FALSE]
-      }
-      idx_back <- .arrind_from_matrix_predicate(
-        M,
-        op = "gt",
-        cutoff = 0,
-        triangle = "upper",
-        keep_diag = FALSE
-      )
-      if (nrow(idx_back) == 0) next
-      mst_edge_table <- data.frame(from = genes_c[idx_back[, 1]], to = genes_c[idx_back[, 2]], w = M[idx_back], stringsAsFactors = FALSE)
-      gtmp <- igraph::graph_from_data_frame(mst_edge_table, directed = FALSE, vertices = genes_c)
-      if (igraph::ecount(gtmp) == 0) next
-      mst_c <- igraph::mst(gtmp, weights = 1 / (igraph::E(gtmp)$w + 1e-9))
-      if (igraph::ecount(mst_c) == 0) next
-      ep <- igraph::as_data_frame(mst_c, what = "edges")
-      for (k in seq_len(nrow(ep))) {
-        i <- ep$from[k]; j <- ep$to[k]
-        L_post[i, j] <- max(L_post[i, j], w_floor)
-        L_post[j, i] <- L_post[i, j]
-      }
-    }
+    L_post <- .stage2_restore_filtered_backbone(
+      L_post = L_post,
+      stage1_similarity_sub = stage1_similarity_sub,
+      stage1_membership_labels = stage1_membership_labels,
+      kept_genes = kept_genes,
+      backbone_floor_q = config$backbone_floor_q
+    )
   }
 
   ed1 <- summary(L_post)
@@ -934,6 +957,7 @@
   payload <- .stage2_native_inputs_materialize(
     spec,
     similarity_matrix = data$similarity_matrix,
+    stage1_similarity_sub = data$stage1_similarity_sub %||% data$similarity_sub %||% data$A_sub,
     FDR = data$FDR,
     aux_stats = data$aux_stats,
     pearson_matrix = data$pearson_matrix,

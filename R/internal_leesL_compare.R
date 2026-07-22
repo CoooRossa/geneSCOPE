@@ -424,9 +424,18 @@
                                               verbose = TRUE) {
     pear_level <- match.arg(pear_level)
     stat <- .leesl_compare_get_lee_stats(scope_obj, grid_name = grid_name, lee_layer = lee_stats_layer)
-    leeStat <- stat$leeStat
-    g_layer <- stat$g_layer
-    grid_name <- stat$grid_name
+    if (is.null(stat$lee_layer) || !nzchar(stat$lee_layer)) {
+        stop("[geneSCOPE::compareLeesL] no LeeStats layer could be resolved. Rerun computeL().", call. = FALSE)
+    }
+    provenance <- .lee_validate_current_provenance(
+        scope_obj,
+        grid_name = stat$grid_name,
+        lee_stats_layer = stat$lee_layer,
+        context = "[geneSCOPE::compareLeesL]"
+    )
+    leeStat <- provenance$stats
+    g_layer <- provenance$grid_layer
+    grid_name <- provenance$grid_name
 
     Lmat <- .get_lee_matrix(scope_obj, grid_name = grid_name, lee_layer = stat$lee_layer)
     genes <- rownames(Lmat)
@@ -526,17 +535,18 @@
     if (is.na(n_grid) && !is.null(g_layer$grid_info)) n_grid <- nrow(g_layer$grid_info)
     W <- g_layer$W
     S0 <- if (!is.null(W)) sum(W) else NA_real_
-    EZ <- if (!is.na(n_grid) && n_grid > 1) -1 / (n_grid - 1) else NA_real_
-    Var <- if (!is.na(n_grid) && n_grid > 3 && !is.na(S0) && S0 > 0) {
-        (n_grid^2 * (n_grid - 2)) / ((n_grid - 1)^2 * (n_grid - 3) * S0)
-    } else {
-        NA_real_
-    }
+    # The historical EZ/Var expressions here were Moran-I moments, not Lee-L
+    # moments. Do not manufacture an analytic Lee uncertainty. With no stored
+    # empirical P/Z (for example, computeL(perms=0)), require_uncertainty=TRUE
+    # must therefore fail the comparison gate rather than certify a false SE.
+    EZ <- NA_real_
+    Var <- NA_real_
 
     sample_meta <- data.frame(
         sample_id = sample_id,
         n_grid = n_grid,
         S0 = S0,
+        Lee_S2 = provenance$S2,
         EZ = EZ,
         Var = Var,
         support_source = expr_info$source,
@@ -813,7 +823,9 @@
             if (is.na(s) || s == 0) return(rep(0, length(v)))
             (v - mean(v, na.rm = TRUE)) / s
         })
-        if (is.vector(z)) z <- matrix(z, ncol = 1)
+        if (is.null(dim(z))) {
+            z <- matrix(z, nrow = nrow(mat), ncol = length(present))
+        }
         score <- rowMeans(z, na.rm = TRUE)
     }
 

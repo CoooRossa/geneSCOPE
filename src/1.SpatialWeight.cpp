@@ -868,8 +868,8 @@ SEXP grid_weights_kernel_hexr_omp(
     validate_hex_edge_bound(ctx);
     const int rad = radius;
     if (rad < 1) stop("radius must be >= 1.");
-    const bool flat = (kernel == "gaussian");
-    if (!flat && kernel != "flat") stop("kernel must be 'gaussian' or 'flat'.");
+    const bool flat = (kernel == "flat");
+    if (!flat && kernel != "gaussian") stop("kernel must be 'gaussian' or 'flat'.");
     const double sigma_use = (sigma > 0.0) ? sigma : 1.0;
 
     const int n_full = static_cast<int>(ctx.n_cells);

@@ -1,12 +1,11 @@
 #' Check style-B variance assumptions on a real weight matrix.
 #'
 #' @description
-#' Computes the analytic style-B variance term for a supplied spatial weight
-#' matrix and compares it with a permutation-estimated null variance for one
-#' observed vector pair, or for a bounded set of feature pairs from a real
-#' expression matrix supplied through `X`. This is a diagnostic helper for assessing whether the
-#' large-sample, symmetric-binary, zero-diagonal style-B assumptions are
-#' reasonable for a specific graph. It is not used by the main `computeL()`
+#' Computes canonical Lee's L and its empirical joint-row-permutation null for
+#' one observed vector pair, or for a bounded set of feature pairs from a real
+#' expression matrix supplied through `X`. Historical style-B analytic fields
+#' are retained as `NA`: those moments are Moran-I moments and are not a valid
+#' analytic variance for Lee's L. It is not used by the main `computeL()`
 #' inference path.
 #'
 #' @param W Spatial weight matrix.
@@ -22,8 +21,9 @@
 #' @param center_scale Center and scale `x` and `y` before computing Lee's L.
 #' @param warn_ratio_threshold Warn when a permutation/style-B variance ratio
 #'   is outside `[1 / warn_ratio_threshold, warn_ratio_threshold]`.
-#' @return A list with analytic variance, permutation variance, ratio, observed
-#'   L, permutation summary, and assumption flags.
+#' @return A list with canonical observed L, empirical permutation summaries,
+#'   Lee S2, and assumption flags. Historical `Var_B` and variance-ratio fields
+#'   are `NA` because Moran-I style-B moments do not apply to Lee's L.
 #' @examples
 #' \dontrun{
 #' out <- styleB_check_realW(scope_obj@grid$grid30$W, x, y, n_perm = 499)
@@ -89,27 +89,28 @@ styleB_check_realW <- function(W,
         if (!is.finite(s) || s <= 0) return(rep(0, length(v)))
         vv / s
     }
+    Lee_S2 <- sum(as.numeric(Matrix::rowSums(W))^2)
+    if (!is.finite(Lee_S2) || Lee_S2 <= 0) {
+        stop("W has non-finite or non-positive Lee S2; Lee's L is undefined.", call. = FALSE)
+    }
     lee_one <- function(a, b) {
-        s0 <- sum(W)
         denom <- sqrt(sum(a^2) * sum(b^2))
-        if (!is.finite(s0) || s0 == 0 || !is.finite(denom) || denom == 0) {
+        if (!is.finite(denom) || denom == 0) {
             return(NA_real_)
         }
-        out <- as.numeric((n / s0) * (Matrix::t(a) %*% (W %*% b)) / denom)
+        Wa <- as.numeric(W %*% a)
+        Wb <- as.numeric(W %*% b)
+        out <- as.numeric((n / Lee_S2) * sum(Wa * Wb) / denom)
         if (is.finite(out)) out else NA_real_
     }
 
-    S0 <- sum(W)
-    S1 <- suppressWarnings(0.5 * sum((W + Matrix::t(W))^2))
-    S2 <- sum((Matrix::rowSums(W) + Matrix::colSums(W))^2)
-    EZ <- -1 / (n - 1)
-    var_B <- (n^2 * S1 - n * S2 + 3 * S0^2) / (S0^2 * (n^2 - 1)) - EZ^2
+    var_B <- NA_real_
     diag_vals <- Matrix::diag(W)
     symmetric <- isTRUE(suppressWarnings(Matrix::isSymmetric(W)))
     binary <- length(W@x) == 0L || all(W@x %in% c(0, 1))
     zero_diag <- all(!is.finite(diag_vals) | diag_vals == 0)
     large_n <- n >= 100L
-    assumptions_hold <- symmetric && binary && zero_diag && large_n
+    legacy_moran_styleB_graph_conditions <- symmetric && binary && zero_diag && large_n
 
     check_pair <- function(x_vec, y_vec, pair_label = NA_character_) {
         x_vec <- as.numeric(x_vec)
@@ -125,11 +126,12 @@ styleB_check_realW <- function(W,
         L_obs <- lee_one(x_vec, y_vec)
         perm_L <- numeric(n_perm)
         for (i in seq_len(n_perm)) {
-            perm_L[[i]] <- lee_one(x_vec, sample(y_vec, length(y_vec), replace = FALSE))
+            idx <- sample.int(n)
+            perm_L[[i]] <- lee_one(x_vec[idx], y_vec[idx])
         }
         var_perm <- stats::var(perm_L, na.rm = TRUE)
         p_two_sided <- (sum(abs(perm_L) >= abs(L_obs), na.rm = TRUE) + 1) / (sum(is.finite(perm_L)) + 1)
-        ratio <- var_perm / var_B
+        ratio <- NA_real_
         data.frame(
             pair = pair_label,
             L_observed = L_obs,
@@ -143,19 +145,20 @@ styleB_check_realW <- function(W,
         )
     }
 
-    if (!assumptions_hold) {
-        warning(
-            "styleB_check_realW: style-B large-sample 2x interpretation is boundary-limited; inspect assumption flags.",
-            call. = FALSE
-        )
-    }
+    warning(
+        "styleB_check_realW computes canonical Lee's L with joint row permutations; ",
+        "Moran-I style-B analytic variance is not applicable, so Var_B and ratio fields are NA.",
+        call. = FALSE
+    )
 
     assumption_list <- list(
         symmetric = symmetric,
         binary = binary,
         zero_diagonal = zero_diag,
         large_n = large_n,
-        applies_styleB_large_sample_rule = assumptions_hold
+        legacy_moran_styleB_graph_conditions = legacy_moran_styleB_graph_conditions,
+        applies_styleB_large_sample_rule = FALSE,
+        formula_id = .lee_formula_id()
     )
 
     if (!is.null(X)) {
@@ -197,16 +200,15 @@ styleB_check_realW <- function(W,
             n_features_checked = length(unique(as.integer(pairs))),
             n_pairs_checked = nrow(pair_results),
             n_perm = n_perm,
+            Lee_S2 = Lee_S2,
+            formula_id = .lee_formula_id(),
             Var_B = var_B,
             pair_results = pair_results,
             summary = data.frame(
-                ratio_median = stats::median(ratios, na.rm = TRUE),
-                ratio_min = min(ratios, na.rm = TRUE),
-                ratio_max = max(ratios, na.rm = TRUE),
-                ratio_outside_threshold_fraction = mean(
-                    ratios < (1 / warn_ratio_threshold) | ratios > warn_ratio_threshold,
-                    na.rm = TRUE
-                ),
+                ratio_median = NA_real_,
+                ratio_min = NA_real_,
+                ratio_max = NA_real_,
+                ratio_outside_threshold_fraction = NA_real_,
                 stringsAsFactors = FALSE
             ),
             assumptions = assumption_list
@@ -235,6 +237,8 @@ styleB_check_realW <- function(W,
     list(
         n = n,
         n_perm = n_perm,
+        Lee_S2 = Lee_S2,
+        formula_id = .lee_formula_id(),
         L_observed = pair$L_observed[[1]],
         Var_B = var_B,
         Var_from_permutation = pair$Var_from_permutation[[1]],

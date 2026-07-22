@@ -26,7 +26,6 @@
     invisible(TRUE)
 }
 
-
 #' @title Build Queen or Rook Neighbourhood List in Parallel
 #'
 #' @description
@@ -193,7 +192,7 @@ leeL_topk_candidates <- function(X, WX, row_ptr, indices, K_keep = 100L, n_threa
 
 #' @title Lee's L (single pass)
 #' @description Computes the Lee's L statistic for all gene pairs using a zero-mean,
-#'   sample-size–scaled formulation and a canonical S0 term. Matrix multiplication
+#'   sample-size–scaled formulation and Lee's canonical S2 term. Matrix multiplication
 #'   is threaded with OpenMP.
 #' @param Xz  n × g numeric matrix of z-scored gene expression (rows = cells).
 #' @param W   n × n sparse weight matrix in \code{dgCMatrix} format.
@@ -233,10 +232,8 @@ lee_perm <- function(Xz, W, idx_mat, L_ref, n_threads = 1L) {
 }
 
 #' @title Block-wise permutation counts for Lee's L
-#' @description Performs Monte-Carlo permutations with an index matrix that
-#'   should preserve block positions and shuffle rows within each block. The
-#'   C++ layer validates block IDs but consumes the R-generated permutation
-#'   indices directly, returning exceedance counts versus the reference
+#' @description Performs Monte-Carlo permutations constrained within blocks
+#'   (e.g. slides or images) and returns exceedance counts versus the reference
 #'   statistic.
 #' @param Xz n × g numeric matrix of z-scored expression (rows = cells).
 #' @param W n × n sparse weight matrix in \code{dgCMatrix} format.
@@ -471,6 +468,45 @@ delta_lr_perm_csr <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat, gene_
 #' @return Integer vector of exceedance counts for each gene pair.
 delta_lr_perm_csr_block <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, n_threads = 1L, clamp_nonneg_r = FALSE) {
     .Call(`_geneSCOPE_delta_lr_perm_csr_block`, Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, n_threads, clamp_nonneg_r)
+}
+
+#' @title Permutation counts for Lee's L minus a fixed observed Pearson reference
+#' @description Uses one common row permutation for all genes. Pearson correlation
+#'   is invariant under that permutation, so each null statistic is
+#'   `L_perm - pearson_ref`, where `pearson_ref` is supplied explicitly.
+#' @param Xz n by g centered/z-scored expression matrix.
+#' @param W n by n sparse spatial weights.
+#' @param idx_mat n by B matrix of 0-based row permutations.
+#' @param gene_pairs Pair indices into columns of Xz (0-based).
+#' @param delta_ref Observed `L - pearson_ref` for each pair.
+#' @param pearson_ref Observed Pearson reference for each pair, after any clamp.
+#' @param n_threads Number of OpenMP threads.
+#' @return Exceedance counts for the two-sided absolute Delta test.
+delta_l_fixed_r_perm <- function(Xz, W, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads = 1L) {
+    .Call(`_geneSCOPE_delta_l_fixed_r_perm`, Xz, W, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads)
+}
+
+#' @title Block-constrained permutation counts with a fixed Pearson reference
+#' @inheritParams delta_l_fixed_r_perm
+#' @param block_ids Block ID for each row; permutations cannot cross blocks.
+delta_l_fixed_r_perm_block <- function(Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads = 1L) {
+    .Call(`_geneSCOPE_delta_l_fixed_r_perm_block`, Xz, W, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads)
+}
+
+#' @title CSR permutation counts with a fixed observed Pearson reference
+#' @inheritParams delta_l_fixed_r_perm
+#' @param W_indices CSR column indices.
+#' @param W_values CSR non-zero values.
+#' @param W_row_ptr CSR row pointer.
+delta_l_fixed_r_perm_csr <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads = 1L) {
+    .Call(`_geneSCOPE_delta_l_fixed_r_perm_csr`, Xz, W_indices, W_values, W_row_ptr, idx_mat, gene_pairs, delta_ref, pearson_ref, n_threads)
+}
+
+#' @title Block-constrained CSR permutation counts with a fixed Pearson reference
+#' @inheritParams delta_l_fixed_r_perm_csr
+#' @param block_ids Block ID for each row; permutations cannot cross blocks.
+delta_l_fixed_r_perm_csr_block <- function(Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads = 1L) {
+    .Call(`_geneSCOPE_delta_l_fixed_r_perm_csr_block`, Xz, W_indices, W_values, W_row_ptr, idx_mat, block_ids, gene_pairs, delta_ref, pearson_ref, n_threads)
 }
 
 consensus_coo_cpp <- function(memb, thr = 0.0, n_threads = 1L) {

@@ -2,7 +2,6 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(cpp11)]]
 // [[Rcpp::plugins(openmp)]]
-#define ARMA_64BIT_WORD
 #include <RcppArmadillo.h>
 
 #ifdef _OPENMP

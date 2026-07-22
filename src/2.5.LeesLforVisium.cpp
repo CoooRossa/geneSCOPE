@@ -102,7 +102,10 @@ CharacterMatrix rp_sign_bits(const arma::mat& X,
     return out;
 }
 
-// Compute L = X^T (W X) = dot(X[:,i], WX[:,j]) only on candidate CSR, keep per-row Top-K
+// Legacy candidate interface. It cannot compute canonical Lee's L because it
+// receives WX but not W (and therefore cannot determine S2). Keep the ABI so
+// existing callers fail with a precise error instead of silently receiving a
+// bivariate-Moran quantity mislabeled as Lee's L.
 // Input: row_ptr (S+1, 1-based), indices (1-based)
 // Output: CSR trimmed to Top-K (triplets: row_ptr, indices, values)
 // [[Rcpp::export]]
@@ -113,96 +116,15 @@ Rcpp::List leeL_topk_candidates(const arma::mat& X,
                                 const int K_keep = 100,
                                 const int n_threads = 1)
 {
-    const uword n = X.n_rows;
-    const uword S = X.n_cols;
-    if (WX.n_rows != n || WX.n_cols != S) stop("X and WX must share shape n×S");
-    if (row_ptr.size() != (S + 1)) stop("row_ptr length must be S+1");
-
-    // Each row is independent; parallelize with OpenMP
-    std::vector< std::vector<int> > out_idx(S);
-    std::vector< std::vector<double> > out_val(S);
-
-#ifdef _OPENMP
-    omp_set_num_threads(n_threads);
-#endif
-
-#pragma omp parallel for schedule(static)
-    for (uword i = 0; i < S; ++i) {
-        const int start = row_ptr[i] - 1;  // to 0-based
-        const int end   = row_ptr[i + 1] - 1;
-        const int m = std::max(0, end - start);
-        if (m <= 0) continue;
-
-        std::vector<int> idxs; idxs.reserve(m);
-        std::vector<double> vals; vals.reserve(m);
-
-        const arma::vec xi = X.col(i);
-        for (int k = 0; k < m; ++k) {
-            const int j = indices[start + k] - 1; // 0-based
-            if (j < 0 || (uword)j >= S) continue;
-            const arma::vec wj = WX.col(j);
-            const double v = arma::dot(xi, wj);
-            idxs.push_back(j + 1);   // return 1-based index
-            vals.push_back(v);
-        }
-        // Top-K selection
-        const int K = std::min<int>(K_keep, (int)vals.size());
-        if ((int)vals.size() > K) {
-            // Use index array to select
-            std::vector<int> ord(vals.size());
-            std::iota(ord.begin(), ord.end(), 0);
-            // nth_element to locate K-th largest threshold (descending)
-            std::nth_element(ord.begin(), ord.begin() + K, ord.end(), [&](int a, int b){ return vals[a] > vals[b]; });
-            ord.resize(K);
-            std::sort(ord.begin(), ord.end(), [&](int a, int b){ return vals[a] > vals[b]; });
-
-            std::vector<int> sel_idx; sel_idx.reserve(K);
-            std::vector<double> sel_val; sel_val.reserve(K);
-            for (int u = 0; u < K; ++u) {
-                sel_idx.push_back(idxs[ord[u]]);
-                sel_val.push_back(vals[ord[u]]);
-            }
-            out_idx[i].swap(sel_idx);
-            out_val[i].swap(sel_val);
-        } else {
-            // Direct descending sort
-            std::vector<int> ord(vals.size());
-            std::iota(ord.begin(), ord.end(), 0);
-            std::sort(ord.begin(), ord.end(), [&](int a, int b){ return vals[a] > vals[b]; });
-            std::vector<int> sel_idx; sel_idx.reserve(ord.size());
-            std::vector<double> sel_val; sel_val.reserve(ord.size());
-            for (size_t u = 0; u < ord.size(); ++u) {
-                sel_idx.push_back(idxs[ord[u]]);
-                sel_val.push_back(vals[ord[u]]);
-            }
-            out_idx[i].swap(sel_idx);
-            out_val[i].swap(sel_val);
-        }
-    }
-
-    // Flatten to CSR
-    Rcpp::IntegerVector row_ptr_out(S + 1);
-    size_t nnz = 0;
-    for (uword i = 0; i < S; ++i) nnz += out_idx[i].size();
-    Rcpp::IntegerVector indices_out(nnz);
-    Rcpp::NumericVector values_out(nnz);
-
-    size_t pos = 0;
-    for (uword i = 0; i < S; ++i) {
-        row_ptr_out[i] = (int)pos + 1; // 1-based start
-        const auto &vi = out_val[i];
-        const auto &ii = out_idx[i];
-        for (size_t k = 0; k < vi.size(); ++k) {
-            indices_out[pos] = ii[k];
-            values_out[pos]  = vi[k];
-            ++pos;
-        }
-    }
-    row_ptr_out[S] = (int)pos + 1;
-
-    return Rcpp::List::create(
-        Rcpp::Named("row_ptr") = row_ptr_out,
-        Rcpp::Named("indices") = indices_out,
-        Rcpp::Named("values")  = values_out
+    (void)X;
+    (void)WX;
+    (void)row_ptr;
+    (void)indices;
+    (void)K_keep;
+    (void)n_threads;
+    stop(
+        "leeL_topk_candidates is disabled: its legacy ABI lacks W/S2 and cannot "
+        "compute canonical Lee's L. Use computeL() or lee_L()."
     );
+    return Rcpp::List::create();
 }

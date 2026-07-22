@@ -334,13 +334,10 @@
 
     similarity_filtered <- similarity_matrix
     similarity_filtered[abs(similarity_filtered) < config$min_cutoff] <- 0
-    if (config$use_significance && !is.null(significance_matrix)) {
-        similarity_filtered <- tryCatch(
-            .align_and_filter_fdr(similarity_filtered, similarity_matrix, significance_matrix, config$significance_max),
-            error = function(e) {
-                warning("[cluster] significance filter disabled: ", conditionMessage(e))
-                similarity_filtered
-            }
+    if (config$use_significance) {
+        if (is.null(significance_matrix)) stop("Significance filtering requested but FDR is missing.", call. = FALSE)
+        similarity_filtered <- .align_and_filter_fdr(
+            similarity_filtered, similarity_matrix, significance_matrix, config$significance_max
         )
     }
     similarity_filtered[similarity_filtered < 0] <- 0

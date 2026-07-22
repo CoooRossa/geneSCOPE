@@ -24,7 +24,7 @@
   if (is_darwin && native_disabled) {
     packageStartupMessage(
       "[geneSCOPE] Darwin/macOS detected: Native C++ backends DISABLED by default. ",
-      "Using R fallback for all native paths to prevent crashes. ",
+      "Using exact R fallbacks for Lee L and Lee permutation inference. ",
       "To re-enable native C++, set options(geneSCOPE.disable_native_all=FALSE)."
     )
   } else if (is_darwin) {

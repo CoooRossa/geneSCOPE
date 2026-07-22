@@ -1,9 +1,6 @@
 // LOESS + residual bootstrap with unified extended interface
 // [[Rcpp::plugins(openmp)]]
 // [[Rcpp::depends(RcppArmadillo)]]
-#define ARMA_64BIT_WORD 1
-#define ARMA_NO_DEBUG 1
-#define ARMA_USE_OPENMP 1
 #include <RcppArmadillo.h>
 #include <random>
 #include <algorithm>

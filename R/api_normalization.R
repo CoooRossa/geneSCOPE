@@ -64,10 +64,18 @@ normalizeMoleculesInGrid <- function(scope_obj,
   step_s02$enter()
   dt <- as.data.table(g$counts)
 
+  grid_order <- as.character(g$grid_info$grid_id)
+  count_grids <- unique(as.character(dt$grid_id))
+  if (anyNA(grid_order) || anyDuplicated(grid_order)) {
+    stop("grid_info$grid_id contains missing or duplicated values.")
+  }
+  if (!all(count_grids %in% grid_order)) {
+    stop("counts contains grid_id values absent from grid_info.")
+  }
   grids <- if (keep_zero_grids) {
-    sort(unique(g$grid_info$grid_id))
+    grid_order
   } else {
-    sort(unique(dt$grid_id))
+    grid_order[grid_order %in% count_grids]
   }
   genes <- sort(unique(dt$gene))
 
@@ -139,7 +147,7 @@ normalizeMoleculesInGrid <- function(scope_obj,
 
   ## ---- 5. Align to full grid_info (P0-03 fix) ------------------------
   # Ensure Xz rows match grid_info$grid_id exactly, filling missing grids with zero rows
-  all_grids <- sort(unique(g$grid_info$grid_id))
+  all_grids <- as.character(g$grid_info$grid_id)
   current_grids <- rownames(Xd)
   
   if (!identical(current_grids, all_grids)) {

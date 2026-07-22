@@ -500,6 +500,26 @@
   }
   topology <- match.arg(topology)
   use_fuzzy <- grepl("^fuzzy", topology)
+  if (!is.character(style) || length(style) != 1L || is.na(style) || !nzchar(style)) {
+    stop("style must be one non-empty character value.", call. = FALSE)
+  }
+  style_token <- toupper(style)
+  kernel_requested <- grepl("^KERNEL", style_token)
+  if (!kernel_requested && !style_token %in% c("B", "W")) {
+    stop(
+      "computeWeights currently supports adjacency style='B' or style='W' only; ",
+      "styles C/U/S/minmax are rejected because grid$W and listw semantics would differ.",
+      call. = FALSE
+    )
+  }
+  if (!kernel_requested) style <- style_token
+  if (use_fuzzy) {
+    stop(
+      "fuzzy_* topology is temporarily unavailable: a single authoritative grid$W ",
+      "with matching metadata/listw semantics is required.",
+      call. = FALSE
+    )
+  }
   topo_arg <- if (use_fuzzy) {
     if (identical(topology, "fuzzy_hex")) "hex" else "queen"
   } else {
@@ -546,7 +566,7 @@
   )
 
   # Kernel-smoothed spatial weights (main-2 parity): enable via style = "kernel_*".
-  kernel_style <- is.character(style) && length(style) == 1L && nzchar(style) && grepl("^kernel", style)
+  kernel_style <- isTRUE(kernel_requested)
   kernel_token <- NULL
   kernel_radius_use <- NULL
   kernel_sigma_use <- NULL
@@ -558,7 +578,7 @@
       stop("Kernel weights are incompatible with fuzzy_* topology.")
     }
 
-    kernel_token <- tolower(sub("^kernel[_-]?", "", style))
+    kernel_token <- tolower(sub("^KERNEL[_-]?", "", style_token))
     if (!nzchar(kernel_token)) kernel_token <- "gaussian"
     if (!kernel_token %in% c("gaussian", "flat")) {
       stop("Unknown kernel style: ", style, " (supported: kernel_gaussian, kernel_flat)")
@@ -764,6 +784,7 @@
     }
     .log_backend(parent, "S03", "kernel_builder", kernel_builder, verbose = verbose)
     diag(W) <- 0
+    W <- .row_normalize_sparse(W)
     dimnames(W) <- list(meta$grid_id, meta$grid_id)
   } else {
     # 3) Build the full neighbourhood structure and relabel to active cells
@@ -842,9 +863,17 @@
           }
         )
       }
-      diag(W) <- 0
       if (length(W@x)) W@x[] <- 1
+      # zero_policy temporarily represents isolated grids by self-neighbours so
+      # the native builder can retain their rows.  Binaryising after diag(W)=0
+      # would turn those explicit zeros back into self-loops.
+      diag(W) <- 0
+      W <- Matrix::drop0(W)
       dimnames(W) <- list(meta$grid_id, meta$grid_id)
+      if (!use_fuzzy && identical(toupper(as.character(style)[1L]), "W")) {
+        W <- .row_normalize_sparse(W)
+        dimnames(W) <- list(meta$grid_id, meta$grid_id)
+      }
       .log_backend(parent, "S03", "matrix_builder", matrix_builder, verbose = verbose)
     }
   }
@@ -868,6 +897,9 @@
     if (use_fuzzy) paste0(" fuzzy=", topo_arg) else ""
   ))
 
+  if (!store_mat_effective) scope_obj@grid[[grid_name]]$W <- NULL
+  if (!store_listw) scope_obj@grid[[grid_name]]$listw <- NULL
+
   if (kernel_style) {
     if (store_mat_effective) {
       scope_obj@grid[[grid_name]]$W <- W
@@ -882,8 +914,12 @@
       .log_backend(parent, "S04", "listw_builder", "spdep::mat2listw", verbose = verbose)
     }
   } else {
-    if (store_listw || store_mat_effective) {
-      listw_obj <- spdep::nb2listw(relabel_nb,
+    if (store_listw) {
+      relabel_nb_listw <- relabel_nb
+      if (zero_policy && length(zero_idx)) {
+        for (j in zero_idx) relabel_nb_listw[[j]] <- integer(0)
+      }
+      listw_obj <- spdep::nb2listw(relabel_nb_listw,
         style = style,
         zero.policy = zero_policy
       )
@@ -945,7 +981,13 @@
   } else {
     NA
   }
-  row_norm_flag <- if (use_fuzzy) "fuzzy" else "FALSE"
+  row_norm_flag <- if (use_fuzzy) {
+    "fuzzy"
+  } else if (kernel_style || identical(toupper(as.character(style)[1L]), "W")) {
+    "TRUE"
+  } else {
+    "FALSE"
+  }
   selected_backend <- if (kernel_style) {
     kernel_backend %||% if (identical(backend, "r")) "r" else "cpp"
   } else if (identical(backend, "r") || identical(nb_backend, "R") || identical(matrix_builder, "R Matrix::sparseMatrix")) {
@@ -965,7 +1007,10 @@
     nb_backend = nb_backend,
     matrix_builder = if (kernel_style) kernel_builder else matrix_builder,
     kernel_style = if (kernel_style) style else NA_character_,
-    weight_style = if (kernel_style) "W" else style
+    weight_style = if (kernel_style) "W" else style,
+    row_normalized = isTRUE(kernel_style || identical(style, "W")),
+    matrix_stored = isTRUE(store_mat_effective),
+    listw_stored = isTRUE(store_listw)
   )
   summary_msg <- paste0(
     "grid_name=", grid_name,
@@ -1669,6 +1714,19 @@ fuzzy_queen_jaccard <- function(x, y,
   }
   gx <- grid_info$gx
   gy <- grid_info$gy
+  grid_id <- as.character(grid_info$grid_id)
+  if (!length(grid_id) || anyNA(grid_id) || any(!nzchar(grid_id)) || anyDuplicated(grid_id)) {
+    stop("grid_info$grid_id must be non-missing, non-empty, and unique.", call. = FALSE)
+  }
+  if (!is.numeric(gx) || !is.numeric(gy) || anyNA(gx) || anyNA(gy) ||
+      any(!is.finite(gx)) || any(!is.finite(gy)) ||
+      any(abs(gx - round(gx)) > sqrt(.Machine$double.eps)) ||
+      any(abs(gy - round(gy)) > sqrt(.Machine$double.eps))) {
+    stop("grid_info$gx and grid_info$gy must be finite integer coordinates.", call. = FALSE)
+  }
+  if (anyDuplicated(data.frame(gx = as.integer(gx), gy = as.integer(gy)))) {
+    stop("grid_info contains duplicated (gx, gy) coordinates.", call. = FALSE)
+  }
   xbins_eff <- layer$xbins_eff
   ybins_eff <- layer$ybins_eff
   if (any(gx < 1 | gx > xbins_eff | gy < 1 | gy > ybins_eff)) {

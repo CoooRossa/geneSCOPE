@@ -9,7 +9,7 @@
 #' @return Return value used internally.
 #' @keywords internal
 .align_and_filter_fdr <- function(L, L_raw, FDRmat, FDR_max) {
-    if (is.null(FDRmat)) return(L)
+    if (is.null(FDRmat)) stop("FDR matrix is required when significance filtering is enabled.", call. = FALSE)
     FM <- FDRmat
 
     # 1) Robust coercion to base matrix
@@ -17,43 +17,26 @@
         FM <- try({
             if (requireNamespace("bigmemory", quietly = TRUE)) bigmemory::as.matrix(FM) else FM[, ]
         }, silent = TRUE)
-        if (inherits(FM, "try-error")) {
-            warning("[align_and_filter_FDR] FDR is big.matrix but cannot coerce to base matrix; disabling FDR filter.")
-            return(L)
-        }
+        if (inherits(FM, "try-error")) stop("FDR big.matrix cannot be coerced to a matrix.", call. = FALSE)
     } else if (!is.matrix(FM)) {
         FM_try <- try(as.matrix(FM), silent = TRUE)
         if (!inherits(FM_try, "try-error") && is.matrix(FM_try)) {
             FM <- FM_try
-        } else {
-            warning("[align_and_filter_FDR] FDR object cannot be coerced to matrix (class=", paste(class(FDRmat), collapse=","), "); disabling FDR filter.")
-            return(L)
-        }
+        } else stop("FDR object cannot be coerced to a matrix.", call. = FALSE)
     }
 
-    # 2) Align by names (preferred) or by shape
-    policy <- getOption("geneSCOPE.fdr_align_policy", "by_name")
-    if (is.null(dim(FM))) {
-        FM <- matrix(FM, nrow = nrow(L_raw), ncol = ncol(L_raw))
-        FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-    } else if (!(identical(dim(FM), dim(L_raw)) &&
-                 identical(rownames(FM), rownames(L_raw)) &&
-                 identical(colnames(FM), colnames(L_raw)))) {
-        if (identical(policy, "by_shape")) {
-            FM <- .safe_set_dim(FM, dim(L_raw))
-            FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-        } else {
-            if (!is.null(rownames(FM)) && !is.null(colnames(FM)) &&
-                all(rownames(L_raw) %in% rownames(FM)) && all(colnames(L_raw) %in% colnames(FM))) {
-                FM <- FM[rownames(L_raw), colnames(L_raw), drop = FALSE]
-            } else {
-                # fall back to shape-only alignment, but keep numeric matrix where possible
-                FM <- .safe_set_dim(FM, dim(L_raw))
-                FM <- .safe_set_dimnames(FM, dimnames(L_raw))
-            }
-        }
+    # 2) Fail-closed name alignment. Shape-only relabelling can connect the
+    # wrong genes and is never acceptable for significance filtering.
+    raw_rows <- rownames(L_raw); raw_cols <- colnames(L_raw)
+    fdr_rows <- rownames(FM); fdr_cols <- colnames(FM)
+    if (is.null(raw_rows) || is.null(raw_cols) || anyDuplicated(raw_rows) || anyDuplicated(raw_cols) ||
+        is.null(fdr_rows) || is.null(fdr_cols) || anyDuplicated(fdr_rows) || anyDuplicated(fdr_cols)) {
+        stop("L and FDR must have complete, unique row and column gene names.", call. = FALSE)
     }
-    FM <- .safe_set_dimnames(FM, dimnames(L_raw))
+    if (!setequal(raw_rows, fdr_rows) || !setequal(raw_cols, fdr_cols)) {
+        stop("FDR gene sets do not exactly match the similarity matrix.", call. = FALSE)
+    }
+    FM <- FM[raw_rows, raw_cols, drop = FALSE]
 
     # 3) Subset FDR to current kept rows of L
     target_rows <- rownames(L)
@@ -73,12 +56,13 @@
         if (length(LT@x)) {
             rows <- LT@i + 1L
             cols <- LT@j + 1L
-            mask <- (FM[cbind(rows, cols)] > FDR_max)
+            fvals <- FM[cbind(rows, cols)]
+            mask <- !is.finite(fvals) | fvals > FDR_max
             if (any(mask)) LT@x[mask] <- 0
         }
         return(drop0(as(LT, "CsparseMatrix")))
     }
-    L[FM > FDR_max] <- 0
+    L[!is.finite(FM) | FM > FDR_max] <- 0
     L
 }
 
@@ -3204,6 +3188,14 @@
         match(sel$gene2, sel_genes) - 1L
     )
     delta_ref <- sel$Delta
+    # Keep the null statistic identical to the observed statistic.  Under the
+    # common-row permutation used here, Pearson correlation is invariant; for
+    # pear_level="cell" it must also remain the cell-level reference rather
+    # than being silently recomputed from grid Xz.
+    pearson_ref <- sel$LeesL - delta_ref
+    if (any(!is.finite(delta_ref)) || any(!is.finite(pearson_ref))) {
+        stop("Selected Delta/Pearson reference values must be finite before permutation.", call. = FALSE)
+    }
 
     block_id <- if (use_blocks) {
         by <- (grid_info$gy - 1L) %/% block_side
@@ -3263,21 +3255,22 @@
             attempt <- attempt + 1
             idx_mat <- matrix(integer(0), nrow = n_cells, ncol = bsz)
             for (p in seq_len(bsz)) {
-                new_order <- sample(length(split_rows))
-                idx_mat[, p] <- unlist(split_rows[new_order], use.names = FALSE) - 1L
+                perm_idx <- seq_len(n_cells)
+                for (rows in split_rows) perm_idx[rows] <- sample(rows, length(rows), replace = FALSE)
+                idx_mat[, p] <- perm_idx - 1L
             }
             res <- tryCatch(
                 {
                     if (use_blocks) {
-                        .delta_lr_perm_csr_block(
+                        .delta_l_fixed_r_perm_csr_block(
                             Xz_sub, W_indices, W_values, W_row_ptr, idx_mat,
-                            as.integer(block_id) - 1L, gene_pairs, delta_ref,
+                            as.integer(block_id) - 1L, gene_pairs, delta_ref, pearson_ref,
                             perm_threads
                         )
                     } else {
-                        .delta_lr_perm_csr(
+                        .delta_l_fixed_r_perm_csr(
                             Xz_sub, W_indices, W_values, W_row_ptr, idx_mat,
-                            gene_pairs, delta_ref,
+                            gene_pairs, delta_ref, pearson_ref,
                             perm_threads
                         )
                     }
@@ -4444,6 +4437,15 @@
                                      verbose,
                                      user_set_bigmemory,
                                      user_set_chunk) {
+    if (!is.logical(use_bigmemory) || length(use_bigmemory) != 1L || is.na(use_bigmemory)) {
+        stop("use_bigmemory must be one non-missing logical value.", call. = FALSE)
+    }
+    if (use_bigmemory) {
+        stop(
+            "use_bigmemory=TRUE is disabled: the Lee L route is RAM-backed and does not provide a safe file-backed output contract.",
+            call. = FALSE
+        )
+    }
     g_layer <- .select_grid_layer(scope_obj, grid_name)
     grid_name <- if (is.null(grid_name)) {
         names(scope_obj@grid)[vapply(scope_obj@grid, identical, logical(1), g_layer)]
@@ -4484,28 +4486,15 @@
         )
     }
 
-    # Respect user bigmemory/chunk overrides while still hinting when streaming is advisable
+    # Fail closed instead of auto-enabling the RAM-backed shared-big.matrix path.
     if (matrix_size_gb > mem_limit_GB) {
-        if (use_bigmemory) {
-            if (verbose) {
-                .log_info(
-                    "computeL",
-                    "S02",
-                    paste0(
-                        "Large matrix detected (", round(matrix_size_gb, 1), " GB), TRUE); staying in bigmemory/streaming mode.",
-                        if (!user_set_chunk) " You may tune chunk_size to trade IO vs RAM." else ""
-                    ),
-                    verbose
-                )
-            }
-        } else if (user_set_bigmemory) {
+        if (user_set_bigmemory) {
             if (verbose) .log_info("computeL", "S02", paste0("Warning: requested use_bigmemory=FALSE with large matrix (", round(matrix_size_gb, 1), " GB); proceeding in-memory as requested."), verbose)
-        } else if (os_type == "windows" && !requireNamespace("bigmemory", quietly = TRUE)) {
-            if (verbose) .log_info("computeL", "S02", paste0("!!! Warning: bigmemory not available on Windows; using regular matrices !!!"), verbose)
-            use_bigmemory <- FALSE
         } else {
-            use_bigmemory <- TRUE
-            if (verbose) .log_info("computeL", "S02", paste0("Large matrix detected (", round(matrix_size_gb, 1), " GB); enabling bigmemory/streaming."), verbose)
+            stop(
+                "Lee L output exceeds mem_limit_GB, but automatic bigmemory mode is disabled because the current implementation is RAM-backed. Reduce the gene set or raise mem_limit_GB only after confirming available RAM.",
+                call. = FALSE
+            )
         }
     }
 
