@@ -627,9 +627,9 @@
                           ncores = 4,
                           verbose = getOption("geneSCOPE.verbose", TRUE)) {
     level <- match.arg(level)
-    ncores_requested <- suppressWarnings(as.integer(ncores))
-    cores_detected <- suppressWarnings(detectCores(logical = TRUE))
-    ncores_safe <- max(1L, min(ncores_requested, cores_detected))
+    ncores_requested <- suppressWarnings(as.integer(ncores)[1L])
+    cores_detected <- .detect_cores_safe(logical = TRUE)
+    ncores_safe <- .clamp_ncores_safe(ncores_requested, logical = TRUE)
     ncores <- ncores_safe
     step_s01 <- .log_step("computeIDelta", "S01", "prepare sparse matrix", verbose)
     step_s01$enter(extra = paste0(

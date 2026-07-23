@@ -876,26 +876,16 @@
     step02 <- .log_step(parent, "S02", "configure runtime resources and threads", p$verbose)
 
     os_type <- .detect_os()
-    max_cores <- max(1L, detectCores())
-    requested_cores <- if (is.null(p$ncores) || is.na(p$ncores)) max_cores else p$ncores
-    target_cores <- min(requested_cores, max_cores)
+    max_cores <- .detect_cores_safe(logical = TRUE)
+    requested_cores <- if (is.null(p$ncores) || !length(p$ncores) || is.na(p$ncores[1L])) max_cores else p$ncores
+    target_cores <- .clamp_ncores_safe(requested_cores, logical = TRUE)
     step02$enter(paste0("requested_ncores=", requested_cores, " max_cores=", max_cores))
 
-    sys_mem_gb <- tryCatch({
-        if (os_type == "linux") {
-            mem_info <- readLines("/proc/meminfo")
-            mem_total <- grep("MemTotal", mem_info, value = TRUE)
-            mem_kb <- as.numeric(gsub("[^0-9]", "", mem_total))
-            mem_gb <- mem_kb / 1024 / 1024
-            if (mem_gb > 50000) warning("Detected unusually high memory: ", round(mem_gb, 1), "GB. This may indicate a parsing error.")
-            mem_gb
-        } else if (os_type == "macos") {
-            mem_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
-            mem_bytes / 1024^3
-        } else {
-            32
-        }
-    }, error = function(e) 32)
+    sys_mem_gb <- .get_system_memory_gb(os_type = os_type)
+    if (sys_mem_gb > 50000) {
+        warning("Detected unusually high memory: ", round(sys_mem_gb, 1),
+            "GB. This may indicate a parsing error.")
+    }
 
     # Aggressive mode: attempt the requested core count first, only backing off if cluster setup fails.
     test_cores <- target_cores
@@ -1088,22 +1078,13 @@
     parent <- "createSCOPE"
     step14 <- .log_step(parent, "S14", "finalize scope object", state$params$verbose)
     step14$enter()
-    platform_label <- "geneSCOPE"
+    platform_label <- .canonicalize_scope_platform(state$params$data_type)
+    if (is.null(platform_label)) platform_label <- "unknown"
     if (length(scope_obj@grid) == 0 ||
         all(vapply(scope_obj@grid, function(g) nrow(g$grid_info) == 0L, logical(1)))) {
         warning("No effective grid layer generated - please check filters/parameters.")
     }
-    if (nrow(scope_obj@meta.data) > 0L) {
-        if ("platform" %in% names(scope_obj@meta.data)) {
-            scope_obj@meta.data$platform[] <- platform_label
-        } else {
-            scope_obj@meta.data$platform <- rep(platform_label, nrow(scope_obj@meta.data))
-        }
-    } else {
-        scope_obj@meta.data <- data.frame(platform = platform_label, stringsAsFactors = FALSE)
-        rownames(scope_obj@meta.data) <- "__scope_platform__"
-    }
-    scope_obj@stats$platform <- platform_label
+    scope_obj <- .set_scope_object_metadata(scope_obj, platform = platform_label)
     cell_count <- if (!is.null(scope_obj@coord$centroids)) nrow(scope_obj@coord$centroids) else 0L
     grid_layers <- length(scope_obj@grid)
     step14$done(paste0("cells=", cell_count, " grid_layers=", grid_layers))
@@ -2387,7 +2368,6 @@
         gene_meta <- data.frame(
             feature_id = gene_ids[ok],
             feature_type = feature_type[ok],
-            platform = rep(data_type, sum(ok)),
             stringsAsFactors = FALSE,
             row.names = gene_names[ok]
         )
@@ -2395,7 +2375,6 @@
         gene_meta <- data.frame(
             feature_id = rownames(raw_counts),
             feature_type = NA_character_,
-            platform = rep(data_type, nrow(raw_counts)),
             stringsAsFactors = FALSE,
             row.names = rownames(raw_counts)
         )
@@ -2608,8 +2587,7 @@
             scope_obj@grid[[grid_name]]$SCT <- t(sct_mat)
         }
 
-        scope_obj@stats$platform <- data_type
-        scope_obj@meta.data$platform <- data_type
+        scope_obj <- .set_scope_object_metadata(scope_obj, platform = data_type)
         .log_info(
             parent,
             "S14",
@@ -3046,18 +3024,20 @@
 #' @keywords internal
 .compute_correlation_resolve_runtime_config <- function(ncores, verbose) {
   .log_info("computeCorrelation", "S01", "Configuring thread settings...", verbose)
-  max_cores <- detectCores()
-  if (is.na(max_cores) || max_cores <= 0) {
-    max_cores <- 1
-    .log_info("computeCorrelation", "S01",
-      "!!! Warning: Could not detect cores, using single core !!!", verbose
-    )
+  ncores_safe <- .clamp_ncores_safe(ncores, logical = TRUE)
+  requested_value <- suppressWarnings(as.numeric(ncores)[1L])
+  request_valid <- length(requested_value) && is.finite(requested_value) &&
+    requested_value >= 1
+  thread_source <- if (!request_valid) {
+    "fallback"
+  } else if (ncores_safe < floor(requested_value)) {
+    "clamped"
+  } else {
+    "requested"
   }
-  ncores_safe <- max(1L, min(ncores, max_cores))
-  thread_source <- if (ncores_safe < ncores) "clamped" else "requested"
   .log_backend("computeCorrelation", "S01", "threads",
     paste0(ncores_safe, " source=", thread_source, " requested=", ncores),
-    reason = if (thread_source == "clamped") "clamped" else NULL,
+    reason = if (thread_source == "requested") NULL else thread_source,
     verbose = verbose
   )
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
@@ -3070,7 +3050,12 @@
   .log_backend("computeCorrelation", "S01", "blas_threads",
     "OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1", verbose = verbose
   )
-  list(ncores_safe = ncores_safe, old_blas_env = old_blas_env, old_mkl_env = old_mkl_env)
+  list(
+    ncores_safe = ncores_safe,
+    thread_source = thread_source,
+    old_blas_env = old_blas_env,
+    old_mkl_env = old_mkl_env
+  )
 }
 
 #' Internal helper for data construction helpers
@@ -3298,14 +3283,7 @@
 
   # 2) Auto-detect from scope_obj if not forced
   if (is.null(pick) && platform == "auto") {
-    plat <- NA_character_
-    if (!is.null(scope_obj@meta.data) && nrow(scope_obj@meta.data)) {
-      if ("platform" %in% names(scope_obj@meta.data)) {
-        v <- scope_obj@meta.data$platform
-        if (length(v)) plat <- as.character(v[which.max(tabulate(match(v, unique(v))))])
-      }
-    }
-    if (is.na(plat) && !is.null(scope_obj@stats$platform)) plat <- as.character(scope_obj@stats$platform)
+    plat <- .get_scope_object_metadata(scope_obj, "platform", default = NA_character_)
     if (!is.na(plat)) {
       if (grepl("cosmx", plat, ignore.case = TRUE)) pick <- "CosMx"
       else if (grepl("xenium", plat, ignore.case = TRUE)) pick <- "Xenium"
@@ -3625,28 +3603,10 @@ build_scope_from_cosmx <- function(input_dir,
         ...
     )
 
-    if (nrow(scope_obj@meta.data) > 0L) {
-        if ("platform" %in% names(scope_obj@meta.data)) {
-            scope_obj@meta.data$platform[] <- "CosMx"
-        } else {
-            scope_obj@meta.data$platform <- rep("CosMx", nrow(scope_obj@meta.data))
-        }
-        if ("dataset" %in% names(scope_obj@meta.data)) {
-            scope_obj@meta.data$dataset[] <- if (is.null(dataset_id)) NA_character_ else dataset_id
-        } else {
-            scope_obj@meta.data$dataset <- rep(if (is.null(dataset_id)) NA_character_ else dataset_id,
-                                               nrow(scope_obj@meta.data))
-        }
-    } else {
-        scope_obj@meta.data <- data.frame(
-            platform = "CosMx",
-            dataset = if (is.null(dataset_id)) NA_character_ else dataset_id,
-            stringsAsFactors = FALSE
-        )
-        rownames(scope_obj@meta.data) <- "__scope_platform__"
+    scope_obj <- .set_scope_object_metadata(scope_obj, platform = "CosMx")
+    if (!is.null(dataset_id)) {
+        scope_obj <- .set_scope_object_metadata(scope_obj, dataset = dataset_id)
     }
-    scope_obj@stats$platform <- "CosMx"
-    scope_obj@stats$dataset <- if (is.null(dataset_id)) NA_character_ else dataset_id
     scope_obj
 }
 
@@ -3924,8 +3884,7 @@ build_scope_from_visium <- function(input_dir,
         grid = list(),
         meta.data = data.frame(row.names = pos_dt$barcode)
     )
-    scope_obj@meta.data$platform <- "Visium"
-    scope_obj@stats$platform <- "Visium"
+    scope_obj <- .set_scope_object_metadata(scope_obj, platform = "Visium")
     scope_obj@stats$visium <- list(
         counts = counts_mat,
         genes = gene_meta,

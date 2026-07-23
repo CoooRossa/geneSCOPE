@@ -4,12 +4,14 @@
 \alias{.get_top_lvs_r_resolve_runtime_config}
 \title{Internal helper for Lee's L workflows}
 \usage{
-.get_top_lvs_r_resolve_runtime_config(ncores, verbose)
+.get_top_lvs_r_resolve_runtime_config(ncores, verbose, detector = detectCores)
 }
 \arguments{
 \item{ncores}{Internal parameter}
 
 \item{verbose}{Internal parameter}
+
+\item{detector}{Core detection function. Exposed only for failure-path tests.}
 }
 \value{
 Internal helper result

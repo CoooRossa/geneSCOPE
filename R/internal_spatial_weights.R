@@ -99,7 +99,8 @@
 #' @param max_order Maximum neighbour order (non-kernel styles).
 #' @param kernel_radius Kernel radius for `style="kernel_*"` (overrides `max_order`).
 #' @param kernel_sigma Kernel sigma for `style="kernel_*"` (overrides `min_neighbors`).
-#' @param ncores Number of threads to use.
+#' @param ncores Number of threads to use. `NULL` safely auto-detects; an
+#'   explicit valid request remains authoritative if detection is unavailable.
 #' @return The modified `scope_object`.
 #' @keywords internal
 .compute_weights <- function(scope_obj,
@@ -115,7 +116,7 @@
                            max_order = NULL,
                            kernel_radius = NULL,
                            kernel_sigma = NULL,
-                           ncores = detectCores(logical = TRUE)) {
+                           ncores = NULL) {
   if (length(style) != 1L || is.na(style) || !nzchar(as.character(style))) {
     stop("style must be one non-empty value.", call. = FALSE)
   }
@@ -154,7 +155,11 @@
   grid_label <- if (is.null(grid_name)) "auto" else as.character(grid_name)[1]
   step01$enter(paste0("grid_name=", grid_label))
 
-  guard <- .spw_thread_guard_v2()
+  # Resolve the caller's request once.  If core detection is unavailable, an
+  # explicit valid request remains authoritative; only a missing/invalid
+  # request falls back to one thread.
+  ncores_use <- .clamp_ncores_safe(ncores, logical = TRUE, fallback = 1L)
+  guard <- .spw_thread_guard_v2(requested_ncores = ncores_use)
   on.exit(guard$restore(), add = TRUE)
 
   # 1) Select grid layer and basic metadata
@@ -169,7 +174,6 @@
   scope_obj@grid[[grid_name]]$W <- NULL
   scope_obj@grid[[grid_name]]$listw <- NULL
   scope_obj@grid[[grid_name]]$weight_provenance <- NULL
-  ncores_use <- max(1L, min(ncores, detectCores(logical = TRUE)))
   .log_info(parent, "S01", paste0(
     "grid_name=", grid_name,
     " cells=", length(meta$grid_id),
@@ -907,13 +911,9 @@ fuzzy_queen_jaccard <- function(x, y,
   grid_info <- as.data.table(layer$grid_info)
   has_centers <- all(c("gx", "gy", "center_x", "center_y") %in% names(grid_info))
 
-  platform_vals <- c(
-    if (!is.null(scope_obj@meta.data) && nrow(scope_obj@meta.data) && "platform" %in% names(scope_obj@meta.data))
-      as.character(scope_obj@meta.data$platform) else NULL,
-    if (!is.null(scope_obj@stats$platform)) as.character(scope_obj@stats$platform) else NULL
-  )
-  is_visium <- any(grepl("visium", platform_vals, ignore.case = TRUE))
-  is_xenium <- any(grepl("xenium", platform_vals, ignore.case = TRUE))
+  platform_value <- .get_scope_object_metadata(scope_obj, "platform", default = "")
+  is_visium <- grepl("visium", platform_value, ignore.case = TRUE)
+  is_xenium <- grepl("xenium", platform_value, ignore.case = TRUE)
 
   resolve_hex <- function(force = FALSE, msg_prefix = NULL) {
     hex_info <- .spw_infer_hex_variant(grid_info, force = force)
@@ -1186,9 +1186,9 @@ fuzzy_queen_jaccard <- function(x, y,
   list(layer = layer, grid_name = grid_name)
 }
 
-#' Spw Thread Guard V2
+#' Spw Thread Guard V2 Internal
 #' @description
-#' Internal helper for `.spw_thread_guard_v2`.
+#' Internal implementation for `.spw_thread_guard_v2`.
 #' @param builder_threads Parameter value.
 #' @param requested_ncores Parameter value.
 #' @param builder_backend Parameter value.
@@ -1196,11 +1196,11 @@ fuzzy_queen_jaccard <- function(x, y,
 #' @param context String label used for tracing/debug messages.
 #' @return Return value used internally.
 #' @keywords internal
-.spw_thread_guard_v2 <- function(builder_threads = 1L,
-                              requested_ncores = detectCores(logical = TRUE),
-                              builder_backend = "serial",
-                              other_threads = NULL,
-                              context = "[geneSCOPE::.compute_weights]") {
+.spw_thread_guard_v2_internal <- function(builder_threads = 1L,
+                                          requested_ncores = NULL,
+                                          builder_backend = "serial",
+                                          other_threads = NULL,
+                                          context = "[geneSCOPE::.compute_weights]") {
   threads_use <- suppressWarnings(as.integer(builder_threads))
   if (!length(threads_use) || !is.finite(threads_use) || threads_use < 1L) {
     threads_use <- 1L
@@ -1283,20 +1283,21 @@ fuzzy_queen_jaccard <- function(x, y,
   )
 }
 
-# Baseline-compatible thread guard: preserve safe tracing while matching legacy signature
-.spw_thread_guard_v2_internal <- .spw_thread_guard_v2
-
 #' Guard thread configuration for spatial weights builders (baseline signature).
 #' @description
 #' Internal helper for `.spw_thread_guard_v2`.
 #' Restores BLAS/OpenMP thread counts after .grid_nb execution; delegates to
 #' -safe guard for traceability.
+#' @param requested_ncores Already-resolved caller thread request, used for
+#'   tracing only.
+#' @param builder_threads Threads assigned to the neighbourhood builder.
 #' @keywords internal
 #' @return Return value used internally.
-.spw_thread_guard_v2 <- function() {
+.spw_thread_guard_v2 <- function(requested_ncores = 1L,
+                                 builder_threads = 1L) {
   guard <- .spw_thread_guard_v2_internal(
-    builder_threads = 1L,
-    requested_ncores = detectCores(logical = TRUE),
+    builder_threads = builder_threads,
+    requested_ncores = requested_ncores,
     builder_backend = "serial",
     other_threads = NULL,
     context = "[geneSCOPE::.compute_weights]"

@@ -12,7 +12,7 @@ computeLvsRCurve(
   span = 0.45,
   B = 1000,
   deg = 1,
-  ncores = max(1, detectCores() - 1),
+  ncores = max(1L, .detect_cores_safe(logical = TRUE) - 1L),
   length_out = 1000,
   downsample = 1,
   n_strata = 50,

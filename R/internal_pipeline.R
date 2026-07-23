@@ -958,7 +958,7 @@
 
     res_param <- if (identical(objective, "modularity")) as.numeric(config$gamma) else as.numeric(config$resolution)
     algo_per_run <- if (identical(backend_mode, "aggressive") && identical(algo, "leiden")) "louvain" else algo
-    n_threads <- max(1L, min(as.integer(config$n_threads %||% 1L), detectCores(logical = TRUE)))
+    n_threads <- .clamp_ncores_safe(config$n_threads %||% 1L, logical = TRUE)
     future_guard <- .adjust_future_globals_maxsize(
         config$future_globals_min_bytes %||% (2 * 1024^3)
     )
@@ -2133,7 +2133,7 @@ if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_c
             dimnames = list(kept_genes, "hotspot"))
         stage1_backend <- "hotspot"
     } else {
-        n_threads <- max(1L, min(as.integer(config$n_threads %||% 1L), detectCores(logical = TRUE)))
+        n_threads <- .clamp_ncores_safe(config$n_threads %||% 1L, logical = TRUE)
 
         edge_weights <- nk_inputs_stage1$edge_weights
         vertex_names <- nk_inputs_stage1$vertex_names
@@ -2336,11 +2336,189 @@ if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_c
     )
 }
 
+#' Build non-destructive consensus graph views
+#' @description
+#' Adds provenance to the legacy Stage-1 filtered L backbone without changing
+#' its vertices, edge order, or `weight` values.  It also creates two explicit
+#' derived views: the pure co-clustering-frequency graph and the intersection
+#' of that graph with the legacy L backbone.
+#' @param backbone_graph Legacy graph returned by Stage 2.
+#' @param stage1_consensus_matrix Sparse Stage-1 co-clustering matrix.  This is
+#'   already thresholded by `consensus_thr`.
+#' @param stage1_membership_matrix Gene-by-restart membership matrix, used to
+#'   recover the exact co-clustering frequency for every backbone edge,
+#'   including edges below `consensus_thr`.
+#' @param raw_similarity Untransformed similarity matrix used to annotate
+#'   backbone edges with `raw_L`.
+#' @param consensus_thr Co-clustering-frequency threshold.
+#' @param use_log1p_weight Whether legacy backbone weights were log1p
+#'   transformed.
+#' @return A list with `backbone_graph`, `consensus_frequency_graph`, and
+#'   `paper_consensus_graph`.
+#' @keywords internal
+.build_consensus_graph_views <- function(backbone_graph,
+                                         stage1_consensus_matrix,
+                                         stage1_membership_matrix,
+                                         raw_similarity,
+                                         consensus_thr,
+                                         use_log1p_weight) {
+    stopifnot(igraph::is_igraph(backbone_graph))
+
+    threshold <- as.numeric(consensus_thr)[1]
+    if (!is.finite(threshold) || threshold < 0 || threshold > 1) {
+        stop("consensus_thr must be a finite value in [0, 1].", call. = FALSE)
+    }
+    vertices <- igraph::V(backbone_graph)$name
+    if (is.null(vertices)) vertices <- as.character(seq_len(igraph::vcount(backbone_graph)))
+    transform_name <- if (isTRUE(use_log1p_weight)) "log1p" else "identity"
+
+    edge_table <- igraph::as_data_frame(backbone_graph, what = "edges")
+    if (nrow(edge_table)) {
+        raw_i <- match(edge_table$from, rownames(raw_similarity))
+        raw_j <- match(edge_table$to, colnames(raw_similarity))
+        if (anyNA(raw_i) || anyNA(raw_j)) {
+            stop("Backbone graph edges cannot be aligned to raw_similarity.", call. = FALSE)
+        }
+        raw_L <- as.numeric(raw_similarity[cbind(raw_i, raw_j)])
+
+        frequency <- rep(NA_real_, nrow(edge_table))
+        membership <- stage1_membership_matrix
+        if (!is.null(membership)) {
+            if (is.null(dim(membership))) membership <- matrix(membership, ncol = 1L)
+            membership <- as.matrix(membership)
+            membership_names <- rownames(membership)
+            if (is.null(membership_names) && nrow(membership) == nrow(raw_similarity)) {
+                membership_names <- rownames(raw_similarity)
+            }
+            if (!is.null(membership_names)) {
+                mi <- match(edge_table$from, membership_names)
+                mj <- match(edge_table$to, membership_names)
+                aligned <- !is.na(mi) & !is.na(mj)
+                if (any(aligned)) {
+                    frequency[aligned] <- vapply(which(aligned), function(k) {
+                        lhs <- membership[mi[k], ]
+                        rhs <- membership[mj[k], ]
+                        mean(!is.na(lhs) & !is.na(rhs) & lhs == rhs)
+                    }, numeric(1))
+                }
+            }
+        }
+
+        # The thresholded sparse matrix is a safe fallback for old objects
+        # that did not retain restart memberships.  Missing entries remain NA
+        # because their exact below-threshold frequency is not recoverable.
+        unresolved <- which(!is.finite(frequency))
+        if (length(unresolved) && !is.null(stage1_consensus_matrix)) {
+            cons_names <- rownames(stage1_consensus_matrix)
+            if (!is.null(cons_names)) {
+                ci <- match(edge_table$from[unresolved], cons_names)
+                cj <- match(edge_table$to[unresolved], cons_names)
+                ok <- !is.na(ci) & !is.na(cj)
+                if (any(ok)) {
+                    fallback_frequency <- as.numeric(
+                        stage1_consensus_matrix[cbind(ci[ok], cj[ok])]
+                    )
+                    known <- is.finite(fallback_frequency) & fallback_frequency > 0
+                    if (any(known)) {
+                        frequency[unresolved[ok][known]] <- fallback_frequency[known]
+                    }
+                }
+            }
+        }
+
+        backbone_graph <- igraph::set_edge_attr(backbone_graph, "raw_L", value = raw_L)
+        backbone_graph <- igraph::set_edge_attr(
+            backbone_graph, "weight_transform", value = rep(transform_name, nrow(edge_table))
+        )
+        backbone_graph <- igraph::set_edge_attr(
+            backbone_graph, "consensus_frequency", value = frequency
+        )
+        backbone_graph <- igraph::set_edge_attr(
+            backbone_graph, "is_consensus_edge",
+            value = is.finite(frequency) & frequency >= threshold
+        )
+    } else {
+        backbone_graph <- igraph::set_edge_attr(backbone_graph, "raw_L", value = numeric(0))
+        backbone_graph <- igraph::set_edge_attr(backbone_graph, "weight_transform", value = character(0))
+        backbone_graph <- igraph::set_edge_attr(backbone_graph, "consensus_frequency", value = numeric(0))
+        backbone_graph <- igraph::set_edge_attr(backbone_graph, "is_consensus_edge", value = logical(0))
+    }
+    backbone_graph <- igraph::set_graph_attr(backbone_graph, "graph_role", "thresholded_L_backbone")
+    backbone_graph <- igraph::set_graph_attr(backbone_graph, "consensus_threshold", threshold)
+    backbone_graph <- igraph::set_graph_attr(backbone_graph, "weight_transform", transform_name)
+    backbone_graph <- igraph::set_graph_attr(backbone_graph, "weight_semantics",
+        if (isTRUE(use_log1p_weight)) "log1p(raw_L)" else "raw_L")
+    backbone_graph <- igraph::set_graph_attr(backbone_graph, "graph_schema_version", "1")
+
+    consensus_sub <- NULL
+    if (!is.null(stage1_consensus_matrix)) {
+        cons_names <- rownames(stage1_consensus_matrix)
+        if (!is.null(cons_names) && all(vertices %in% cons_names)) {
+            consensus_sub <- stage1_consensus_matrix[vertices, vertices, drop = FALSE]
+        }
+    }
+    if (is.null(consensus_sub)) {
+        consensus_sub <- Matrix::Matrix(0, length(vertices), length(vertices), sparse = TRUE,
+            dimnames = list(vertices, vertices))
+    }
+    consensus_sub <- Matrix::drop0(Matrix::Matrix(consensus_sub, sparse = TRUE))
+    if (nrow(consensus_sub)) diag(consensus_sub) <- 0
+    cons_triplet <- as.data.frame(summary(consensus_sub))
+    if (nrow(cons_triplet)) {
+        cons_triplet <- cons_triplet[
+            cons_triplet$i < cons_triplet$j &
+                is.finite(cons_triplet$x) & cons_triplet$x >= threshold,
+            , drop = FALSE
+        ]
+    }
+    if (nrow(cons_triplet)) {
+        consensus_edges <- data.frame(
+            from = vertices[cons_triplet$i],
+            to = vertices[cons_triplet$j],
+            weight = cons_triplet$x,
+            consensus_frequency = cons_triplet$x,
+            is_consensus_edge = TRUE,
+            stringsAsFactors = FALSE
+        )
+        consensus_graph <- igraph::graph_from_data_frame(
+            consensus_edges, directed = FALSE, vertices = vertices
+        )
+    } else {
+        consensus_graph <- igraph::make_empty_graph(n = length(vertices), directed = FALSE)
+        consensus_graph <- igraph::set_vertex_attr(consensus_graph, "name", value = vertices)
+    }
+    consensus_graph <- igraph::set_graph_attr(consensus_graph, "graph_role", "consensus_frequency_graph")
+    consensus_graph <- igraph::set_graph_attr(consensus_graph, "consensus_threshold", threshold)
+    consensus_graph <- igraph::set_graph_attr(consensus_graph, "weight_semantics", "co_clustering_frequency")
+    consensus_graph <- igraph::set_graph_attr(consensus_graph, "graph_schema_version", "1")
+
+    keep_ids <- if (igraph::ecount(backbone_graph)) {
+        which(igraph::E(backbone_graph)$is_consensus_edge %in% TRUE)
+    } else {
+        integer(0)
+    }
+    paper_graph <- igraph::subgraph.edges(backbone_graph, eids = keep_ids, delete.vertices = FALSE)
+    paper_graph <- igraph::set_graph_attr(paper_graph, "graph_role", "paper_consensus_network")
+    paper_graph <- igraph::set_graph_attr(paper_graph, "consensus_threshold", threshold)
+    paper_graph <- igraph::set_graph_attr(
+        paper_graph, "edge_definition", "FDR/quantile L backbone intersect co-clustering frequency threshold"
+    )
+    paper_graph <- igraph::set_graph_attr(paper_graph, "graph_schema_version", "1")
+
+    list(
+        backbone_graph = backbone_graph,
+        consensus_frequency_graph = consensus_graph,
+        paper_consensus_graph = paper_graph
+    )
+}
+
 #' Stage-2 refinement workflow (baseline)
 #' @description
 #' Internal helper for `.stage2_refine_workflow_v2`.
 #' Applies MH weighting/CI95 filtering and optional sub-clustering to refine
-#' stage-1 results, producing corrected memberships and consensus graphs.
+#' stage-1 results, producing corrected memberships and non-destructive graph
+#' views. The legacy graph remains the filtered L backbone; consensus-frequency
+#' views are returned separately.
 #' @param stage1 Output list from `.stage1_consensus_workflow_v2()`.
 #' @param similarity_matrix Full similarity matrix.
 #' @param config List of refinement parameters (algo selections, thresholds,
@@ -2350,8 +2528,9 @@ if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_c
 #' @param aux_stats Optional auxiliary stats (e.g., curve layers for CI95).
 #' @param pearson_matrix Optional Pearson correlation matrix for CI95 filtering.
 #' @param verbose Logical; emit progress logs.
-#' @return List containing refined membership vector, consensus graph/matrix, and
-#'   associated metrics plus intermediate matrices used by downstream steps.
+#' @return List containing refined membership, the backward-compatible L
+#'   backbone, pure consensus-frequency graph, paper-consensus intersection,
+#'   and associated metrics/intermediates.
 #' @keywords internal
 .stage2_refine_workflow_v2 <- function(stage1,
                                    similarity_matrix,
@@ -2487,11 +2666,22 @@ if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_c
             directed = FALSE, vertices = assigned_genes
         )
 
+        graph_views <- .build_consensus_graph_views(
+            backbone_graph = g_cons,
+            stage1_consensus_matrix = stage1_consensus_matrix,
+            stage1_membership_matrix = stage1_membership_matrix,
+            raw_similarity = similarity_matrix,
+            consensus_thr = config$consensus_thr %||% 0.95,
+            use_log1p_weight = isTRUE(config$use_log1p_weight)
+        )
+
         return(list(
             membership = stage1_membership_labels,
             genes_all = genes_all,
             kept_genes = assigned_genes,
-            consensus_graph = g_cons,
+            consensus_graph = graph_views$backbone_graph,
+            consensus_frequency_graph = graph_views$consensus_frequency_graph,
+            paper_consensus_graph = graph_views$paper_consensus_graph,
             membership_matrix = stage1$stage1_membership_matrix,
             stage1_consensus = stage1_consensus_matrix,
             metrics_before = NULL,
@@ -3076,11 +3266,22 @@ if (!exists(".stage1_consensus_workflow", inherits = FALSE) && exists(".stage1_c
         )
     }
 
+    graph_views <- .build_consensus_graph_views(
+        backbone_graph = cons_graph_final,
+        stage1_consensus_matrix = stage1_consensus_matrix,
+        stage1_membership_matrix = stage1_membership_matrix,
+        raw_similarity = similarity_matrix,
+        consensus_thr = consensus_thr %||% 0.95,
+        use_log1p_weight = use_log1p_weight
+    )
+
     list(
         membership = memb_final,
         kept_genes = kept_genes,
         genes_all = genes_all,
-        consensus_graph = cons_graph_final,
+        consensus_graph = graph_views$backbone_graph,
+        consensus_frequency_graph = graph_views$consensus_frequency_graph,
+        paper_consensus_graph = graph_views$paper_consensus_graph,
         membership_matrix = stage1_membership_matrix,
         stage1_consensus = stage1_consensus_matrix,
         metrics_before = metrics_before,

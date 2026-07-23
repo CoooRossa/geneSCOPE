@@ -4,7 +4,7 @@
 \alias{.get_safe_thread_count}
 \title{Get Safe Thread Count}
 \usage{
-.get_safe_thread_count(max_requested = detectCores(), default = NULL)
+.get_safe_thread_count(max_requested = NULL, default = NULL)
 }
 \arguments{
 \item{max_requested}{Numeric threshold.}

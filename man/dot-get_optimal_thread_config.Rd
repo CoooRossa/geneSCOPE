@@ -5,7 +5,7 @@
 \title{Get Optimal Thread Config}
 \usage{
 .get_optimal_thread_config(
-  ncores_requested = detectCores(),
+  ncores_requested = NULL,
   task_type = "mixed",
   memory_gb = NULL
 )

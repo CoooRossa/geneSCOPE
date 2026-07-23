@@ -4,29 +4,18 @@
 \alias{.spw_thread_guard_v2}
 \title{Spw Thread Guard V2}
 \usage{
-.spw_thread_guard_v2()
-
-.spw_thread_guard_v2()
+.spw_thread_guard_v2(requested_ncores = 1L, builder_threads = 1L)
 }
 \arguments{
-\item{builder_threads}{Parameter value.}
+\item{builder_threads}{Threads assigned to the neighbourhood builder.}
 
-\item{requested_ncores}{Parameter value.}
-
-\item{builder_backend}{Parameter value.}
-
-\item{other_threads}{Parameter value.}
-
-\item{context}{String label used for tracing/debug messages.}
+\item{requested_ncores}{Already-resolved caller thread request, used for
+tracing only.}
 }
 \value{
 Return value used internally.
-
-Return value used internally.
 }
 \description{
-Internal helper for `.spw_thread_guard_v2`.
-
 Internal helper for `.spw_thread_guard_v2`.
 Restores BLAS/OpenMP thread counts after .grid_nb execution; delegates to
 -safe guard for traceability.

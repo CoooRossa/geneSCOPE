@@ -26,7 +26,7 @@
                 else if ("requested_cores" %in% an) f(requested_cores = 8L)
                 else f(8L)
             } else {
-                max(1L, min(8L, as.integer(detectCores()) - 1L))
+                max(1L, min(8L, .detect_cores_safe(logical = TRUE) - 1L))
             }
         }, error = function(e) 1L)
     }
@@ -468,16 +468,13 @@
   )
   step_s01$enter(extra = paste(summary_parts, collapse = " "))
 
-  list2env(
-    .compute_correlation_resolve_runtime_config(
-      ncores,
-      verbose
-    ),
-    envir = environment()
-  )
+  runtime_cfg <- .compute_correlation_resolve_runtime_config(ncores, verbose)
+  ncores_safe <- runtime_cfg$ncores_safe
+  thread_source <- runtime_cfg$thread_source
+  old_blas_env <- runtime_cfg$old_blas_env
+  old_mkl_env <- runtime_cfg$old_mkl_env
 
   on.exit(.compute_correlation_restore_env(old_blas_env, old_mkl_env))
-  thread_source <- if (ncores_safe < ncores) "clamped" else "requested"
 
   inputs <- .compute_correlation_validate_inputs(
     scope_obj = scope_obj,

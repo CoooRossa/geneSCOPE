@@ -2778,7 +2778,7 @@
 #' @keywords internal
 .safe_thread_count <- function() {
     # Base heuristic first
-    core_guess <- tryCatch(detectCores(), error = function(e) 1L)
+    core_guess <- .detect_cores_safe(logical = TRUE)
     n_req <- max(1L, min(8L, as.integer(core_guess) - 1L))
 
     if (exists(".get_safe_thread_count", mode = "function", inherits = TRUE)) {
@@ -2852,17 +2852,32 @@
 #' Internal helper for `.get_top_lvs_r_resolve_runtime_config`.
 #' @param ncores Internal parameter
 #' @param verbose Internal parameter
+#' @param detector Core detection function. Exposed only for failure-path tests.
 #' @return Internal helper result
 #' @keywords internal
-.get_top_lvs_r_resolve_runtime_config <- function(ncores, verbose) {
-    logi <- detectCores(TRUE)
-    if (ncores > max(1L, min(ncores, logi))) {
-        .log_info("getTopLvsR", "S01", paste0("Adjusting ncores: requested=", ncores, " capped at available=", max(1L, min(ncores, logi))), TRUE)
-        ncores <- max(1L, min(ncores, logi))
+.get_top_lvs_r_resolve_runtime_config <- function(ncores,
+                                                  verbose,
+                                                  detector = detectCores) {
+    requested_ncores <- as.integer(ncores)
+    ncores <- .clamp_ncores_safe(
+        requested = requested_ncores,
+        logical = TRUE,
+        fallback = 1L,
+        detector = detector
+    )
+    if (requested_ncores > ncores) {
+        .log_info(
+            "getTopLvsR", "S01",
+            paste0(
+                "Adjusting ncores: requested=", requested_ncores,
+                " capped at available=", ncores
+            ),
+            verbose
+        )
     }
     if (requireNamespace("RhpcBLASctl", quietly = TRUE)) RhpcBLASctl::blas_set_num_threads(1)
-    Sys.setenv(OMP_NUM_THREADS = ncores)
-    ncores
+    Sys.setenv(OMP_NUM_THREADS = as.character(ncores))
+    as.integer(ncores)
 }
 
 #' Internal helper for Lee's L workflows
@@ -3747,7 +3762,7 @@
 #' @return Internal helper result
 #' @keywords internal
 .compute_lvs_r_curve_resolve_runtime_config <- function(ncores) {
-    max(1L, min(as.integer(ncores), detectCores(logical = TRUE)))
+    .clamp_ncores_safe(ncores, logical = TRUE)
 }
 
 #' Internal helper for Lee's L workflows
@@ -4297,8 +4312,8 @@
         ncores <- ncore
     }
     os_type <- .detect_os()
-    avail_cores <- max(1L, detectCores(logical = TRUE))
-    ncores <- max(1L, min(ncores, avail_cores))
+    avail_cores <- .detect_cores_safe(logical = TRUE)
+    ncores <- .clamp_ncores_safe(ncores, logical = TRUE)
     if (verbose) {
         .log_info("computeL", "S01", paste0("Core configuration: using ", ncores, "/", avail_cores, " logical cores"), TRUE)
     }

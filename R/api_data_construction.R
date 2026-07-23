@@ -116,3 +116,43 @@ createSCOPE <- function(
         ...
     )
 }
+
+#' Migrate legacy object-level metadata out of gene metadata.
+#' @description
+#' Upgrades a `scope_object` created by geneSCOPE v1.0.0/v1.0.1 so platform and
+#' dataset labels are stored under `scope_obj@stats$object_metadata` instead of
+#' being repeated in `scope_obj@meta.data`. The legacy scalar locations
+#' `scope_obj@stats$platform` and `scope_obj@stats$dataset` are retained for
+#' backward compatibility. Reserved pseudo-gene rows created by older Xenium
+#' constructors are removed by default.
+#' @param scope_obj A `scope_object` to migrate.
+#' @param platform Optional explicit platform override (for example,
+#'   `"Xenium"`). This is recommended for old objects whose constructor stored
+#'   the non-informative label `"geneSCOPE"`; the true platform is never guessed.
+#' @param dataset Optional explicit dataset label override.
+#' @param drop_redundant_columns Remove constant `platform`/`dataset` columns
+#'   from gene metadata. Non-constant columns are retained.
+#' @param drop_legacy_pseudo_rows Remove reserved `__scope_platform__` and
+#'   `__scope_metadata__` rows.
+#' @return The migrated `scope_object`. Lee matrices, clustering assignments,
+#'   graphs, grid layers, coordinates, and density results are not changed.
+#' @examples
+#' \dontrun{
+#' scope_obj <- readRDS("legacy_scope.rds")
+#' scope_obj <- migrateScopeMetadata(scope_obj)
+#' }
+#' @export
+migrateScopeMetadata <- function(
+    scope_obj,
+    platform = NULL,
+    dataset = NULL,
+    drop_redundant_columns = TRUE,
+    drop_legacy_pseudo_rows = TRUE) {
+    .migrate_scope_metadata(
+        scope_obj = scope_obj,
+        platform = platform,
+        dataset = dataset,
+        drop_redundant_columns = drop_redundant_columns,
+        drop_legacy_pseudo_rows = drop_legacy_pseudo_rows
+    )
+}

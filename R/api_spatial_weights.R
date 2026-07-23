@@ -20,7 +20,8 @@
 #' @param max_order Maximum neighbour order (non-kernel styles).
 #' @param kernel_radius Kernel radius for `style="kernel_*"` (overrides `max_order`).
 #' @param kernel_sigma Kernel sigma for `style="kernel_*"` (overrides `min_neighbors`).
-#' @param ncores Number of threads to use.
+#' @param ncores Number of threads to use. `NULL` safely auto-detects; an
+#'   explicit valid request remains authoritative if detection is unavailable.
 #' @return The modified `scope_object` (invisibly).
 #' @examples
 #' \dontrun{
@@ -42,7 +43,7 @@ computeWeights <- function(
     max_order = NULL,
     kernel_radius = NULL,
     kernel_sigma = NULL,
-    ncores = detectCores(logical = TRUE)) {
+    ncores = NULL) {
     .compute_weights(
         scope_obj = scope_obj,
         grid_name = grid_name,

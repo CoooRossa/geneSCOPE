@@ -123,23 +123,103 @@
 #' @description
 #' Internal helper for `.deterministic_arrow_threads`.
 #' @param ncores_requested Parameter value.
+#' @param detector Core detection function (injectable for failure-path tests).
 #' @return Return value used internally.
 #' @keywords internal
-.deterministic_arrow_threads <- function(ncores_requested) {
-  cores_detected <- suppressWarnings(detectCores(logical = TRUE))
-  cores_detected <- if (length(cores_detected) && is.finite(cores_detected)) cores_detected else 2L
-  requested <- suppressWarnings(as.integer(ncores_requested))
-  requested <- if (length(requested) && is.finite(requested) && requested > 0L) requested else cores_detected
-  max(2L, min(requested, cores_detected))
+.deterministic_arrow_threads <- function(ncores_requested = NULL,
+                                         detector = detectCores) {
+  # Arrow follows exactly the same core-resolution contract as the native
+  # backends: a successful detector clamps the request; an unavailable
+  # detector does not override an explicit valid request.  In particular,
+  # single-thread requests must remain single-threaded.
+  .clamp_ncores_safe(
+    requested = ncores_requested,
+    logical = TRUE,
+    fallback = 1L,
+    detector = detector
+  )
+}
+
+#' Detect a Safe Number of Cores
+#' @description
+#' Internal helper that normalizes unavailable or malformed `detectCores()`
+#' results to a finite positive integer.  A detector argument is exposed only
+#' to make the platform failure paths directly testable.
+#' @param logical Passed to the core detector.
+#' @param fallback Positive integer used when detection fails.
+#' @param detector Core detection function.
+#' @return A finite positive integer.
+#' @keywords internal
+.detect_cores_safe <- function(logical = TRUE,
+                               fallback = 1L,
+                               detector = detectCores) {
+  fallback_value <- suppressWarnings(as.integer(fallback)[1L])
+  if (!length(fallback_value) || !is.finite(fallback_value) || fallback_value < 1L) {
+    fallback_value <- 1L
+  }
+
+  detected <- tryCatch(
+    suppressWarnings(detector(logical = logical)),
+    error = function(e) NA_integer_
+  )
+  detected <- suppressWarnings(as.numeric(detected)[1L])
+  if (!length(detected) || !is.finite(detected) || detected < 1) {
+    return(as.integer(fallback_value))
+  }
+  max(1L, as.integer(floor(detected)))
+}
+
+#' Clamp a Requested Number of Cores Safely
+#' @description
+#' Internal helper that clamps a requested thread count against a robust core
+#' detection result without allowing `NA` to propagate to native code.
+#' @param requested Requested thread count.
+#' @param logical Passed to the core detector.
+#' @param fallback Positive integer used for invalid requests or detection.
+#' @param detector Core detection function.
+#' @return A finite positive integer. When detection succeeds it is no larger
+#'   than the detected count. When detection is unavailable, an explicit valid
+#'   request is treated as authoritative; only an absent/invalid request falls
+#'   back to `fallback`.
+#' @keywords internal
+.clamp_ncores_safe <- function(requested,
+                               logical = TRUE,
+                               fallback = 1L,
+                               detector = detectCores) {
+  fallback_value <- suppressWarnings(as.numeric(fallback)[1L])
+  if (!length(fallback_value) || !is.finite(fallback_value) || fallback_value < 1) {
+    fallback_value <- 1
+  }
+
+  detected <- tryCatch(
+    suppressWarnings(detector(logical = logical)),
+    error = function(e) NA_real_
+  )
+  detected <- suppressWarnings(as.numeric(detected)[1L])
+  detection_available <- length(detected) && is.finite(detected) && detected >= 1
+
+  requested_value <- suppressWarnings(as.numeric(requested)[1L])
+  if (!length(requested_value) || !is.finite(requested_value) || requested_value < 1) {
+    requested_value <- if (detection_available) detected else fallback_value
+  }
+
+  requested_value <- max(1L, as.integer(floor(requested_value)))
+  if (!detection_available) return(requested_value)
+  max(1L, min(requested_value, as.integer(floor(detected))))
 }
 
 #' Apply Thread Config
 #' @description
 #' Internal helper for `.apply_thread_config`.
 #' @param config Parameter value.
+#' @param arrow_namespace Optional Arrow namespace used by focused tests.
+#' @param detector Core detection function used only when config does not
+#'   already contain a resolved Arrow/OpenMP thread count.
 #' @return Return value used internally.
 #' @keywords internal
-.apply_thread_config <- function(config) {
+.apply_thread_config <- function(config,
+                                 arrow_namespace = NULL,
+                                 detector = detectCores) {
   # Configure OpenMP threads
   Sys.setenv(OMP_NUM_THREADS = as.character(config$openmp_threads))
   if (!is.null(config$openmp_threads) && is.finite(config$openmp_threads)) {
@@ -151,21 +231,43 @@
   .force_blas_single_thread()
 
   # Configure Arrow threads when available
-  if (requireNamespace("arrow", quietly = TRUE)) {
+  arrow_available <- !is.null(arrow_namespace) || requireNamespace("arrow", quietly = TRUE)
+  arrow_threads_applied <- NULL
+  if (arrow_available) {
+    arrow_ns <- if (is.null(arrow_namespace)) asNamespace("arrow") else arrow_namespace
     arrow_threads <- config[["arrow_threads"]]
-    arrow_threads <- .deterministic_arrow_threads(if (is.null(arrow_threads)) config[["ncores_requested"]] else arrow_threads)
-    tryCatch(
-      {
-        if (exists("set_cpu_count", where = asNamespace("arrow"))) {
-          arrow::set_cpu_count(arrow_threads)
-        }
-        if (exists("set_io_thread_count", where = asNamespace("arrow"))) {
-          arrow::set_io_thread_count(arrow_threads)
-        }
-      },
-      error = function(e) NULL
-    )
+    if (is.null(arrow_threads)) arrow_threads <- config[["openmp_threads"]]
+
+    if (is.null(arrow_threads)) {
+      arrow_threads <- .deterministic_arrow_threads(
+        config[["ncores_requested"]],
+        detector = detector
+      )
+    } else {
+      # configure_threads_for() has already resolved this value.  Normalize it
+      # without probing the machine a second time, which also makes an Arrow
+      # setter immune to a later detector failure.
+      resolved_threads <- arrow_threads
+      arrow_threads <- .clamp_ncores_safe(
+        requested = resolved_threads,
+        logical = TRUE,
+        fallback = 1L,
+        detector = function(logical = TRUE) resolved_threads
+      )
+    }
+
+    cpu_setter <- get0("set_cpu_count", envir = arrow_ns, mode = "function", inherits = FALSE)
+    io_setter <- get0("set_io_thread_count", envir = arrow_ns, mode = "function", inherits = FALSE)
+    if (is.function(cpu_setter)) {
+      suppressWarnings(tryCatch(cpu_setter(arrow_threads), error = function(e) NULL))
+    }
+    if (is.function(io_setter)) {
+      suppressWarnings(tryCatch(io_setter(arrow_threads), error = function(e) NULL))
+    }
+    arrow_threads_applied <- arrow_threads
   }
+
+  invisible(arrow_threads_applied)
 }
 
 #' Configure for compute-intensive operations
@@ -175,8 +277,7 @@
 #' @return A list with configuration/metadata used internally.
 #' @keywords internal
 .configure_compute_intensive <- function(ncores_requested) {
-  max_cores <- max(1L, detectCores())
-  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  safe_cores <- .clamp_ncores_safe(ncores_requested, logical = TRUE)
 
   list(
     openmp_threads = safe_cores,
@@ -192,8 +293,7 @@
 #' @return A list with configuration/metadata used internally.
 #' @keywords internal
 .configure_io_bound <- function(ncores_requested) {
-  max_cores <- max(1L, detectCores())
-  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  safe_cores <- .clamp_ncores_safe(ncores_requested, logical = TRUE)
 
   list(
     openmp_threads = safe_cores, # use all requested cores for OpenMP
@@ -209,8 +309,7 @@
 #' @return A list with configuration/metadata used internally.
 #' @keywords internal
 .configure_mixed <- function(ncores_requested) {
-  max_cores <- max(1L, detectCores())
-  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  safe_cores <- .clamp_ncores_safe(ncores_requested, logical = TRUE)
   openmp_share <- safe_cores
 
   list(
@@ -227,8 +326,7 @@
 #' @return A list with configuration/metadata used internally.
 #' @keywords internal
 .configure_open_mp_only <- function(ncores_requested) {
-  max_cores <- max(1L, detectCores())
-  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  safe_cores <- .clamp_ncores_safe(ncores_requested, logical = TRUE)
 
   list(
     openmp_threads = safe_cores,
@@ -317,12 +415,15 @@
 #' @param memory_gb Parameter value.
 #' @return Return value used internally.
 #' @keywords internal
-.get_optimal_thread_config <- function(ncores_requested = detectCores(),
+.get_optimal_thread_config <- function(ncores_requested = NULL,
                                     task_type = "mixed",
                                     memory_gb = NULL) {
-  max_cores <- detectCores()
-
-  safe_cores <- max(1L, min(ncores_requested, max_cores))
+  max_cores <- .detect_cores_safe(logical = TRUE)
+  safe_cores <- if (is.null(ncores_requested)) {
+    max_cores
+  } else {
+    .clamp_ncores_safe(ncores_requested, logical = TRUE)
+  }
 
   thread_config <- switch(task_type,
     "openmp_only" = list(openmp_threads = safe_cores, blas_threads = 1, r_threads = 1),
@@ -348,14 +449,20 @@
 #' @param default Parameter value.
 #' @return Return value used internally.
 #' @keywords internal
-.get_safe_thread_count <- function(max_requested = detectCores(),
+.get_safe_thread_count <- function(max_requested = NULL,
                                 default = NULL) {
-  total_cores <- detectCores()
+  total_cores <- .detect_cores_safe(logical = TRUE)
   safe_limit <- max(1L, total_cores - 1L)
-  requested <- if (!is.null(default)) default else max_requested
+  requested <- if (!is.null(default)) {
+    default
+  } else if (!is.null(max_requested)) {
+    max_requested
+  } else {
+    safe_limit
+  }
   req_val <- suppressWarnings(as.integer(requested)[1])
-  if (!length(req_val) || is.na(req_val)) req_val <- safe_limit
-  return(min(req_val, safe_limit, na.rm = TRUE))
+  if (!length(req_val) || !is.finite(req_val) || req_val < 1L) req_val <- safe_limit
+  return(max(1L, min(req_val, safe_limit)))
 }
 
 #' Configure Threads For
@@ -385,6 +492,11 @@
     openmp_only = .configure_open_mp_only(ncores_requested)
   )
 
+  # Arrow receives the already-resolved OpenMP count.  It must not perform an
+  # independent core probe that can disagree with, or fail after, resolution.
+  config$arrow_threads <- config$openmp_threads
+  config$ncores_requested <- ncores_requested
+
   # Apply configuration
   .apply_thread_config(config)
 
@@ -393,7 +505,8 @@
     operation_type = operation_type,
     openmp_threads = config$openmp_threads,
     r_threads = config$r_threads,
-    blas_threads = 1 # always 1
+    blas_threads = 1, # always 1
+    arrow_threads = config$arrow_threads
   )
 
   if (restore_after) {
@@ -414,7 +527,10 @@
 #' @param ncores_requested Parameter value.
 #' @return Return value used internally.
 #' @keywords internal
-.with_thread_config <- function(expr, task_type = "mixed", ncores_requested = detectCores()) {
+.with_thread_config <- function(expr, task_type = "mixed", ncores_requested = NULL) {
+  if (is.null(ncores_requested)) {
+    ncores_requested <- .detect_cores_safe(logical = TRUE)
+  }
   config <- .configure_threads_for(task_type, ncores_requested, restore_after = TRUE)
   on.exit({
     restore_fn <- attr(config, "restore_function")
@@ -487,24 +603,35 @@
 #' Get System Memory Gb
 #' @description
 #' Internal helper for `.get_system_memory_gb`.
+#' @param os_type Operating-system label returned by `.detect_os()`.
+#' @param system_fun Function used to query system memory on macOS; injectable
+#'   for deterministic tests.
 #' @return Return value used internally.
 #' @keywords internal
-.get_system_memory_gb <- function() {
-  os_type <- .detect_os()
-  tryCatch({
+.get_system_memory_gb <- function(os_type = .detect_os(), system_fun = system) {
+  fallback_gb <- 32
+  value <- tryCatch({
     if (os_type == "linux") {
       mem_info <- readLines("/proc/meminfo")
       mem_total <- grep("MemTotal", mem_info, value = TRUE)
-      mem_kb <- as.numeric(gsub("[^0-9]", "", mem_total))
-      mem_kb / 1024 / 1024
+      mem_kb <- suppressWarnings(as.numeric(gsub("[^0-9]", "", mem_total))[1L])
+      mem_kb / 1024^2
     } else if (os_type == "macos") {
-      mem_bytes <- as.numeric(system("sysctl -n hw.memsize", intern = TRUE))
+      raw <- suppressWarnings(system_fun("sysctl -n hw.memsize", intern = TRUE))
+      status <- attr(raw, "status", exact = TRUE)
+      if ((!is.null(status) && (!length(status) || is.na(status[1L]) || status[1L] != 0L)) ||
+          !length(raw)) {
+        return(fallback_gb)
+      }
+      mem_bytes <- suppressWarnings(as.numeric(raw[1L]))
       mem_bytes / 1024^3
     } else {
       # Windows or fallback; conservatively assume 32GB if unknown
-      32
+      fallback_gb
     }
-  }, error = function(e) 32)
+  }, error = function(e) fallback_gb)
+  value <- suppressWarnings(as.numeric(value)[1L])
+  if (!length(value) || !is.finite(value) || value <= 0) fallback_gb else value
 }
 
 #' Restore thread state

@@ -4,7 +4,13 @@
 \alias{.get_system_memory_gb}
 \title{Get System Memory Gb}
 \usage{
-.get_system_memory_gb()
+.get_system_memory_gb(os_type = .detect_os(), system_fun = system)
+}
+\arguments{
+\item{os_type}{Operating-system label returned by \code{.detect_os()}.}
+
+\item{system_fun}{Function used to query system memory on macOS; injectable
+for deterministic tests.}
 }
 \value{
 Return value used internally.

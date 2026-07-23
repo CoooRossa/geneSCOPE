@@ -11,7 +11,7 @@
   packageStartupMessage("[geneSCOPE] Version: ", packageDescription(pkgname)$Version)
 
   # System capabilities
-  ncores <- detectCores()
+  ncores <- .detect_cores_safe(logical = TRUE)
   packageStartupMessage("[geneSCOPE] Detected ", ncores, " CPU cores")
 
   # BLAS notice

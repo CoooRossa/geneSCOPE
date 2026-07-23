@@ -148,15 +148,12 @@
         )
     }
 
-    # Get system information and aggressive thread count (use all visible cores up to request)
+    # Get system information and resolve the explicit request consistently.
+    # When core detection is unavailable, a valid explicit request remains
+    # authoritative; when detection succeeds, it remains an upper bound.
     os_type <- .detect_os()
-    avail_cores <- suppressWarnings(detectCores(logical = TRUE))
-    if (!is.numeric(avail_cores) || length(avail_cores) != 1L || is.na(avail_cores) ||
-        !is.finite(avail_cores) || avail_cores < 1L) {
-        avail_cores <- 1L
-    }
-    avail_cores <- as.integer(avail_cores)
-    ncores <- min(ncores, avail_cores)
+    avail_cores <- .detect_cores_safe(logical = TRUE, fallback = ncores)
+    ncores <- .clamp_ncores_safe(ncores, logical = TRUE)
     grid_label <- if (is.null(grid_name)) "auto" else as.character(grid_name)[1]
     step01 <- .log_step(parent, "S01", "resolve inputs and weights", verbose)
     step01$enter(paste0("grid_name=", grid_label, " ncores=", ncores))
@@ -694,9 +691,182 @@
     invisible(scope_obj)
 }
 
+#' Reapply pointwise confidence-interval width floors
+#'
+#' The L-vs-r curve applies minimum-width constraints before optional edge
+#' smoothing.  Smoothing the two interval boundaries can narrow the resulting
+#' interval again, so this helper reapplies the accumulated pointwise floor
+#' while preserving each interval's post-processing centre.
+#' @param lo Numeric lower confidence bound.
+#' @param hi Numeric upper confidence bound.
+#' @param floor_width Numeric pointwise minimum interval width.
+#' @return A list containing corrected bounds and floor diagnostics.
+#' @keywords internal
+.reapply_ci_width_floor <- function(lo, hi, floor_width) {
+  if (length(lo) != length(hi) || length(lo) != length(floor_width)) {
+    stop("lo, hi, and floor_width must have identical lengths", call. = FALSE)
+  }
+
+  width_before <- hi - lo
+  active <- is.finite(floor_width) & floor_width > 0
+  finite_width <- is.finite(width_before)
+  reapplied <- active & finite_width & width_before < floor_width
+  width_after <- width_before
+  width_after[reapplied] <- floor_width[reapplied]
+
+  center <- (lo + hi) / 2
+  lo_out <- lo
+  hi_out <- hi
+  changed <- which(reapplied)
+  if (length(changed)) {
+    lo_out[changed] <- center[changed] - width_after[changed] / 2
+    hi_out[changed] <- center[changed] + width_after[changed] / 2
+  }
+
+  shortfall <- rep(0, length(width_before))
+  comparable <- active & finite_width
+  shortfall[comparable] <- pmax(
+    floor_width[comparable] - width_before[comparable],
+    0
+  )
+
+  list(
+    lo = lo_out,
+    hi = hi_out,
+    floor_width = floor_width,
+    active_count = sum(active),
+    reapplied = any(reapplied),
+    reapplied_count = sum(reapplied),
+    reapplied_fraction = if (any(active)) sum(reapplied) / sum(active) else 0,
+    max_shortfall_before = if (any(comparable)) max(shortfall[comparable]) else 0
+  )
+}
+
+#' Fingerprint the aligned inputs used to construct an L-vs-r curve
+#'
+#' The fingerprint records both gene identity/order and the exact aligned Lee
+#' and Pearson matrices.  It therefore distinguishes a change in values from a
+#' change in gene ordering, while retaining the upstream Lee input fingerprint.
+#' @param Lmat Aligned Lee's L matrix.
+#' @param rmat Aligned Pearson correlation matrix.
+#' @param common Character vector giving the common genes in analysis order.
+#' @param pearson_level Pearson source level (`grid` or `cell`).
+#' @param lee_stats_layer Lee statistics layer name.
+#' @param lee_input_fingerprint Upstream Lee input fingerprint.
+#' @return A nested SHA-256 provenance record.
+#' @keywords internal
+.lvsr_curve_source_fingerprint <- function(Lmat, rmat, common,
+                                          pearson_level,
+                                          lee_stats_layer,
+                                          lee_input_fingerprint) {
+  pearson_level <- match.arg(pearson_level, c("grid", "cell"))
+  common <- unname(as.character(common))
+  expected_dim <- c(length(common), length(common))
+  if (!identical(dim(Lmat), expected_dim) || !identical(dim(rmat), expected_dim)) {
+    stop("Lmat and rmat must be square matrices aligned to common", call. = FALSE)
+  }
+  if (!identical(unname(rownames(Lmat)), common) ||
+      !identical(unname(colnames(Lmat)), common) ||
+      !identical(unname(rownames(rmat)), common) ||
+      !identical(unname(colnames(rmat)), common)) {
+    stop("Lmat and rmat dimnames must match common in order", call. = FALSE)
+  }
+
+  # Matrix constructors may label the two dimname components (for example,
+  # names(dimnames(Lmat)) == c("row", "col")) while otherwise carrying the
+  # same ordered genes.  Those container labels have no biological or pair-
+  # universe meaning.  Canonicalize them before hashing, but retain the strict
+  # row/column identity-and-order checks above.
+  canonical_dimnames <- list(common, common)
+  dimnames(Lmat) <- canonical_dimnames
+  dimnames(rmat) <- canonical_dimnames
+
+  hash <- function(x) digest::digest(x, algo = "sha256", serialize = TRUE)
+  matrix_payload <- function(x) {
+    list(class = class(x), dim = dim(x), dimnames = dimnames(x), values = x)
+  }
+  ut <- upper.tri(Lmat, diag = FALSE)
+  common_sorted <- sort(unique(common), method = "radix")
+
+  list(
+    schema = "lvsr_curve_source_fingerprint_v1",
+    hash_algorithm = "SHA-256 over R serialization",
+    common_genes = list(
+      count = length(common),
+      order_sha256 = hash(common),
+      set_sha256 = hash(common_sorted)
+    ),
+    pearson = list(
+      level = pearson_level,
+      dimensions = dim(rmat),
+      aligned_matrix_sha256 = hash(matrix_payload(rmat))
+    ),
+    lee = list(
+      stats_layer = lee_stats_layer,
+      aligned_matrix_sha256 = hash(matrix_payload(Lmat)),
+      upstream_input_fingerprint = lee_input_fingerprint,
+      upstream_input_fingerprint_sha256 = hash(lee_input_fingerprint)
+    ),
+    unordered_pair_universe = list(
+      count = sum(ut),
+      aligned_L_and_Pearson_sha256 = hash(list(
+        LeesL = Lmat[ut],
+        Pearson = rmat[ut]
+      ))
+    )
+  )
+}
+
+#' Snapshot the R RNG without advancing it
+#' @return RNG kind and a SHA-256 fingerprint of `.Random.seed`, when present.
+#' @keywords internal
+.lvsr_r_rng_snapshot <- function() {
+  present <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  state <- if (present) get(".Random.seed", envir = .GlobalEnv, inherits = FALSE) else NULL
+  list(
+    kind = unname(RNGkind()),
+    state_present = present,
+    state_sha256 = if (present) {
+      digest::digest(state, algo = "sha256", serialize = TRUE)
+    } else {
+      NULL
+    }
+  )
+}
+
+#' Describe the deterministic C++ bootstrap RNG contract
+#' @param B Number of bootstrap iterations.
+#' @param ncores_requested Thread count requested by the caller.
+#' @param ncores_passed Thread count passed to the C++ implementation.
+#' @return Bootstrap RNG provenance.
+#' @keywords internal
+.lvsr_bootstrap_rng_provenance <- function(B, ncores_requested, ncores_passed) {
+  list(
+    schema = "lvsr_cpp_bootstrap_rng_v1",
+    engine = "std::mt19937_64",
+    seed_derivation = "SplitMix64 finalizer(base_seed + bootstrap_iteration + golden_gamma)",
+    base_seed_hex = "0x00000000B5297A4D",
+    golden_gamma_hex = "0x9E3779B97F4A7C15",
+    splitmix64_multiplier_1_hex = "0xBF58476D1CE4E5B9",
+    splitmix64_multiplier_2_hex = "0x94D049BB133111EB",
+    bootstrap_iteration_origin = 0L,
+    streams = "one deterministic RNG stream per bootstrap iteration",
+    B = as.integer(B),
+    ncores_requested = suppressWarnings(as.integer(ncores_requested)[1L]),
+    ncores_passed_to_cpp = as.integer(ncores_passed),
+    thread_invariant = TRUE,
+    thread_invariant_scope = paste(
+      "bitwise invariant across thread counts and OpenMP schedules",
+      "given identical x, y, strata, grid, and bootstrap parameters"
+    ),
+    uses_R_rng = FALSE
+  )
+}
+
 #' Bootstrap Lee's L vs Pearson r relationship
 #' @description
 #' Internal helper for `.compute_l_vs_r_curve`.
+#'
 #' Computes a LOESS-based relationship between Lee's L and Pearson correlation
 #' with bootstrap confidence intervals.
 #' @param scope_obj A `scope_object` containing Lee's L and correlation matrices.
@@ -727,7 +897,7 @@
                         span = 0.45,
                         B = 1000,
                         deg = 1,
-                        ncores = max(1, detectCores() - 1),
+                        ncores = max(1L, .detect_cores_safe(logical = TRUE) - 1L),
                         length_out = 1000,
                         downsample = 1,
                         n_strata = 50,
@@ -742,7 +912,8 @@
   ci_method <- match.arg(ci_method)
   ci_adjust <- match.arg(ci_adjust)
   level <- match.arg(level)
-  ncores <- max(1L, min(as.integer(ncores), detectCores(logical = TRUE)))
+  ncores_requested <- ncores
+  ncores <- .clamp_ncores_safe(ncores, logical = TRUE)
   if (min_rel_width < 0) stop("min_rel_width cannot be negative")
   parent <- "computeLvsRCurve"
   if (B < 20 && verbose) {
@@ -812,9 +983,20 @@
 
   Lmat <- Lmat[common, common, drop = FALSE]
   rmat <- rmat[common, common, drop = FALSE]
+  source_fingerprint <- .lvsr_curve_source_fingerprint(
+    Lmat = Lmat,
+    rmat = rmat,
+    common = common,
+    pearson_level = level,
+    lee_stats_layer = lee_stats_layer,
+    lee_input_fingerprint = lee_meta$input_fingerprint
+  )
   ut <- upper.tri(Lmat, diag = FALSE)
   Lv <- Lmat[ut]
   rv <- rmat[ut]
+  pair_points_total <- length(Lv)
+  preprocessing_rng_before <- .lvsr_r_rng_snapshot()
+  downsample_keep <- NULL
 
   # 2. Clean / Downsample
   if (verbose) .log_info(parent, "S02", "cleaning and preprocessing data points", verbose)
@@ -822,11 +1004,13 @@
   Lv <- Lv[ok]
   rv <- rv[ok]
   if (!length(Lv)) stop("No valid points")
+  pair_points_finite <- length(Lv)
 
   if (verbose) .log_info(parent, "S02", paste0("initial_points=", length(Lv)), verbose)
 
   if (is.numeric(downsample) && downsample < 1) {
     keep <- sample.int(length(Lv), max(1L, floor(downsample * length(Lv))))
+    downsample_keep <- keep
     Lv <- Lv[keep]
     rv <- rv[keep]
     if (verbose) .log_info(parent, "S02", paste0(
@@ -834,6 +1018,7 @@
     ), verbose)
   } else if (is.numeric(downsample) && downsample >= 1 && length(Lv) > downsample) {
     keep <- sample.int(length(Lv), downsample)
+    downsample_keep <- keep
     Lv <- Lv[keep]
     rv <- rv[keep]
     if (verbose) .log_info(parent, "S02", paste0(
@@ -844,6 +1029,8 @@
     rv <- jitter(rv, factor = jitter_eps)
     if (verbose) .log_info(parent, "S02", paste0("jitter_eps=", jitter_eps), verbose)
   }
+  pair_points_after_downsample <- length(Lv)
+  preprocessing_rng_after <- .lvsr_r_rng_snapshot()
 
   step02$done(paste0("points=", length(Lv)))
 
@@ -874,6 +1061,7 @@
   rv <- rv[ok2]
   Lv <- Lv[ok2]
   strat <- strat[ok2]
+  pair_points_after_stratification <- length(Lv)
 
   # 4. xgrid
   if (verbose) .log_info(parent, "S03", "preparing analysis grid and fitting LOESS model", verbose)
@@ -901,6 +1089,14 @@
   if (verbose) .log_info(parent, "S04", "running LOESS residual bootstrap analysis", verbose)
   keep_boot <- TRUE
   adjust_mode <- if (ci_method == "percentile" && ci_adjust == "analytic") 1L else 0L
+  cpp_ci_type <- 0L
+  confidence_level <- 0.95
+  k_max_cpp <- if (is.finite(k_max)) as.integer(k_max) else -1L
+  bootstrap_rng <- .lvsr_bootstrap_rng_provenance(
+    B = B,
+    ncores_requested = ncores_requested,
+    ncores_passed = ncores
+  )
   res <- .loess_residual_bootstrap(
     x = rv, y = Lv, strat = as.integer(strat),
     grid = xgrid,
@@ -908,11 +1104,11 @@
     span = span,
     deg = as.integer(deg),
     n_threads = as.integer(max(1, ncores)),
-    k_max = if (is.finite(k_max)) as.integer(k_max) else -1L,
+    k_max = k_max_cpp,
     keep_boot = keep_boot,
     adjust_mode = adjust_mode,
-    ci_type = 0L,
-    level = 0.95
+    ci_type = cpp_ci_type,
+    level = confidence_level
   )
 
   fit <- res$fit
@@ -925,6 +1121,10 @@
     lo <- res$lo_bc
     hi <- res$hi_bc
   }
+
+  # Accumulate every mathematical lower bound on CI width.  This is reapplied
+  # after edge smoothing, which otherwise can undo either constraint.
+  ci_width_floor <- rep(0, length(hi))
 
   step04$done(paste0("B=", res$B))
 
@@ -944,6 +1144,7 @@
     if (!is.finite(rng_fit) || rng_fit <= 0) rng_fit <- 1
     width <- hi - lo
     target_w <- min_rel_width * rng_fit
+    ci_width_floor <- pmax(ci_width_floor, target_w)
     width <- pmax(width, target_w)
     # Smooth width (LOESS)
     if (is.finite(widen_span) && widen_span > 0 && length(width) > 10) {
@@ -1019,6 +1220,7 @@
           # If local MAD is NA or 0, no restriction
           bad <- !is.finite(w_need) | w_need <= 0
           if (any(!bad)) {
+            ci_width_floor[!bad] <- pmax(ci_width_floor[!bad], w_need[!bad])
             width_new <- width
             width_new[!bad] <- pmax(width[!bad], w_need[!bad])
             if (!identical(width_new, width)) {
@@ -1086,6 +1288,12 @@
     }
   }
 
+  # Edge smoothing is allowed to regularise the boundaries, but it must not
+  # invalidate either the local-MAD or minimum-relative-width lower bound.
+  post_smooth_floor <- .reapply_ci_width_floor(lo, hi, ci_width_floor)
+  lo <- post_smooth_floor$lo
+  hi <- post_smooth_floor$hi
+
   # ---- CI edge smoothing completed, enter length check ----
   step05$done()
 
@@ -1113,24 +1321,141 @@
     scope_obj@stats[[grid_name]][[lee_stats_layer]] <- list()
   }
 
+  hash_sha256 <- function(x) digest::digest(x, algo = "sha256", serialize = TRUE)
+  downsample_mode <- if (is.null(downsample_keep)) {
+    "none"
+  } else if (is.numeric(downsample) && downsample < 1) {
+    "random_fraction_without_replacement"
+  } else {
+    "random_maximum_count_without_replacement"
+  }
+  preprocessing_provenance <- list(
+    schema = "lvsr_curve_preprocessing_v1",
+    unordered_pair_points = list(
+      total = pair_points_total,
+      finite = pair_points_finite,
+      after_downsample_and_jitter = pair_points_after_downsample,
+      after_stratification = pair_points_after_stratification
+    ),
+    downsample = list(
+      requested = downsample,
+      mode = downsample_mode,
+      selection_index_basis = "finite unordered-pair vector before downsampling",
+      selected_indices_sha256 = if (is.null(downsample_keep)) {
+        NULL
+      } else {
+        hash_sha256(as.integer(downsample_keep))
+      }
+    ),
+    jitter = list(
+      factor = jitter_eps,
+      applied_to = if (jitter_eps > 0) "Pearson pair vector" else "none"
+    ),
+    R_rng = list(
+      used = !is.null(downsample_keep) || jitter_eps > 0,
+      functions_called = c(
+        if (!is.null(downsample_keep)) "sample.int" else character(0),
+        if (jitter_eps > 0) "jitter" else character(0)
+      ),
+      before = preprocessing_rng_before,
+      after = preprocessing_rng_after
+    ),
+    stratification = list(
+      variable = "Pearson_r",
+      requested_strata = n_strata,
+      effective_strata_limit = n_strata_eff,
+      realized_strata = length(unique(strat)),
+      breakpoints_sha256 = hash_sha256(brks),
+      assignments_sha256 = hash_sha256(as.integer(strat))
+    ),
+    processed_inputs = list(
+      pair_vectors_sha256 = hash_sha256(list(LeesL = Lv, Pearson = rv)),
+      xgrid_sha256 = hash_sha256(xgrid)
+    )
+  )
+  bootstrap_settings <- list(
+    algorithm = "stratified residual bootstrap with local weighted regression",
+    B_requested = as.integer(B),
+    B_completed = as.integer(res$B),
+    span = span,
+    degree = as.integer(deg),
+    k_max_requested = k_max,
+    k_max_passed_to_cpp = k_max_cpp,
+    keep_boot = keep_boot,
+    adjust_mode = adjust_mode,
+    cpp_ci_type = cpp_ci_type,
+    confidence_level = confidence_level,
+    ncores_requested = suppressWarnings(as.integer(ncores_requested)[1L]),
+    ncores_passed_to_cpp = as.integer(ncores),
+    length_out = as.integer(length_out),
+    rng = bootstrap_rng
+  )
+  curve_provenance <- list(
+    schema = "lvsr_curve_provenance_v1",
+    grid_name = grid_name,
+    pearson_level = level,
+    lee_stats_layer = lee_stats_layer,
+    source = source_fingerprint,
+    preprocessing = preprocessing_provenance,
+    bootstrap = bootstrap_settings,
+    confidence_interval = list(
+      method = ci_method,
+      adjust = ci_adjust,
+      confidence_level = confidence_level,
+      min_rel_width = min_rel_width,
+      widen_span = widen_span,
+      local_mad_floor = "2 * 1.96 * local_MAD",
+      edge_smoothing_floor_reapplied = TRUE
+    )
+  )
+
   ## ---- meta update ----
   meta_obj <- list(
+    schema = "lvsr_curve_meta_v2",
+    level = level,
+    pearson_level = level,
+    lee_stats_layer = lee_stats_layer,
     B = res$B,
     span = span,
     deg = deg,
+    ncores = ncores,
+    ncores_requested = suppressWarnings(as.integer(ncores_requested)[1L]),
+    length_out = length_out,
+    downsample = downsample,
+    jitter_eps = jitter_eps,
     ci_method = ci_method,
     ci_adjust = ci_adjust,
+    confidence_level = confidence_level,
     min_rel_width = min_rel_width,
+    widen_span = widen_span,
     n_strata = n_strata,
+    n_strata_effective = n_strata_eff,
+    n_strata_realized = length(unique(strat)),
     k_max = k_max,
     edf = res$edf,
     sigma2_raw = res$sigma2_raw,
     sigma2_edf = res$sigma2_edf,
     resid_global_mad = res$resid_mad,
     adjust_mode = adjust_mode,
-    note = "Generated by .compute_l_vs_r_curve with residual-MAD floor + edge smoothing",
+    note = paste(
+      "Generated by .compute_l_vs_r_curve with residual-MAD floor + edge smoothing;",
+      "all CI width floors are reapplied after smoothing"
+    ),
     local_mad_diag = if (exists("local_mad_diag")) local_mad_diag else NULL,
-    edge_smooth = if (exists("edge_smooth_info")) edge_smooth_info else NULL
+    edge_smooth = if (exists("edge_smooth_info")) edge_smooth_info else NULL,
+    post_smooth_floor_reapplied = post_smooth_floor$reapplied,
+    post_smooth_floor_reapplied_count = post_smooth_floor$reapplied_count,
+    post_smooth_floor_diag = post_smooth_floor[c(
+      "active_count", "reapplied", "reapplied_count",
+      "reapplied_fraction", "max_shortfall_before"
+    )],
+    common_genes_fingerprint = source_fingerprint$common_genes,
+    pearson_fingerprint = source_fingerprint$pearson,
+    source_fingerprint = source_fingerprint,
+    preprocessing_provenance = preprocessing_provenance,
+    bootstrap_settings = bootstrap_settings,
+    bootstrap_rng = bootstrap_rng,
+    provenance = curve_provenance
   )
   meta_col <- rep(list(meta_obj), length(fit))
 
@@ -1213,6 +1538,7 @@
   use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
   verbose <- .lee_assert_flag(verbose, "verbose")
   ncores <- .lee_assert_positive_integer(ncores, "ncores")
+  ncores_requested <- ncores
   block_side <- .lee_assert_positive_integer(block_side, "block_side")
   mem_limit_GB <- .lee_assert_positive_finite(mem_limit_GB, "mem_limit_GB")
   top_n <- .lee_assert_positive_integer(top_n, "top_n")
@@ -1239,23 +1565,8 @@
     .log_info(parent, "S01", paste0("direction=", direction, " top_n=", top_n), verbose)
   }
 
-  logi <- suppressWarnings(detectCores(TRUE))
-  if (!is.numeric(logi) || length(logi) != 1L || is.na(logi) || !is.finite(logi) || logi < 1L) {
-    logi <- 1L
-  }
-  logi <- as.integer(logi)
-  safe_cores <- min(ncores, logi)
-  if (ncores > safe_cores) {
-    .log_info(parent, "S01", paste0(
-      "adjusting ncores: requested=", ncores,
-      " capped at available=", safe_cores
-    ), verbose)
-  }
-  ncores <- safe_cores
-  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-    try(RhpcBLASctl::blas_set_num_threads(1), silent = TRUE)
-  }
-  Sys.setenv(OMP_NUM_THREADS = ncores)
+  ncores <- .get_top_lvs_r_resolve_runtime_config(ncores, verbose)
+  ncores_resolved <- ncores
 
   ## The observed L matrix and every later permutation must be tied to the
   ## exact normalized data and weights that produced it. Never infer a layer
@@ -1399,6 +1710,11 @@
 
     if (!is.null(g_layer_try) && !is.null(g_layer_try$counts)) {
       ct <- g_layer_try$counts
+      # data.table queries can repair/add internal self-reference attributes
+      # by reference.  getTopLvsR() is analytically read-only, so detach the
+      # counts table before coverage summaries to keep the input scope object
+      # byte-stable.
+      if (inherits(ct, "data.table")) ct <- data.table::copy(ct)
       if (is.data.frame(ct) && all(c("gene", "grid_id") %in% colnames(ct))) {
         total_cells <- if (!is.null(g_layer_try$grid_info)) nrow(g_layer_try$grid_info) else length(unique(ct$grid_id))
         if (total_cells <= 0) total_cells <- NA_real_
@@ -1577,6 +1893,18 @@
       pct2 = gene2_expr_pct,
       fdr = FDR
     )
+    attr(out, "permutation_provenance") <- list(
+      schema = "geneSCOPE_delta_permutation_v1",
+      performed = FALSE,
+      requested_threads = as.integer(ncores_requested),
+      resolved_threads = as.integer(ncores_resolved),
+      effective_threads = NA_integer_,
+      fallback_occurred = FALSE,
+      permutations = as.integer(perms),
+      pval_mode = pval_mode,
+      p_adj_mode = p_adj_mode,
+      total_universe = as.integer(total_universe)
+    )
     step05$done(paste0("pairs_returned=", nrow(out)))
     return(out)
   }
@@ -1655,6 +1983,8 @@
   exceed_count <- rep(0L, nrow(sel))
   perm_threads <- ncores
   attempt <- 1
+  retry_count <- 0L
+  successful_batches <- 0L
   while (remaining > 0) {
     bsz <- min(target_batch, remaining)
     success <- FALSE
@@ -1698,6 +2028,7 @@
         error = function(e) e
       )
       if (inherits(res, "error")) {
+        retry_count <- retry_count + 1L
         if (verbose) .log_info(parent, "S04", paste0("batch failed: ", conditionMessage(res)), verbose)
         if (perm_threads > 1) {
           perm_threads <- max(1, floor(perm_threads / 2))
@@ -1712,6 +2043,7 @@
         }
       } else {
         exceed_count <- exceed_count + res
+        successful_batches <- successful_batches + 1L
         success <- TRUE
       }
     }
@@ -1720,25 +2052,25 @@
 
   if (verbose) .log_info(parent, "S04", "computing p-values and applying multiple testing correction", verbose)
   N <- perms
-  k <- exceed_count
-  p_values <- switch(pval_mode,
+  k <- as.integer(exceed_count)
+  p_values <- as.numeric(switch(pval_mode,
     exact   = (k + 1) / (N + 1),
     beta    = (k + 1) / (N + 2),
     mid     = (k + 0.5) / (N + 1),
     uniform = (k + runif(length(k))) / (N + 1)
-  )
+  ))
   p_values[p_values > 1] <- 1
-  mc_se <- sqrt(p_values * (1 - p_values) / N)
-  p_ci_lo <- qbeta(0.025, k + 1, N - k + 1)
-  p_ci_hi <- qbeta(0.975, k + 1, N - k + 1)
+  mc_se <- as.numeric(sqrt(p_values * (1 - p_values) / N))
+  p_ci_lo <- as.numeric(qbeta(0.025, k + 1, N - k + 1))
+  p_ci_hi <- as.numeric(qbeta(0.975, k + 1, N - k + 1))
 
-  FDR <- switch(p_adj_mode,
+  FDR <- as.numeric(switch(p_adj_mode,
     BH          = p.adjust(p_values, "BH"),
     BY          = p.adjust(p_values, "BY"),
     BH_universe = p.adjust(p_values, "BH", n = total_universe),
     BY_universe = p.adjust(p_values, "BY", n = total_universe),
     bonferroni  = p.adjust(p_values, "bonferroni", n = total_universe)
-  )
+  ))
 
   if (verbose) {
     sig_count <- sum(p_values < 0.05, na.rm = TRUE)
@@ -1752,6 +2084,7 @@
   }
 
   sel$raw_p <- p_values
+  sel$exceed_count <- as.integer(exceed_count)
   sel$mc_se <- mc_se
   sel$p_ci_lo <- p_ci_lo
   sel$p_ci_hi <- p_ci_hi
@@ -1782,6 +2115,36 @@
     pct1 = gene1_expr_pct,
     pct2 = gene2_expr_pct,
     fdr = FDR
+  )
+  diagnostics <- data.frame(
+    gene1 = as.character(sel$gene1),
+    gene2 = as.character(sel$gene2),
+    exceed_count = as.integer(sel$exceed_count),
+    raw_p = as.numeric(sel$raw_p),
+    mc_se = as.numeric(sel$mc_se),
+    p_ci_lo = as.numeric(sel$p_ci_lo),
+    p_ci_hi = as.numeric(sel$p_ci_hi),
+    fdr = as.numeric(sel$FDR),
+    stringsAsFactors = FALSE
+  )
+  attr(out, "permutation_diagnostics") <- diagnostics
+  attr(out, "permutation_provenance") <- list(
+    schema = "geneSCOPE_delta_permutation_v1",
+    performed = TRUE,
+    requested_threads = as.integer(ncores_requested),
+    resolved_threads = as.integer(ncores_resolved),
+    effective_threads = as.integer(perm_threads),
+    fallback_occurred = isTRUE(retry_count > 0L) ||
+      !identical(as.integer(perm_threads), as.integer(ncores_resolved)),
+    retry_count = as.integer(retry_count),
+    successful_batches = as.integer(successful_batches),
+    permutations = as.integer(perms),
+    block_side = as.integer(block_side),
+    use_blocks = isTRUE(use_blocks),
+    pval_mode = pval_mode,
+    p_adj_mode = p_adj_mode,
+    total_universe = as.integer(total_universe),
+    backend = backend_label
   )
   step05$done(paste0("pairs_returned=", nrow(out)))
   out

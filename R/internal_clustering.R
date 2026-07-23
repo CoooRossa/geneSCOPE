@@ -1,3 +1,26 @@
+#' Store backward-compatible and derived clustering graphs
+#' @description
+#' Keeps the historical graph slot as the filtered L backbone and writes the
+#' two consensus-frequency views under explicit suffixes.
+#' @param stats_layer_object Existing statistics-layer list.
+#' @param graph_slot_name Base graph slot name.
+#' @param stage2 Stage-2 result containing all three graph views.
+#' @return Updated statistics-layer list.
+#' @keywords internal
+.store_cluster_graph_views <- function(stats_layer_object, graph_slot_name, stage2) {
+    if (is.null(stats_layer_object)) stats_layer_object <- list()
+    required <- c("consensus_graph", "consensus_frequency_graph", "paper_consensus_graph")
+    missing_graphs <- required[!vapply(stage2[required], igraph::is_igraph, logical(1))]
+    if (length(missing_graphs)) {
+        stop("Stage-2 result is missing graph view(s): ",
+            paste(missing_graphs, collapse = ", "), call. = FALSE)
+    }
+    stats_layer_object[[graph_slot_name]] <- stage2$consensus_graph
+    stats_layer_object[[paste0(graph_slot_name, "__consensus_frequency")]] <- stage2$consensus_frequency_graph
+    stats_layer_object[[paste0(graph_slot_name, "__paper_consensus")]] <- stage2$paper_consensus_graph
+    stats_layer_object
+}
+
 #' Cluster genes on a consensus graph
 #' @description
 #' Internal helper for `.cluster_genes`.
@@ -11,7 +34,10 @@
 #' @param use_significance Whether to apply significance/FDR gating.
 #' @param resolution Clustering resolution parameter passed to Leiden/Louvain.
 #' @param algo Clustering algorithm choice (`leiden`, `louvain`, `hotspot-like`).
-#' @param graph_slot_name Graph slot used to drive clustering (e.g., consensus graph).
+#' @param graph_slot_name Name for the legacy FDR/quantile-filtered L backbone.
+#'   Two non-destructive derived views are also stored as
+#'   `<graph_slot_name>__consensus_frequency` and
+#'   `<graph_slot_name>__paper_consensus`.
 #' @param return_report When `TRUE`, returns both updated scope object and a report list.
 #' @param lee_stats_layer Layer name.
 #' @param L_min Numeric threshold.
@@ -27,7 +53,9 @@
 #' @param use_log1p_weight Logical flag.
 #' @param use_consensus Logical flag.
 #' @param n_restart Parameter value.
-#' @param consensus_thr Parameter value.
+#' @param consensus_thr Co-clustering-frequency threshold used for consensus
+#'   module construction and the derived graph views; it does not filter the
+#'   backward-compatible L backbone slot.
 #' @param K Parameter value.
 #' @param min_module_size Numeric threshold.
 #' @param CI95_filter Parameter value.
@@ -156,11 +184,11 @@
 
     # Use requested cores directly (clamped to available logical cores)
     ncores_requested <- ncores
-    avail_cores <- max(1L, detectCores(logical = TRUE))
-    ncores_use <- if (is.null(ncores) || is.na(ncores)) {
+    avail_cores <- .detect_cores_safe(logical = TRUE)
+    ncores_use <- if (is.null(ncores) || !length(ncores) || is.na(ncores[1L])) {
         avail_cores
     } else {
-        max(1L, min(as.integer(ncores), avail_cores))
+        .clamp_ncores_safe(ncores, logical = TRUE)
     }
     ncores <- ncores_use
 
@@ -441,12 +469,17 @@
         .log_info("clusterGenes", "S08", paste0("cluster_name=", cluster_name, " assigned=", assigned, "/", length(genes_all), " (", pct, ")"), verbose)
     }
 
-    # Update stats layer with final consensus graph
+    # Preserve the historical graph slot as the L backbone so clustering,
+    # plotting, and saved-object behavior remain backward compatible.  Store
+    # explicit consensus views in separate slots rather than silently changing
+    # the meaning of graph_slot_name.
     gname <- inputs$grid_name
     if (is.null(scope_obj@stats[[gname]][[stats_layer]])) {
         scope_obj@stats[[gname]][[stats_layer]] <- list()
     }
-    scope_obj@stats[[gname]][[stats_layer]][[graph_slot_name]] <- stage2$consensus_graph
+    scope_obj@stats[[gname]][[stats_layer]] <- .store_cluster_graph_views(
+        scope_obj@stats[[gname]][[stats_layer]], graph_slot_name, stage2
+    )
     step08$done()
 
     step09 <- .log_step("clusterGenes", "S09", "finalize report and return", verbose)

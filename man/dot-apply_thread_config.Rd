@@ -4,10 +4,15 @@
 \alias{.apply_thread_config}
 \title{Apply Thread Config}
 \usage{
-.apply_thread_config(config)
+.apply_thread_config(config, arrow_namespace = NULL, detector = detectCores)
 }
 \arguments{
 \item{config}{Parameter value.}
+
+\item{arrow_namespace}{Optional Arrow namespace used by focused tests.}
+
+\item{detector}{Core detection function used only when config does not
+already contain a resolved Arrow/OpenMP thread count.}
 }
 \value{
 Return value used internally.

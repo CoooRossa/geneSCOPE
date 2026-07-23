@@ -25,9 +25,15 @@
 #' @param cluster_name Column name to store final memberships under `scope_obj@meta.data`.
 #' @param use_log1p_weight Whether to log1p-transform edge weights before clustering.
 #' @param use_consensus Whether to build/use a consensus graph across restarts.
-#' @param graph_slot_name Graph slot used to drive clustering (e.g., consensus graph).
+#' @param graph_slot_name Name for the backward-compatible FDR/quantile-filtered
+#'   L backbone. `clusterGenes()` additionally stores the pure co-clustering
+#'   frequency graph in `<graph_slot_name>__consensus_frequency` and the
+#'   paper-style intersection of the backbone with the consensus threshold in
+#'   `<graph_slot_name>__paper_consensus`.
 #' @param n_restart Number of random restarts for consensus building.
-#' @param consensus_thr Consensus threshold applied when building the final graph.
+#' @param consensus_thr Co-clustering-frequency threshold used for consensus
+#'   module construction, `is_consensus_edge`, and the two derived graph views.
+#'   It does not remove edges from the backward-compatible L backbone slot.
 #' @param K Hotspot-like neighbourhood parameter (backend-specific; optional).
 #' @param min_module_size Minimum module size for hotspot-like backend.
 #' @param CI95_filter Deprecated flag; use `CI_rule` instead.

@@ -1,7 +1,7 @@
 Package: geneSCOPE
 Type: Package
 Title: geneSCOPE: gene Spatial Co-Occurrence of Pairwise Expression
-Version: 1.0.1
+Version: 1.0.2
 Depends: R (>= 4.4.1)
 Author: Shicheng Zhang <0322704@ed.tus.ac.jp>
 Maintainer: Shicheng Zhang <0322704@ed.tus.ac.jp>
@@ -76,8 +76,8 @@ Suggests:
     rhdf5,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
-Config/geneSCOPE/Repair: lee-s2-independent-alignment-fixed-r-delta-graph-v2
-Config/geneSCOPE/Repair-Date: 2026-07-22
+Config/geneSCOPE/Repair: lee-s2-independent-alignment-fixed-r-delta-graph-v2-local-mad-consensus-metadata-thread-invariant-rng-runtime-guards
+Config/geneSCOPE/Repair-Date: 2026-07-23
 Collate:
     'RcppExports.R'
     'api_clustering.R'
@@ -91,6 +91,7 @@ Collate:
     'globals.R'
     'internal_runtime_utils.R'
     'internal_matrix_utils.R'
+    'internal_object_metadata.R'
     'internal_clustering.R'
     'internal_graph_core.R'
     'internal_graph.R'

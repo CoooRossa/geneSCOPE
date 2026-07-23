@@ -4,10 +4,12 @@
 \alias{.deterministic_arrow_threads}
 \title{Deterministic Arrow Threads}
 \usage{
-.deterministic_arrow_threads(ncores_requested)
+.deterministic_arrow_threads(ncores_requested = NULL, detector = detectCores)
 }
 \arguments{
 \item{ncores_requested}{Parameter value.}
+
+\item{detector}{Core detection function (injectable for failure-path tests).}
 }
 \value{
 Return value used internally.

@@ -5,12 +5,27 @@
 #include <random>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
 using namespace Rcpp;
 using namespace arma;
+
+// Derive one deterministic RNG stream per bootstrap iteration.  Seeding from
+// the iteration index instead of the OpenMP thread id makes the result
+// independent of thread count and scheduling while retaining the same
+// stratified residual-resampling algorithm.
+static inline std::uint64_t bootstrap_iteration_seed(std::uint64_t iteration)
+{
+    std::uint64_t z = UINT64_C(0xB5297A4D) + iteration;
+    // SplitMix64 finalizer (fixed-width unsigned overflow is intentional).
+    z += UINT64_C(0x9E3779B97F4A7C15);
+    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return z ^ (z >> 31);
+}
 
 // --------- Local weighted regression (tricube) ----------
 static vec local_loess(const vec &x, const vec &y, const vec &xout,
@@ -262,16 +277,12 @@ Rcpp::List loess_residual_bootstrap(const arma::vec &x,
 #pragma omp parallel
 #endif
     {
-        std::mt19937_64 rng(0xB5297A4DUL
-#ifdef _OPENMP
-                            + (unsigned)omp_get_thread_num()
-#endif
-        );
 #ifdef _OPENMP
 #pragma omp for schedule(static)
 #endif
         for (int b = 0; b < B; ++b)
         {
+            std::mt19937_64 rng(bootstrap_iteration_seed(static_cast<std::uint64_t>(b)));
             // stratified residual resampling
             vec yb = fit_obs;
             for (uword k = 0; k < K; ++k)

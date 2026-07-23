@@ -18,7 +18,7 @@ computeWeights(
   max_order = NULL,
   kernel_radius = NULL,
   kernel_sigma = NULL,
-  ncores = detectCores(logical = TRUE)
+  ncores = NULL
 )
 }
 \arguments{
@@ -53,7 +53,8 @@ parameters are not supplied.}
 
 \item{kernel_sigma}{Kernel sigma for `style="kernel_*"` (overrides `min_neighbors`).}
 
-\item{ncores}{Number of threads to use.}
+\item{ncores}{Number of threads to use. \code{NULL} safely auto-detects; an
+explicit valid request remains authoritative if detection is unavailable.}
 }
 \value{
 The modified `scope_object` (invisibly).

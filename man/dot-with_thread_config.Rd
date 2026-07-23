@@ -7,7 +7,7 @@
 .with_thread_config(
   expr,
   task_type = "mixed",
-  ncores_requested = detectCores()
+  ncores_requested = NULL
 )
 }
 \arguments{
