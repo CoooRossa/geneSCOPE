@@ -89,7 +89,8 @@
                      backing_path = tempdir(),
                      cache_inputs = TRUE,
                      verbose = TRUE,
-                     ncore = NULL) {
+                     ncore = NULL,
+                     use_blocks = FALSE) {
     parent <- "computeL"
 
     ## --- 0. Thread-safe preprocessing: automatic thread management and error recovery ---
@@ -112,6 +113,7 @@
     use_bigmemory <- .lee_assert_flag(use_bigmemory, "use_bigmemory")
     cache_inputs <- .lee_assert_flag(cache_inputs, "cache_inputs")
     verbose <- .lee_assert_flag(verbose, "verbose")
+    use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
     norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
     if (!is.null(grid_name)) grid_name <- .lee_assert_layer_name(grid_name, "grid_name")
     if (!is.null(lee_stats_layer_name)) {
@@ -293,6 +295,7 @@
                     use_bigmemory = use_bigmemory,
                     backing_path = backing_path,
                     block_side = block_side,
+                    use_blocks = use_blocks,
                     cache_inputs = cache_inputs,
                     input_cache = if (cache_inputs && !is.null(scope_obj@stats[[grid_name]])) {
                         scope_obj@stats[[grid_name]][["_lee_input_cache"]]
@@ -390,6 +393,13 @@
     ## --- 5. Monte Carlo p-values with BLAS control and error recovery ---
     step05 <- .log_step(parent, "S05", "permutation p-values", verbose)
     step05$enter(paste0("perms=", perms, " block_size=", block_size))
+    permutation_backend <- if (perms < 1L) {
+        "skipped"
+    } else if (use_blocks) {
+        "C++ lee_perm_block (within-block joint shuffle)"
+    } else {
+        "C++ lee_perm (all-grid joint shuffle)"
+    }
     P <- if (perms > 0) {
         # Temporarily disable BLAS threads for permutation tests
         if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
@@ -409,7 +419,7 @@
         perm_cores <- current_cores
         perm_attempt <- 1
         .log_backend(parent, "S05", "permutation",
-            paste0("C++ lee_l_perm_block threads=", perm_cores),
+            paste0(permutation_backend, " threads=", perm_cores),
             verbose = verbose
         )
 
@@ -417,7 +427,7 @@
             if (verbose && perm_attempt > 1) {
                 .log_info(parent, "S05", paste0("retry #", perm_attempt, " with ", perm_cores, " cores"), verbose)
                 .log_backend(parent, "S05", "permutation",
-                    paste0("C++ lee_l_perm_block threads=", perm_cores),
+                    paste0(permutation_backend, " threads=", perm_cores),
                     reason = "retry",
                     verbose = verbose
                 )
@@ -433,12 +443,20 @@
                 {
                     t_start <- Sys.time()
                     # Use X_used to match the dimensions of L_reg when a gene subset is used
-                    p_result <- .lee_l_perm_block(X_used, W, L_reg,
-                        block_id   = block_id,
-                        perms      = perms,
-                        block_size = block_size,
-                        n_threads  = perm_cores
-                    )
+                    p_result <- if (use_blocks) {
+                        .lee_l_perm_block(X_used, W, L_reg,
+                            block_id   = block_id,
+                            perms      = perms,
+                            block_size = block_size,
+                            n_threads  = perm_cores
+                        )
+                    } else {
+                        .lee_l_perm_global(X_used, W, L_reg,
+                            perms      = perms,
+                            block_size = block_size,
+                            n_threads  = perm_cores
+                        )
+                    }
                     t_end <- Sys.time()
                     if (verbose) {
                         time_msg <- if (perm_attempt == 1) "completed" else "retry successful"
@@ -472,7 +490,7 @@
                 if (verbose) {
                     .log_info(parent, "S05", paste0("reducing cores to ", perm_cores, " and retrying"), verbose)
                     .log_backend(parent, "S05", "permutation",
-                        paste0("C++ lee_l_perm_block threads=", perm_cores),
+                        paste0(permutation_backend, " threads=", perm_cores),
                         reason = "retry",
                         verbose = verbose
                     )
@@ -665,10 +683,20 @@
             S2 = res$S2,
             perms = perms,
             block_side = block_side,
+            effective_block_side = if (use_blocks) block_side else NA_integer_,
             block_size = block_size,
+            use_blocks = use_blocks,
+            permutation_scheme = if (use_blocks) "spatial_block_joint" else "global_joint_shuffle",
+            permutation_backend = permutation_backend,
             ncores = ncores,
             mem_mode = if (inherits(L, "big.matrix")) "bigmemory" else "inmemory",
-            p_source = if (!is.null(P)) "permutation" else "unavailable",
+            p_source = if (is.null(P)) {
+                "unavailable"
+            } else if (use_blocks) {
+                "within-block joint row permutation"
+            } else {
+                "all-grid joint row permutation"
+            },
             z_source = if (!is.null(P)) "signed inverse-normal transform of exact two-sided permutation P" else "unavailable",
             p_resolution = if (!is.null(P)) paste0("~", format(1 / (perms + 1), scientific = TRUE)) else "unavailable",
             pi0_hat = pi0_hat,
@@ -1645,7 +1673,8 @@
   current_fingerprint <- .lee_input_fingerprint(
     X_current, W_current, grid_info_current,
     norm_layer = observed_norm_layer,
-    block_side = block_side
+    block_side = block_side,
+    use_blocks = use_blocks
   )
   if (!is.list(lee_meta$input_fingerprint) ||
       !identical(lee_meta$data_fingerprint, lee_meta$input_fingerprint$data) ||

@@ -126,9 +126,11 @@
 #' configuration, so a later `getTopLvsR()` call may validly choose a different
 #' `block_side` while still proving that it uses the same observed data.
 #' @keywords internal
-.lee_input_fingerprint <- function(Xz, W, grid_info, norm_layer, block_side) {
+.lee_input_fingerprint <- function(Xz, W, grid_info, norm_layer, block_side,
+                                   use_blocks = TRUE) {
     norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
     block_side <- .lee_assert_positive_integer(block_side, "block_side")
+    use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
     hash <- function(x) digest::digest(x, algo = "xxhash64", serialize = TRUE)
     w_payload <- if (inherits(W, "sparseMatrix")) {
         Wc <- if (inherits(W, "dgCMatrix")) {
@@ -149,7 +151,11 @@
         grid = hash(as.data.frame(grid_info, stringsAsFactors = FALSE)),
         weight_style = hash(.lee_weight_style(W))
     )
-    permutation_components <- list(block_side = block_side)
+    permutation_components <- list(
+        use_blocks = use_blocks,
+        scheme = if (use_blocks) "spatial_block_joint" else "global_joint_shuffle",
+        block_side = if (use_blocks) block_side else NA_integer_
+    )
     list(
         schema = "lee_input_fingerprint_v2",
         norm_layer = norm_layer,
@@ -158,7 +164,7 @@
             data_components
         ),
         permutation = c(
-            list(schema = "lee_permutation_config_v1", hash = hash(permutation_components)),
+            list(schema = "lee_permutation_config_v2", hash = hash(permutation_components)),
             permutation_components
         )
     )
@@ -204,11 +210,14 @@
                          use_bigmemory = FALSE,
                          backing_path = tempdir(),
                          block_side = 8,
+                         use_blocks = FALSE,
                          cache_inputs = FALSE,
                          input_cache = NULL) {
     within <- .lee_assert_flag(within, "within")
     ncores <- .lee_assert_positive_integer(ncores, "ncores")
     block_side <- .lee_assert_positive_integer(block_side, "block_side")
+    use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
+    effective_block_side <- if (use_blocks) block_side else NA_integer_
     cache_inputs <- .lee_assert_flag(cache_inputs, "cache_inputs")
     use_bigmemory <- .lee_assert_flag(use_bigmemory, "use_bigmemory")
     norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
@@ -247,7 +256,8 @@
         W = W_source,
         grid_info = grid_info,
         norm_layer = norm_layer,
-        block_side = block_side
+        block_side = block_side,
+        use_blocks = use_blocks
     )
     alignment_schema <- "grid_id_independent_fingerprint_v4"
     cache_valid <- cache_inputs &&
@@ -255,7 +265,8 @@
         identical(input_cache$alignment_schema, alignment_schema) &&
         identical(input_cache$norm_layer, norm_layer) &&
         identical(input_cache$grid_id, grid_info$grid_id) &&
-        identical(input_cache$block_side, block_side) &&
+        identical(input_cache$block_side, effective_block_side) &&
+        identical(input_cache$use_blocks, use_blocks) &&
         identical(input_cache$source_fingerprint, source_fingerprint)
 
     if (cache_valid) {
@@ -300,7 +311,11 @@
             !identical(colnames(W), target_ids)) {
             stop("Failed to align Xz and W independently to grid_info$grid_id.")
         }
-        block_id <- .assign_block_id(grid_info, block_side = block_side)
+        block_id <- if (use_blocks) {
+            .assign_block_id(grid_info, block_side = block_side)
+        } else {
+            rep.int(1L, nrow(grid_info))
+        }
     }
 
     block_id <- .compact_block_id(block_id)
@@ -310,7 +325,8 @@
         W = W,
         grid_info = grid_info,
         norm_layer = norm_layer,
-        block_side = block_side
+        block_side = block_side,
+        use_blocks = use_blocks
     )
     weight_style <- .lee_weight_style(W)
     S2 <- .lee_s2_value(W)
@@ -379,7 +395,8 @@
                 alignment_schema = alignment_schema,
                 norm_layer = norm_layer,
                 grid_id = grid_info$grid_id,
-                block_side = block_side,
+                block_side = effective_block_side,
+                use_blocks = use_blocks,
                 source_fingerprint = source_fingerprint,
                 input_fingerprint = input_fingerprint,
                 Xz_full = Xz_full,
@@ -390,6 +407,36 @@
             NULL
         }
     )
+}
+
+.lee_l_perm_global <- function(Xz, W, L_ref,
+                               perms = 999,
+                               block_size = 64,
+                               n_threads = 1) {
+    perms <- .lee_assert_positive_integer(perms, "perms")
+    block_size <- .lee_assert_positive_integer(block_size, "block_size")
+    n_threads <- .lee_assert_positive_integer(n_threads, "n_threads")
+    stopifnot(is.matrix(Xz), inherits(W, "dgCMatrix"))
+
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+        try(RhpcBLASctl::blas_set_num_threads(1), silent = TRUE)
+    }
+    ngen <- ncol(Xz)
+    geCnt <- matrix(0, ngen, ngen)
+    done <- 0L
+
+    while (done < perms) {
+        bsz <- min(block_size, perms - done)
+        idx_mat <- replicate(
+            bsz,
+            sample.int(nrow(Xz), nrow(Xz), replace = FALSE),
+            simplify = "matrix"
+        ) - 1L
+        storage.mode(idx_mat) <- "integer"
+        geCnt <- geCnt + .lee_perm(Xz, W, idx_mat, L_ref, n_threads)
+        done <- done + bsz
+    }
+    (geCnt + 1) / (perms + 1)
 }
 
 #' Lee L Perm Block

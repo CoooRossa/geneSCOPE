@@ -59,7 +59,8 @@ computeL <- function(
     backing_path = tempdir(),
     cache_inputs = TRUE,
     verbose = TRUE,
-    ncore = NULL) {
+    ncore = NULL,
+    use_blocks = FALSE) {
     .compute_l(
         scope_obj = scope_obj,
         grid_name = grid_name,
@@ -79,7 +80,8 @@ computeL <- function(
         backing_path = backing_path,
         cache_inputs = cache_inputs,
         verbose = verbose,
-        ncore = ncore
+        ncore = ncore,
+        use_blocks = use_blocks
     )
 }
 

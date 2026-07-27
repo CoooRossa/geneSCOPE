@@ -36,6 +36,7 @@ test_that("computeL stores complete Lee-2009 observed-input provenance", {
   expect_equal(meta$S2, native$S2, tolerance = 0)
   expect_identical(meta$data_fingerprint, meta$input_fingerprint$data)
   expect_identical(meta$permutation_fingerprint, meta$input_fingerprint$permutation)
+  expect_identical(meta$permutation_backend, "skipped")
 })
 
 test_that("custom Lee layers must be numeric, finite, and centred but need not have unit variance", {
@@ -84,12 +85,74 @@ test_that("computeL and getTopLvsR reject invalid scalar controls before native 
   expect_error(computeL(obj, grid_name = "grid1", block_side = 0L), "block_side.*positive integer")
   expect_error(computeL(obj, grid_name = "grid1", block_size = 0L), "block_size.*positive integer")
   expect_error(computeL(obj, grid_name = "grid1", within = 1), "within.*logical")
+  expect_error(computeL(obj, grid_name = "grid1", use_blocks = 1), "use_blocks.*logical")
   expect_error(computeL(obj, grid_name = "grid1", mem_limit_GB = Inf), "mem_limit_GB.*positive finite")
 
   expect_error(getTopLvsR(obj, grid_name = "grid1", ncores = 0L), "ncores.*positive integer")
   expect_error(getTopLvsR(obj, grid_name = "grid1", block_side = 0L), "block_side.*positive integer")
   expect_error(getTopLvsR(obj, grid_name = "grid1", do_perm = 1), "do_perm.*logical")
   expect_error(getTopLvsR(obj, grid_name = "grid1", mem_limit_GB = NaN), "mem_limit_GB.*positive finite")
+})
+
+test_that("computeL defaults to an all-grid joint permutation", {
+  expect_identical(formals(computeL)$use_blocks, FALSE)
+  expect_identical(formals(geneSCOPE:::.compute_l)$use_blocks, FALSE)
+  expect_identical(formals(geneSCOPE:::.compute_lee_l)$use_blocks, FALSE)
+
+  obj <- make_lee_scope()
+  global_native <- geneSCOPE:::.compute_lee_l(
+    obj, grid_name = "grid1", ncores = 1L, block_side = 2L,
+    use_blocks = FALSE, cache_inputs = FALSE
+  )
+  block_native <- geneSCOPE:::.compute_lee_l(
+    obj, grid_name = "grid1", ncores = 1L, block_side = 2L,
+    use_blocks = TRUE, cache_inputs = FALSE
+  )
+  expect_identical(unique(global_native$block_id), 1L)
+  expect_gt(length(unique(block_native$block_id)), 1L)
+
+  set.seed(29)
+  global <- computeL(
+    obj, grid_name = "grid1", perms = 19L, block_size = 7L,
+    block_side = 2L, use_blocks = FALSE, ncores = 1L,
+    cache_inputs = FALSE, verbose = FALSE
+  )
+  set.seed(29)
+  one_block <- computeL(
+    obj, grid_name = "grid1", perms = 19L, block_size = 7L,
+    block_side = 100L, use_blocks = TRUE, ncores = 1L,
+    cache_inputs = FALSE, verbose = FALSE
+  )
+  set.seed(29)
+  spatial_blocks <- computeL(
+    obj, grid_name = "grid1", perms = 19L, block_size = 7L,
+    block_side = 2L, use_blocks = TRUE, ncores = 1L,
+    cache_inputs = FALSE, verbose = FALSE
+  )
+
+  global_stats <- global@stats$grid1$LeeStats_Xz
+  one_block_stats <- one_block@stats$grid1$LeeStats_Xz
+  expect_identical(global_stats$P, one_block_stats$P)
+  expect_identical(global_stats$FDR, one_block_stats$FDR)
+  expect_false(identical(global_stats$P, spatial_blocks@stats$grid1$LeeStats_Xz$P))
+  expect_identical(global_stats$meta$permutation_scheme, "global_joint_shuffle")
+  expect_identical(one_block_stats$meta$permutation_scheme, "spatial_block_joint")
+  expect_match(global_stats$meta$permutation_backend, "lee_perm \\(all-grid")
+  expect_match(one_block_stats$meta$permutation_backend, "lee_perm_block")
+
+  cached_global <- computeL(
+    obj, grid_name = "grid1", perms = 0L, block_side = 2L,
+    use_blocks = FALSE, ncores = 1L, cache_inputs = TRUE, verbose = FALSE
+  )
+  cached_block <- computeL(
+    cached_global, grid_name = "grid1", perms = 0L, block_side = 2L,
+    use_blocks = TRUE, ncores = 1L, cache_inputs = TRUE, verbose = FALSE
+  )
+  global_cache <- cached_global@stats$grid1[["_lee_input_cache"]]
+  block_cache <- cached_block@stats$grid1[["_lee_input_cache"]]
+  expect_false(global_cache$use_blocks)
+  expect_true(block_cache$use_blocks)
+  expect_gt(length(unique(block_cache$block_id)), 1L)
 })
 
 test_that("getTopLvsR accepts a new block size but rejects stale observed inputs", {
