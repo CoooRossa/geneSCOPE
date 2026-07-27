@@ -2,10 +2,10 @@ test_that("Lee fingerprints separate observed data from permutation configuratio
   obj <- make_lee_scope()
   layer <- obj@grid$grid1
   fp8 <- geneSCOPE:::.lee_input_fingerprint(
-    layer$Xz, layer$W, layer$grid_info, "Xz", 8L
+    layer$Xz, layer$W, layer$grid_info, "Xz", 8L, use_blocks = TRUE
   )
   fp2 <- geneSCOPE:::.lee_input_fingerprint(
-    layer$Xz, layer$W, layer$grid_info, "Xz", 2L
+    layer$Xz, layer$W, layer$grid_info, "Xz", 2L, use_blocks = TRUE
   )
 
   expect_identical(fp8$schema, "lee_input_fingerprint_v2")
@@ -14,7 +14,7 @@ test_that("Lee fingerprints separate observed data from permutation configuratio
   expect_true(geneSCOPE:::.lee_same_observed_data(fp8, fp2))
 })
 
-test_that("computeL stores complete Lee-2009 observed-input provenance", {
+test_that("computeL stores complete canonical Lee's L/S2 input provenance", {
   obj <- make_lee_scope()
   native <- geneSCOPE:::.compute_lee_l(
     obj, grid_name = "grid1", norm_layer = "Xz", ncores = 1L,
@@ -98,6 +98,7 @@ test_that("computeL defaults to an all-grid joint permutation", {
   expect_identical(formals(computeL)$use_blocks, FALSE)
   expect_identical(formals(geneSCOPE:::.compute_l)$use_blocks, FALSE)
   expect_identical(formals(geneSCOPE:::.compute_lee_l)$use_blocks, FALSE)
+  expect_identical(formals(geneSCOPE:::.lee_input_fingerprint)$use_blocks, FALSE)
 
   obj <- make_lee_scope()
   global_native <- geneSCOPE:::.compute_lee_l(

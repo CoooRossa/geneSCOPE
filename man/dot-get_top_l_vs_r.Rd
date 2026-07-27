@@ -17,7 +17,7 @@
   do_perm = TRUE,
   perms = 1000,
   block_side = 8,
-  use_blocks = TRUE,
+  use_blocks = FALSE,
   ncores = 1,
   clamp_mode = c("none", "ref_only", "both"),
   p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
@@ -53,15 +53,21 @@ the `norm_layer` recorded in LeeStats metadata.}
 \item{perms}{Number of permutations for p-value estimation.}
 
 \item{block_side}{Positive integer block side for the current permutation
-analysis; it may differ from the value used by `computeL()`.}
+analysis, used only when `use_blocks = TRUE`; it may differ from the value
+used by `computeL()`.}
 
-\item{use_blocks}{A single logical flag.}
+\item{use_blocks}{A single logical flag. `FALSE` (the default) applies one
+joint unrestricted row shuffle over all grid locations. `TRUE` constrains
+that joint shuffle within spatial blocks defined by `block_side`.}
 
 \item{ncores}{Number of threads to use for permutation testing.}
 
 \item{clamp_mode}{Parameter value.}
 
-\item{p_adj_mode}{Parameter value.}
+\item{p_adj_mode}{Multiple-testing adjustment mode. `"BH"` (the default)
+adjusts the selected top pairs. The `_universe` variants scale by the
+eligible finite-pair count after confidence-interval and range filters. No
+p-values are computed for unselected pairs.}
 
 \item{mem_limit_GB}{Positive finite memory budget for permutation batches.}
 

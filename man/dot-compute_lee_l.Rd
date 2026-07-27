@@ -16,6 +16,7 @@
   use_bigmemory = FALSE,
   backing_path = tempdir(),
   block_side = 8,
+  use_blocks = FALSE,
   cache_inputs = FALSE,
   input_cache = NULL
 )
@@ -43,6 +44,10 @@ numeric, finite, and column-centred; unit variance is not required.}
 \item{backing_path}{Retained for API compatibility.}
 
 \item{block_side}{Positive integer block side for permutation preprocessing.}
+
+\item{use_blocks}{Logical. `FALSE` (the default) prepares a joint
+unrestricted row shuffle over all grid locations. `TRUE` prepares spatial
+blocks defined by `block_side`.}
 
 \item{cache_inputs}{A single logical value controlling preprocessing reuse.}
 

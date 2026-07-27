@@ -122,12 +122,20 @@
 #' Fingerprint every input that determines Lee's L, separating data and permutations.
 #' @description
 #' The `data` component fingerprints the canonical X/W/grid inputs used for the
-#' observed statistic. The `permutation` component fingerprints only the block
-#' configuration, so a later `getTopLvsR()` call may validly choose a different
-#' `block_side` while still proving that it uses the same observed data.
+#' observed statistic. The `permutation` component fingerprints only the
+#' permutation configuration, so a later `getTopLvsR()` call may validly choose
+#' a different scheme while still proving that it uses the same observed data.
+#' @param Xz Numeric normalized expression matrix.
+#' @param W Spatial weight matrix aligned to the rows of `Xz`.
+#' @param grid_info Grid metadata aligned to `Xz` and `W`.
+#' @param norm_layer Name of the normalized expression layer.
+#' @param block_side Positive integer block side, used only when
+#'   `use_blocks = TRUE`.
+#' @param use_blocks Logical. `FALSE` (the default) records the joint
+#'   unrestricted all-grid shuffle; `TRUE` records a block-constrained scheme.
 #' @keywords internal
 .lee_input_fingerprint <- function(Xz, W, grid_info, norm_layer, block_side,
-                                   use_blocks = TRUE) {
+                                   use_blocks = FALSE) {
     norm_layer <- .lee_assert_layer_name(norm_layer, "norm_layer")
     block_side <- .lee_assert_positive_integer(block_side, "block_side")
     use_blocks <- .lee_assert_flag(use_blocks, "use_blocks")
@@ -194,7 +202,11 @@
 #' @param chunk_size Retained for API compatibility; chunking is disabled.
 #' @param use_bigmemory Must remain `FALSE`; the former route was RAM-backed.
 #' @param backing_path Retained for API compatibility.
-#' @param block_side Positive integer block side for permutation preprocessing.
+#' @param block_side Positive integer block side for permutation preprocessing,
+#'   used only when `use_blocks = TRUE`.
+#' @param use_blocks Logical. `FALSE` (the default) prepares a joint
+#'   unrestricted row shuffle over all grid locations. `TRUE` prepares spatial
+#'   blocks defined by `block_side`.
 #' @param cache_inputs A single logical value controlling preprocessing reuse.
 #' @param input_cache Parameter value.
 #' @return Return value used internally.

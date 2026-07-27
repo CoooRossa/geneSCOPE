@@ -4,12 +4,34 @@
 \alias{.lee_input_fingerprint}
 \title{Fingerprint every input that determines Lee's L, separating data and permutations.}
 \usage{
-.lee_input_fingerprint(Xz, W, grid_info, norm_layer, block_side)
+.lee_input_fingerprint(
+  Xz,
+  W,
+  grid_info,
+  norm_layer,
+  block_side,
+  use_blocks = FALSE
+)
+}
+\arguments{
+\item{Xz}{Numeric normalized expression matrix.}
+
+\item{W}{Spatial weight matrix aligned to the rows of `Xz`.}
+
+\item{grid_info}{Grid metadata aligned to `Xz` and `W`.}
+
+\item{norm_layer}{Name of the normalized expression layer.}
+
+\item{block_side}{Positive integer block side, used only when
+`use_blocks = TRUE`.}
+
+\item{use_blocks}{Logical. `FALSE` (the default) records the joint
+unrestricted all-grid shuffle; `TRUE` records a block-constrained scheme.}
 }
 \description{
 The `data` component fingerprints the canonical X/W/grid inputs used for the
-observed statistic. The `permutation` component fingerprints only the block
-configuration, so a later `getTopLvsR()` call may validly choose a different
-`block_side` while still proving that it uses the same observed data.
+observed statistic. The `permutation` component fingerprints only the
+permutation configuration, so a later `getTopLvsR()` call may validly choose
+a different scheme while still proving that it uses the same observed data.
 }
 \keyword{internal}

@@ -38,7 +38,7 @@
 #' Add Lee's L statistics to a scope_object
 #' @description
 #'   High-level wrapper that computes Lee's L, empirical p-values and signed
-#'   Z-scores via block permutations, FDR, spatial gradients, and quality-control
+#'   Z-scores via joint row permutations, FDR, spatial gradients, and quality-control
 #'   metrics, and stores everything under a new layer in \code{@stats}.
 #' @param scope_obj A \code{scope_object} with at least one populated \code{@grid} slot.
 #' @param grid_name Character. Name of the grid sub-layer to process. If
@@ -48,7 +48,8 @@
 #' @param within A single logical value. If \code{TRUE} restrict analysis to the selected
 #'   gene set on both axes (default). Otherwise compute gene × all.
 #' @param ncores Positive integer. Number of cores for parallel processing (default 1).
-#' @param block_side Positive integer. Number of grid cells per side for block partitioning (default 8).
+#' @param block_side Positive integer. Number of grid cells per side for block
+#'   partitioning (default 8); used only when `use_blocks = TRUE`.
 #' @param perms Non-negative integer. Number of permutations for Monte-Carlo p-values (default 1000).
 #' @param block_size Positive integer. Number of permutations processed per batch (default 64).
 #' @param L_min Numeric threshold used when building the QC similarity graph.
@@ -67,6 +68,9 @@
 #' @param cache_inputs Logical. Cache preprocessed X/Z/W and block IDs for reuse across calls (default TRUE).
 #' @param verbose Logical. Whether to print progress messages (default TRUE).
 #' @param ncore Deprecated. Use \code{ncores} instead.
+#' @param use_blocks Logical. `FALSE` (the default) applies one joint
+#'   unrestricted row shuffle over all grid locations. `TRUE` constrains that
+#'   joint shuffle within spatial blocks defined by `block_side`.
 #' @return The modified \code{scope_object}.
 #' @importFrom stats sd pnorm p.adjust coef lm
 #' @importFrom igraph graph_from_adjacency_matrix simplify degree cluster_louvain cluster_leiden components modularity
@@ -971,7 +975,7 @@
       !is.list(lee_meta$input_fingerprint) ||
       !identical(lee_meta$input_fingerprint$schema, "lee_input_fingerprint_v2")) {
     stop(
-      "LeeStats provenance is missing or incompatible. Rerun computeL() with the corrected Lee2009/S2 implementation before computeLvsRCurve().",
+      "LeeStats provenance is missing or incompatible. Rerun computeL() with the canonical Lee's L/S2 implementation before computeLvsRCurve().",
       call. = FALSE
     )
   }
@@ -1524,10 +1528,16 @@
 #' @param L_range Parameter value.
 #' @param do_perm Parameter value.
 #' @param block_side Positive integer block side for the current permutation
-#'   analysis; it may differ from the value used by `computeL()`.
-#' @param use_blocks A single logical flag.
+#'   analysis, used only when `use_blocks = TRUE`; it may differ from the value
+#'   used by `computeL()`.
+#' @param use_blocks A single logical flag. `FALSE` (the default) applies one
+#'   joint unrestricted row shuffle over all grid locations. `TRUE` constrains
+#'   that joint shuffle within spatial blocks defined by `block_side`.
 #' @param clamp_mode Parameter value.
-#' @param p_adj_mode Parameter value.
+#' @param p_adj_mode Multiple-testing adjustment mode. `"BH"` (the default)
+#'   adjusts the selected top pairs. The `_universe` variants scale by the
+#'   eligible finite-pair count after confidence-interval and range filters. No
+#'   p-values are computed for unselected pairs.
 #' @param mem_limit_GB Positive finite memory budget for permutation batches.
 #' @param pval_mode Parameter value.
 #' @param CI_rule Parameter value.
@@ -1545,7 +1555,7 @@
                        do_perm = TRUE,
                        perms = 1000,
                        block_side = 8,
-                       use_blocks = TRUE,
+                       use_blocks = FALSE,
                        ncores = 1,
                        clamp_mode = c("none", "ref_only", "both"),
                        p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
@@ -1731,6 +1741,18 @@
     Delta = LeesL_vec - Pear_for_delta
   )
 
+  finite_pair <- is.finite(df$LeesL) & is.finite(df$Pear) & is.finite(df$Delta)
+  nonfinite_pairs <- sum(!finite_pair)
+  if (nonfinite_pairs > 0L && verbose) {
+    .log_info(parent, "S01", paste0(
+      "excluding_nonfinite_pairs=", nonfinite_pairs
+    ), verbose)
+  }
+  df <- df[finite_pair, , drop = FALSE]
+  if (!nrow(df)) {
+    stop("No finite Lee's L/Pearson/Delta gene pairs are available.", call. = FALSE)
+  }
+
   # Expression coverage percentages
   {
     expr_pct_map <- setNames(rep(0, length(common)), common)
@@ -1863,8 +1885,9 @@
     " L_range=[", L_range[1], ",", L_range[2], "]"
   ))
   if (verbose) .log_info(parent, "S03", "applying threshold filters", verbose)
-  df <- df[df$Pear >= pear_range[1] & df$Pear <= pear_range[2] &
-    df$LeesL >= L_range[1] & df$LeesL <= L_range[2], ]
+  range_keep <- df$Pear >= pear_range[1] & df$Pear <= pear_range[2] &
+    df$LeesL >= L_range[1] & df$LeesL <= L_range[2]
+  df <- df[range_keep, , drop = FALSE]
   if (!nrow(df)) stop("Thresholds remove all pairs")
   total_universe <- nrow(df)
 
@@ -1920,7 +1943,9 @@
       r = Pear,
       pct1 = gene1_expr_pct,
       pct2 = gene2_expr_pct,
-      fdr = FDR
+      fdr = FDR,
+      Delta,
+      delta_fdr = FDR
     )
     attr(out, "permutation_provenance") <- list(
       schema = "geneSCOPE_delta_permutation_v1",
@@ -1932,7 +1957,9 @@
       permutations = as.integer(perms),
       pval_mode = pval_mode,
       p_adj_mode = p_adj_mode,
-      total_universe = as.integer(total_universe)
+      total_universe = as.integer(total_universe),
+      selected_pairs = as.integer(nrow(out)),
+      selection_scope = "top_n_by_observed_delta"
     )
     step05$done(paste0("pairs_returned=", nrow(out)))
     return(out)
@@ -2143,7 +2170,9 @@
     r = Pear,
     pct1 = gene1_expr_pct,
     pct2 = gene2_expr_pct,
-    fdr = FDR
+    fdr = FDR,
+    Delta,
+    delta_fdr = FDR
   )
   diagnostics <- data.frame(
     gene1 = as.character(sel$gene1),
@@ -2173,6 +2202,8 @@
     pval_mode = pval_mode,
     p_adj_mode = p_adj_mode,
     total_universe = as.integer(total_universe),
+    selected_pairs = as.integer(nrow(out)),
+    selection_scope = "top_n_by_observed_delta",
     backend = backend_label
   )
   step05$done(paste0("pairs_returned=", nrow(out)))

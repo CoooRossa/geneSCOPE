@@ -22,7 +22,6 @@ License: MIT + file LICENSE
 URL: https://github.com/CoooRossa/geneSCOPE
 BugReports: https://github.com/CoooRossa/geneSCOPE/issues
 Encoding: UTF-8
-LazyData: true
 Imports:
     Rcpp,
     methods,
@@ -56,7 +55,6 @@ Suggests:
     fastcluster,
     future.apply,
     gclus,
-    geneSCOPE,
     ggfx,
     glmGamPoi,
     hdf5r,
@@ -68,6 +66,7 @@ Suggests:
     RhpcBLASctl,
     scales,
     Seurat,
+    SeuratObject,
     seriation,
     sf,
     spdep,

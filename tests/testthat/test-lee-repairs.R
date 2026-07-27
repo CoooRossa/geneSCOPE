@@ -32,6 +32,25 @@ test_that("fixed-r native Delta uses the observed Pearson reference", {
   expect_equal(as.numeric(got), oracle, tolerance = 0)
 })
 
+test_that("observed native Lee matches an independent canonical S2 oracle", {
+  set.seed(20260728)
+  X <- scale(matrix(stats::rnorm(35), nrow = 7L, ncol = 5L))
+  W <- Matrix::sparseMatrix(
+    i = c(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7),
+    j = c(2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6),
+    x = c(1, 1, 0.5, 0.5, 1.5, 1.5, 0.75, 0.75, 1.25, 1.25, 1, 1),
+    dims = c(7L, 7L)
+  )
+
+  WX <- as.matrix(W %*% X)
+  S2 <- sum(as.numeric(Matrix::rowSums(W))^2)
+  norms <- sqrt(colSums(X^2))
+  oracle <- nrow(X) / S2 * crossprod(WX) / outer(norms, norms)
+  native <- geneSCOPE:::lee_L(X, W, 1L)
+
+  expect_lt(max(abs(native - oracle)), 1e-12)
+})
+
 test_that("legacy Delta native ABIs keep their arities and reject invalid permutations", {
   X <- scale(matrix(seq_len(8), 4, 2))
   W <- Matrix::sparseMatrix(
