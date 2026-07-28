@@ -23,7 +23,8 @@ computeL(
   backing_path = tempdir(),
   cache_inputs = TRUE,
   verbose = TRUE,
-  ncore = NULL
+  ncore = NULL,
+  use_blocks = FALSE
 )
 }
 \arguments{
@@ -38,8 +39,8 @@ selected gene set on both axes.}
 
 \item{ncores}{A positive integer number of cores for parallel processing.}
 
-\item{block_side}{A positive integer number of grid cells per side for block
-permutations.}
+\item{block_side}{A positive integer number of grid cells per side. This is
+used only when `use_blocks = TRUE`.}
 
 \item{perms}{A non-negative integer number of Monte-Carlo permutations; use
 zero to store observed Lee's L without permutation inference.}
@@ -72,6 +73,11 @@ RAM-backed rather than file-backed and is disabled.}
 \item{verbose}{Whether to emit progress messages.}
 
 \item{ncore}{Deprecated alias of `ncores`.}
+
+\item{use_blocks}{A single logical value controlling the permutation scheme.
+`FALSE` (the default) applies one joint unrestricted row shuffle over all
+grid locations. `TRUE` constrains that joint shuffle within spatial blocks
+defined by `block_side`.}
 }
 \value{
 The modified `scope_object`.
@@ -80,6 +86,11 @@ The modified `scope_object`.
 Computes Lee's L for gene pairs using a grid-level expression layer, stores
 results under a statistics layer in `scope_obj@stats`, and returns the updated
 object.
+}
+\details{
+Lee's L is computed with the canonical S2 normalization. The same row
+permutation is applied jointly to every gene, preserving the between-gene
+expression relationship under the permutation null.
 }
 \examples{
 \dontrun{

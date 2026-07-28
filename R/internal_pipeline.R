@@ -525,7 +525,7 @@
             stop(
                 "Lee similarity provenance is missing or incompatible in ",
                 grid_name, "/", stats_layer,
-                ". Rerun computeL() with the corrected Lee2009/S2 implementation before clusterGenes().",
+                ". Rerun computeL() with the canonical Lee's L/S2 implementation before clusterGenes().",
                 call. = FALSE
             )
         }
@@ -618,7 +618,7 @@
 #' @description
 #' Internal helper for `.prune_unstable_memberships`.
 #' @param memberships Integer vector of cluster assignments (NA allowed).
-#' @param L_matrix Square matrix of corrected Lee's L weights (gene x gene).
+#' @param L_matrix Square matrix of canonical Lee's L weights (gene x gene).
 #' @param min_cluster_size Minimum cluster size to retain (default 2).
 #' @return A list with elements `membership` (pruned vector) and
 #'   `stable_clusters` (character vector of surviving cluster ids).

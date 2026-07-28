@@ -17,7 +17,7 @@ getTopLvsR(
   do_perm = TRUE,
   perms = 1000,
   block_side = 8,
-  use_blocks = TRUE,
+  use_blocks = FALSE,
   ncores = 1,
   clamp_mode = c("none", "ref_only", "both"),
   p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),
@@ -53,17 +53,23 @@ must match the `norm_layer` recorded by `computeL()`; omitting it is safest.}
 \item{perms}{A non-negative integer number of permutations (positive when
 `do_perm = TRUE`).}
 
-\item{block_side}{A positive integer block side length. It may differ from
-the value used by `computeL()` because observed-data and permutation
-provenance are validated separately.}
+\item{block_side}{A positive integer block side length, used only when
+`use_blocks = TRUE`. It may differ from the value used by `computeL()`
+because observed-data and permutation provenance are validated separately.}
 
-\item{use_blocks}{A single logical value indicating whether to use spatial blocks.}
+\item{use_blocks}{A single logical value controlling the permutation scheme.
+`FALSE` (the default) applies one joint unrestricted row shuffle over all
+grid locations. `TRUE` constrains that joint shuffle within spatial blocks
+defined by `block_side`.}
 
 \item{ncores}{A positive integer number of threads to use.}
 
 \item{clamp_mode}{Whether to clamp Delta using reference-only or both ends.}
 
-\item{p_adj_mode}{Multiple-testing adjustment mode.}
+\item{p_adj_mode}{Multiple-testing adjustment mode. `"BH"` (the default)
+adjusts the selected top pairs. The `_universe` variants use the number of
+finite pairs after confidence-interval and range filters as `n`; they still
+do not compute p-values for unselected pairs.}
 
 \item{mem_limit_GB}{Positive finite memory budget for permutation index batches.}
 
@@ -76,17 +82,24 @@ provenance are validated separately.}
 \item{verbose}{Emit progress messages when TRUE.}
 }
 \value{
-A data.frame with ranked gene pairs and associated statistics.
+A data.frame with ranked gene pairs and associated statistics. The
+  original first seven columns (`gene1`, `gene2`, `L`, `r`, `pct1`, `pct2`,
+  and `fdr`) are preserved; `Delta` and its explicit `delta_fdr` alias are
+  appended.
 }
 \description{
 Ranks gene pairs by the deviation between Lee's L and Pearson correlation and
 returns a table of top pairs.
 }
 \details{
-`getTopLvsR()` requires LeeStats provenance written by the corrected
-Lee-2009/S2 implementation. It reuses the recorded normalized layer and
+`getTopLvsR()` requires LeeStats provenance written by the canonical Lee's
+L/S2 implementation. It reuses the recorded normalized layer and
 refuses stale objects or changed X/W/grid inputs; rerun `computeL()` when
-that validation fails.
+that validation fails. The permutation null uses one joint unrestricted row
+shuffle over all grid locations by default; block-constrained shuffling is
+available only when `use_blocks = TRUE`. Pair selection occurs first by
+observed Delta (`top_n` and `direction`), so `delta_fdr` describes that
+selected family and is not a global all-pairs FDR estimate.
 }
 \examples{
 \dontrun{

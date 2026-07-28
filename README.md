@@ -1,7 +1,7 @@
 # geneSCOPE: gene Spatial Co-Occurrence of Pairwise Expression
 
 [![R](https://img.shields.io/badge/R-%3E%3D4.4.1-blue.svg)](https://cran.r-project.org/)
-[![License: GPL-3](https://img.shields.io/badge/License-GPL%203-yellow.svg)](https://opensource.org/licenses/GPL-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 
 **geneSCOPE** is an R package for comprehensive spatial gene expression analysis using Lee's L statistics. It provides a complete workflow for analyzing SVGs in spatial transcriptomics data, particularly designed for spatial transcriptomics datasets such as Xenium/Cosmx/Visium.
@@ -17,14 +17,15 @@
 
 ## Installation
 
-### Installation
+The `main` branch is the version 1.2.0 release line. The commands below verify
+the installed package version before analysis.
 
 #### Option 1 (Recommended): Conda-heavy install (pin most deps in conda)
 
 1. Use conda to install and lock dependencies (including R ≥ 4.4.1):
 ```bash
 conda create -n genescope -c conda-forge -c bioconda \
-  "r-base>=4.4.1" r-devtools r-xml2 r-sf r-data.table r-dplyr r-foreach \
+  "r-base>=4.4.1" r-remotes r-xml2 r-sf r-data.table r-dplyr r-foreach \
   r-ggplot2 r-ggraph r-ggrepel r-igraph r-scales r-tidyr r-arrow \
   r-rcpparmadillo r-rcppeigen r-future.apply r-ggforce r-ggnewscale \
   r-spdep r-rhpcblasctl bioconductor-rhdf5
@@ -34,8 +35,9 @@ conda activate genescope
 
 2. Inside that environment, install only geneSCOPE via R (conda already provides the deps):
 ```r
-if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
-devtools::install_github("CoooRossa/geneSCOPE")
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+remotes::install_github("CoooRossa/geneSCOPE@main")
+stopifnot(packageVersion("geneSCOPE") == "1.2.0")
 ```
 
 #### Option 2: Pure R install (no conda)
@@ -48,10 +50,11 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocMana
 install.packages(c(
   "data.table","dplyr","foreach","ggplot2","ggraph","ggrepel",
   "igraph","scales","sf","tidyr","arrow","RcppArmadillo","RcppEigen",
-  "future.apply","ggforce","ggnewscale","spdep","rhpcBLASctl","devtools"
+  "future.apply","ggforce","ggnewscale","spdep","rhpcBLASctl","remotes"
 ))
 BiocManager::install(c("rhdf5"))
-devtools::install_github("CoooRossa/geneSCOPE")
+remotes::install_github("CoooRossa/geneSCOPE@main")
+stopifnot(packageVersion("geneSCOPE") == "1.2.0")
 ```
 
 ## Data-Type Workflows
@@ -483,7 +486,7 @@ bioRxiv 2025.12.03.691993; doi: https://doi.org/10.64898/2025.12.03.691993
 
 ## License
 
-This project is licensed under the GPL-3 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 

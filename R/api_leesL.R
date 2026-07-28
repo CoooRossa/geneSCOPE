@@ -9,8 +9,8 @@
 #' @param within A single logical value. If `TRUE`, restricts analysis to the
 #'   selected gene set on both axes.
 #' @param ncores A positive integer number of cores for parallel processing.
-#' @param block_side A positive integer number of grid cells per side for block
-#'   permutations.
+#' @param block_side A positive integer number of grid cells per side. This is
+#'   used only when `use_blocks = TRUE`.
 #' @param perms A non-negative integer number of Monte-Carlo permutations; use
 #'   zero to store observed Lee's L without permutation inference.
 #' @param block_size A positive integer number of permutations processed per batch.
@@ -30,7 +30,15 @@
 #' @param cache_inputs Whether to cache preprocessed inputs for reuse across calls.
 #' @param verbose Whether to emit progress messages.
 #' @param ncore Deprecated alias of `ncores`.
+#' @param use_blocks A single logical value controlling the permutation scheme.
+#'   `FALSE` (the default) applies one joint unrestricted row shuffle over all
+#'   grid locations. `TRUE` constrains that joint shuffle within spatial blocks
+#'   defined by `block_side`.
 #' @return The modified `scope_object`.
+#' @details
+#' Lee's L is computed with the canonical S2 normalization. The same row
+#' permutation is applied jointly to every gene, preserving the between-gene
+#' expression relationship under the permutation null.
 #' @examples
 #' \dontrun{
 #' scope_obj <- createSCOPE(data_dir = "/path/to/output_dir", grid_length = 30)
@@ -176,24 +184,37 @@ computeLvsRCurve <- function(
 #' @param do_perm A single logical value indicating whether to run permutation testing.
 #' @param perms A non-negative integer number of permutations (positive when
 #'   `do_perm = TRUE`).
-#' @param block_side A positive integer block side length. It may differ from
-#'   the value used by `computeL()` because observed-data and permutation
-#'   provenance are validated separately.
-#' @param use_blocks A single logical value indicating whether to use spatial blocks.
+#' @param block_side A positive integer block side length, used only when
+#'   `use_blocks = TRUE`. It may differ from the value used by `computeL()`
+#'   because observed-data and permutation provenance are validated separately.
+#' @param use_blocks A single logical value controlling the permutation scheme.
+#'   `FALSE` (the default) applies one joint unrestricted row shuffle over all
+#'   grid locations. `TRUE` constrains that joint shuffle within spatial blocks
+#'   defined by `block_side`.
 #' @param ncores A positive integer number of threads to use.
 #' @param clamp_mode Whether to clamp Delta using reference-only or both ends.
-#' @param p_adj_mode Multiple-testing adjustment mode.
+#' @param p_adj_mode Multiple-testing adjustment mode. `"BH"` (the default)
+#'   adjusts the selected top pairs. The `_universe` variants use the number of
+#'   finite pairs after confidence-interval and range filters as `n`; they still
+#'   do not compute p-values for unselected pairs.
 #' @param mem_limit_GB Positive finite memory budget for permutation index batches.
 #' @param pval_mode P-value mode used when transforming permutation counts.
 #' @param curve_layer Optional curve layer from `computeLvsRCurve()`.
 #' @param CI_rule Confidence-interval filtering rule (`remove_within`, `remove_outside`, `none`).
 #' @param verbose Emit progress messages when TRUE.
-#' @return A data.frame with ranked gene pairs and associated statistics.
+#' @return A data.frame with ranked gene pairs and associated statistics. The
+#'   original first seven columns (`gene1`, `gene2`, `L`, `r`, `pct1`, `pct2`,
+#'   and `fdr`) are preserved; `Delta` and its explicit `delta_fdr` alias are
+#'   appended.
 #' @details
-#' `getTopLvsR()` requires LeeStats provenance written by the corrected
-#' Lee-2009/S2 implementation. It reuses the recorded normalized layer and
+#' `getTopLvsR()` requires LeeStats provenance written by the canonical Lee's
+#' L/S2 implementation. It reuses the recorded normalized layer and
 #' refuses stale objects or changed X/W/grid inputs; rerun `computeL()` when
-#' that validation fails.
+#' that validation fails. The permutation null uses one joint unrestricted row
+#' shuffle over all grid locations by default; block-constrained shuffling is
+#' available only when `use_blocks = TRUE`. Pair selection occurs first by
+#' observed Delta (`top_n` and `direction`), so `delta_fdr` describes that
+#' selected family and is not a global all-pairs FDR estimate.
 #' @examples
 #' \dontrun{
 #' scope_obj <- computeL(scope_obj, grid_name = "grid30", ncores = 16)
@@ -216,7 +237,7 @@ getTopLvsR <- function(
     do_perm = TRUE,
     perms = 1000,
     block_side = 8,
-    use_blocks = TRUE,
+    use_blocks = FALSE,
     ncores = 1,
     clamp_mode = c("none", "ref_only", "both"),
     p_adj_mode = c("BH", "BY", "BH_universe", "BY_universe", "bonferroni"),

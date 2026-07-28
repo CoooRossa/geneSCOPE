@@ -23,7 +23,8 @@
   backing_path = tempdir(),
   cache_inputs = TRUE,
   verbose = TRUE,
-  ncore = NULL
+  ncore = NULL,
+  use_blocks = FALSE
 )
 }
 \arguments{
@@ -40,7 +41,8 @@ gene set on both axes (default). Otherwise compute gene × all.}
 
 \item{ncores}{Positive integer. Number of cores for parallel processing (default 1).}
 
-\item{block_side}{Positive integer. Number of grid cells per side for block partitioning (default 8).}
+\item{block_side}{Positive integer. Number of grid cells per side for block
+partitioning (default 8); used only when `use_blocks = TRUE`.}
 
 \item{perms}{Non-negative integer. Number of permutations for Monte-Carlo p-values (default 1000).}
 
@@ -72,13 +74,17 @@ RAM-backed rather than file-backed and is disabled.}
 \item{verbose}{Logical. Whether to print progress messages (default TRUE).}
 
 \item{ncore}{Deprecated. Use \code{ncores} instead.}
+
+\item{use_blocks}{Logical. `FALSE` (the default) applies one joint
+unrestricted row shuffle over all grid locations. `TRUE` constrains that
+joint shuffle within spatial blocks defined by `block_side`.}
 }
 \value{
 The modified \code{scope_object}.
 }
 \description{
 High-level wrapper that computes Lee's L, empirical p-values and signed
-  Z-scores via block permutations, FDR, spatial gradients, and quality-control
+  Z-scores via joint row permutations, FDR, spatial gradients, and quality-control
   metrics, and stores everything under a new layer in \code{@stats}.
 }
 \keyword{internal}

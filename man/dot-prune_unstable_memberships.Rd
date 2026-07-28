@@ -9,7 +9,7 @@
 \arguments{
 \item{memberships}{Integer vector of cluster assignments (NA allowed).}
 
-\item{L_matrix}{Square matrix of corrected Lee's L weights (gene x gene).}
+\item{L_matrix}{Square matrix of canonical Lee's L weights (gene x gene).}
 
 \item{min_cluster_size}{Minimum cluster size to retain (default 2).}
 }
